@@ -6,7 +6,7 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 - Reactive primitives: createSignal, createEffect, createComputed, createMemo, batch, untrack
-- Virtual DOM: h(), mount(), fragment, createText
+- Real DOM: h(), mount(), fragment, createText — creates actual DOM elements, no virtual DOM
 - Conditional rendering: createShow, createSwitch
 - List rendering: createList with keyed reconciliation
 - Islands architecture: activateIslands(), hydrateIsland()
