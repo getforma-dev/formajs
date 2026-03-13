@@ -29,13 +29,13 @@ mount(() =>
 
 ## Features
 
-- **Fine-grained reactivity** — signals, effects, computed values via alien-signals
-- **Virtual DOM** — `h()` function with reactive attribute and text binding
-- **Islands architecture** — `activateIslands()` for partial hydration of server-rendered HTML
-- **Conditional rendering** — `createShow()`, `createSwitch()` with cached branches
-- **List rendering** — `createList()` with keyed reconciliation, handles 50K+ rows
-- **State management** — `createStore()` with deep reactivity, history, persistence
-- **SSR support** — server-side rendering runtime with hydration
+- **Real DOM** — `h()` creates actual DOM elements with reactive bindings. No virtual DOM, no diffing overhead.
+- **Fine-grained reactivity** — signals, effects, computed values via alien-signals. Only what changed updates.
+- **Islands architecture** — `activateIslands()` for independent hydration of server-rendered HTML regions.
+- **SSR hydration** — `adoptNode()` walks server-rendered DOM and attaches reactive bindings without re-creating elements.
+- **Conditional rendering** — `createShow()`, `createSwitch()` with branch caching for O(1) toggle.
+- **List rendering** — `createList()` with LIS-based keyed reconciliation, handles 50K+ rows.
+- **State management** — `createStore()` with deep reactivity, history, persistence.
 
 ## Ecosystem
 
