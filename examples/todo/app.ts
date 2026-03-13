@@ -1,20 +1,20 @@
-import { createSignal, createStore, h, mount, createList } from 'formajs';
+import { createSignal, h, mount, createList } from 'formajs';
 
 interface Todo { id: number; text: string; done: boolean; }
 
-const [todos, setTodos] = createStore<Todo[]>([]);
+const [todos, setTodos] = createSignal<Todo[]>([]);
 const [input, setInput] = createSignal('');
 let nextId = 1;
 
 function addTodo() {
   const text = input().trim();
   if (!text) return;
-  setTodos([...todos, { id: nextId++, text, done: false }]);
+  setTodos([...todos(), { id: nextId++, text, done: false }]);
   setInput('');
 }
 
 function toggle(id: number) {
-  setTodos(todos.map(t => t.id === id ? { ...t, done: !t.done } : t));
+  setTodos(todos().map(t => t.id === id ? { ...t, done: !t.done } : t));
 }
 
 mount(() =>
@@ -31,16 +31,16 @@ mount(() =>
     ),
     h('ul', { style: 'list-style: none; padding: 0; margin-top: 16px;' },
       createList(
-        () => todos,
+        todos,
         (t) => t.id,
         (t) => h('li', {
-          style: () => `padding: 8px; cursor: pointer; ${t().done ? 'text-decoration: line-through; opacity: 0.5;' : ''}`,
-          onClick: () => toggle(t().id),
-        }, () => t().text),
+          style: `padding: 8px; cursor: pointer; ${t.done ? 'text-decoration: line-through; opacity: 0.5;' : ''}`,
+          onClick: () => toggle(t.id),
+        }, t.text),
       ),
     ),
     h('p', { style: 'color: #888; font-size: 14px;' },
-      () => `${todos.filter(t => !t.done).length} remaining`
+      () => `${todos().filter(t => !t.done).length} remaining`
     ),
   ),
   '#app'
