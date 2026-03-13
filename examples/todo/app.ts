@@ -37,6 +37,7 @@ mount(() =>
           style: `padding: 8px; cursor: pointer; ${t.done ? 'text-decoration: line-through; opacity: 0.5;' : ''}`,
           onClick: () => toggle(t.id),
         }, t.text),
+        { updateOnItemChange: 'rerender' },
       ),
     ),
     h('p', { style: 'color: #888; font-size: 14px;' },
