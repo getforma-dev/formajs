@@ -1,7 +1,7 @@
 # FormaJS
 
 [![CI](https://github.com/getforma-dev/formajs/actions/workflows/ci.yml/badge.svg)](https://github.com/getforma-dev/formajs/actions/workflows/ci.yml)
-[![npm](https://img.shields.io/npm/v/formajs)](https://www.npmjs.com/package/formajs)
+[![npm](https://img.shields.io/npm/v/@getforma/core)](https://www.npmjs.com/package/@getforma/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Reactive DOM library with fine-grained signals, islands architecture, and SSR hydration. ~15KB gzipped.
@@ -9,13 +9,13 @@ Reactive DOM library with fine-grained signals, islands architecture, and SSR hy
 ## Install
 
 ```bash
-npm install formajs
+npm install @getforma/core
 ```
 
 ## Quick Start
 
 ```typescript
-import { createSignal, h, mount } from 'formajs';
+import { createSignal, h, mount } from '@getforma/core';
 
 const [count, setCount] = createSignal(0);
 

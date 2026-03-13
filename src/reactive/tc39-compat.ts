@@ -2,7 +2,7 @@
  * Forma Reactive - TC39 Signals Compatibility Layer
  *
  * Optional class-based API matching the TC39 Signals proposal (Stage 1).
- * Not included in main bundle — import from 'formajs/tc39' subpath.
+ * Not included in main bundle — import from '@getforma/core/tc39' subpath.
  *
  * When the TC39 proposal advances, these classes can be replaced with
  * native Signal.State and Signal.Computed.

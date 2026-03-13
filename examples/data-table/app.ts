@@ -1,4 +1,4 @@
-import { createSignal, h, mount, createList } from 'formajs';
+import { createSignal, h, mount, createList } from '@getforma/core';
 
 // Generate 50K rows of mock data
 const rows = Array.from({ length: 50_000 }, (_, i) => ({

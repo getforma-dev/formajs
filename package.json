@@ -1,5 +1,6 @@
 {
-  "name": "formajs",
+  "name": "@getforma/core",
+  "author": "Forma <victor@getforma.dev>",
   "version": "0.1.0",
   "description": "Signals-based reactive framework for the real DOM. Fine-grained reactivity, zero VDOM.",
   "type": "module",
@@ -98,7 +99,7 @@
     "type": "git",
     "url": "https://github.com/getforma-dev/formajs.git"
   },
-  "homepage": "https://github.com/getforma-dev/formajs#readme",
+  "homepage": "https://getforma.dev",
   "bugs": {
     "url": "https://github.com/getforma-dev/formajs/issues"
   },

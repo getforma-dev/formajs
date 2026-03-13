@@ -1,4 +1,4 @@
-import { createSignal, h, mount, createList } from 'formajs';
+import { createSignal, h, mount, createList } from '@getforma/core';
 
 interface Todo { id: number; text: string; done: boolean; }
 

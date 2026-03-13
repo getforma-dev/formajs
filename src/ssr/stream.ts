@@ -157,7 +157,7 @@ export interface StreamOptions {
  *
  * Usage:
  * ```ts
- * import { renderToStream, shSuspense, sh } from 'formajs/ssr';
+ * import { renderToStream, shSuspense, sh } from '@getforma/core/ssr';
  *
  * const stream = renderToStream(
  *   sh('html', null,

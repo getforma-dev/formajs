@@ -1,4 +1,4 @@
-import { createSignal, h, mount } from 'formajs';
+import { createSignal, h, mount } from '@getforma/core';
 
 const [count, setCount] = createSignal(0);
 

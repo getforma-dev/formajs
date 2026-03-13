@@ -49,7 +49,7 @@ export function sh(tag: string, props?: Record<string, unknown> | null, ...child
  *
  * Usage:
  * ```ts
- * import { renderToString, sh } from 'formajs/ssr';
+ * import { renderToString, sh } from '@getforma/core/ssr';
  *
  * const html = renderToString(
  *   sh('div', { class: 'app' },
@@ -164,7 +164,7 @@ let hydrationId = 0;
  *
  * Usage:
  * ```ts
- * import { renderToStringWithHydration, sh } from 'formajs/ssr';
+ * import { renderToStringWithHydration, sh } from '@getforma/core/ssr';
  *
  * const html = renderToStringWithHydration(
  *   sh('div', { class: 'app' },
