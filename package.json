@@ -1,8 +1,8 @@
 {
   "name": "@getforma/core",
   "author": "Forma <victor@getforma.dev>",
-  "version": "0.1.0",
-  "description": "Signals-based reactive framework for the real DOM. Fine-grained reactivity, zero VDOM.",
+  "version": "0.1.1",
+  "description": "Real DOM reactive library — fine-grained signals, islands architecture, SSR hydration. No virtual DOM, no diffing. ~15KB gzipped.",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
