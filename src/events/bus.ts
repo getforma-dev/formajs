@@ -1,6 +1,6 @@
 // Typed event bus — pub/sub pattern
 
-export interface EventBus<T extends Record<string, any>> {
+export interface EventBus<T extends Record<string, unknown>> {
   on<K extends keyof T>(event: K, handler: (payload: T[K]) => void): () => void;
   once<K extends keyof T>(event: K, handler: (payload: T[K]) => void): () => void;
   emit<K extends keyof T>(event: K, payload: T[K]): void;
@@ -9,7 +9,7 @@ export interface EventBus<T extends Record<string, any>> {
 }
 
 export function createBus<
-  T extends Record<string, any> = Record<string, any>,
+  T extends Record<string, unknown> = Record<string, unknown>,
 >(): EventBus<T> {
   const listeners = new Map<keyof T, Set<Function>>();
 

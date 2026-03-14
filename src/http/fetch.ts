@@ -101,7 +101,7 @@ export function createFetch<T>(
       const transformed = transform ? transform(json) : (json as T);
       setData(transformed);
     } catch (err) {
-      if ((err as any)?.name === 'AbortError') {
+      if (err instanceof Error && err.name === 'AbortError') {
         // Ignore aborts — they are intentional or timeouts
         return;
       }

@@ -441,7 +441,7 @@ export function createStore<T extends object>(
     // Batch all top-level key writes so effects run only once
     batch(() => {
       for (const key of Object.keys(updates) as (keyof T & string)[]) {
-        (rootProxy as any)[key] = (updates as any)[key];
+        (rootProxy as Record<string, unknown>)[key] = (updates as Record<string, unknown>)[key];
       }
     });
   };

@@ -52,9 +52,9 @@ export interface ShowDescriptor {
 export interface ListDescriptor {
   type: 'list';
   items: () => unknown[];
-  keyFn: (item: any) => string | number;
-  renderFn: (item: any, index: () => number) => HTMLElement;
-  options?: any;
+  keyFn: (item: unknown) => string | number;
+  renderFn: (item: unknown, index: () => number) => HTMLElement;
+  options?: Record<string, unknown>;
 }
 
 /** Maps built by collectMarkers() for O(1) marker lookup during adoption. */
@@ -70,17 +70,17 @@ export interface MarkerMap {
 
 /** Check if a value is a HydrationDescriptor. */
 export function isDescriptor(v: unknown): v is HydrationDescriptor {
-  return v != null && typeof v === 'object' && (v as any).type === 'element';
+  return v != null && typeof v === 'object' && 'type' in v && v.type === 'element';
 }
 
 /** Check if a value is a ShowDescriptor. */
 export function isShowDescriptor(v: unknown): v is ShowDescriptor {
-  return v != null && typeof v === 'object' && (v as any).type === 'show';
+  return v != null && typeof v === 'object' && 'type' in v && v.type === 'show';
 }
 
 /** Check if a value is a ListDescriptor. */
 export function isListDescriptor(v: unknown): v is ListDescriptor {
-  return v != null && typeof v === 'object' && (v as any).type === 'list';
+  return v != null && typeof v === 'object' && 'type' in v && v.type === 'list';
 }
 
 // ---------------------------------------------------------------------------

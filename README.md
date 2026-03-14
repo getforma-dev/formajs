@@ -123,8 +123,6 @@ function Counter() {
 mount(() => <Counter />, '#app');
 ```
 
-If you use `@getforma/build`, JSX is preconfigured — just write `.tsx` files.
-
 ## Core API
 
 ### Signals
@@ -276,9 +274,6 @@ See the [`examples/`](./examples) directory:
 | Package | Description |
 |---------|-------------|
 | [@getforma/core](https://www.npmjs.com/package/@getforma/core) | This library — `npm install @getforma/core` |
-| [@getforma/compiler](https://www.npmjs.com/package/@getforma/compiler) | SSR compiler — `.tsx` to FMIR binary |
-| [@getforma/build](https://www.npmjs.com/package/@getforma/build) | esbuild wrapper with JSX + SSR preconfigured |
-| [create-forma-app](https://www.npmjs.com/package/@getforma/create-app) | `npx @getforma/create-app` project scaffolder |
 | [forma](https://github.com/getforma-dev/forma) | Rust server framework (forma-ir + forma-server) |
 
 ## License
