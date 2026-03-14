@@ -6,6 +6,20 @@
 
 Reactive DOM library with fine-grained signals. No virtual DOM — `h()` creates real elements, signals update only what changed. ~15KB gzipped.
 
+## Why FormaJS?
+
+Most UI libraries make you choose: simple but limited (Alpine, htmx), or powerful but complex (React, Vue, Svelte). FormaJS gives you a single reactive core that scales from a CDN script tag to a full-stack Rust SSR pipeline.
+
+**Design principles:**
+
+- **Real DOM, not virtual DOM.** `h('div')` returns an actual `HTMLDivElement`. Signals mutate it directly. No diffing pass, no reconciliation overhead for simple updates. Inspired by [Solid](https://www.solidjs.com/).
+- **Fine-grained reactivity.** Powered by [alien-signals](https://github.com/nicolo-ribaudo/alien-signals). When a signal changes, only the specific DOM text node or attribute that depends on it updates — not the whole component tree.
+- **Three entry points, one engine.** HTML Runtime (like Alpine — zero build step), `h()` hyperscript (like Preact), or JSX. All share the same signal graph. Pick the right tool for the job, upgrade without rewriting.
+- **CSP-safe by default.** The HTML Runtime includes a hand-written expression parser. `new Function()` is an opt-in fallback, not a requirement. Ship to strict CSP environments without worry.
+- **Islands over SPAs.** `activateIslands()` hydrates independent regions of server-rendered HTML. Each island is self-contained. Ship less JavaScript, keep server-rendered content instant.
+
+**What FormaJS is not:** It's not a framework with opinions about routing, data fetching, or state management patterns. It's a reactive DOM library. You bring the architecture.
+
 ## Three Ways to Use FormaJS
 
 ### 1. HTML Runtime (no build step)

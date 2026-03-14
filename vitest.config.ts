@@ -9,6 +9,16 @@ export default defineConfig({
     environment: 'happy-dom',
     globals: true,
     include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    coverage: {
+      provider: 'v8',
+      reporter: ['text', 'lcov'],
+      include: ['src/**/*.ts'],
+      exclude: [
+        'src/**/*.test.ts',
+        'src/**/*.test.tsx',
+        'src/**/__tests__/**',
+      ],
+    },
   },
   esbuild: {
     jsx: 'transform',
