@@ -123,6 +123,21 @@ function Counter() {
 mount(() => <Counter />, '#app');
 ```
 
+## CDN Usage
+
+### Standard (recommended)
+```html
+<script src="https://unpkg.com/@getforma/core/dist/runtime.js"></script>
+```
+
+### CSP-Safe (strict Content-Security-Policy)
+```html
+<script src="https://unpkg.com/@getforma/core/dist/runtime-csp.js"></script>
+```
+
+> The CSP build uses a hand-written expression parser and never calls `new Function`.
+> It supports most common patterns. See [examples/csp](./examples/csp) for a working demo.
+
 ## Core API
 
 ### Signals
@@ -256,7 +271,10 @@ activateIslands({
 |--------|-------------|
 | `@getforma/core` | Signals, `h()`, `mount()`, lists, stores, components |
 | `@getforma/core/runtime` | HTML Runtime — `initRuntime()`, `mount()`, `unmount()` |
+| `@getforma/core/runtime/global` | HTML Runtime global build (IIFE, for `<script>` tags) |
 | `@getforma/core/runtime-hardened` | Runtime with `new Function()` locked off (strict CSP) |
+| `@getforma/core/runtime-csp` | Alias for `runtime-hardened` (CSP-safe build) |
+| `@getforma/core/runtime-csp/global` | CSP-safe global build (IIFE, for `<script>` tags) |
 | `@getforma/core/ssr` | Server-side rendering — `renderToString()`, `renderToStream()` |
 | `@getforma/core/tc39` | TC39-compatible `Signal.State` and `Signal.Computed` classes |
 
@@ -266,6 +284,7 @@ See the [`examples/`](./examples) directory:
 
 - **counter** — minimal `h()` counter
 - **counter-jsx** — same counter with JSX syntax
+- **csp** — CSP-safe runtime with strict Content-Security-Policy meta tag
 - **todo** — todo list with `createList` and keyed reconciliation
 - **data-table** — sortable table with `createList`
 

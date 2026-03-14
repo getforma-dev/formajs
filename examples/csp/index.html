@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self';">
+  <title>FormaJS CSP Example</title>
+</head>
+<body>
+  <script src="../../dist/runtime-csp.js"></script>
+  <div data-forma-state='{ "count": 0 }'>
+    <h1>CSP-Safe Counter</h1>
+    <p data-text="count"></p>
+    <button data-on:click="count++">Increment</button>
+    <button data-on:click="count = 0">Reset</button>
+  </div>
+</body>
+</html>

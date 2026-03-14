@@ -28,6 +28,9 @@
         "default": "./dist/runtime.cjs"
       }
     },
+    "./runtime/global": {
+      "default": "./dist/formajs-runtime.global.js"
+    },
     "./runtime-hardened": {
       "import": {
         "types": "./dist/runtime-hardened.d.ts",
@@ -37,6 +40,19 @@
         "types": "./dist/runtime-hardened.d.cts",
         "default": "./dist/runtime-hardened.cjs"
       }
+    },
+    "./runtime-csp": {
+      "import": {
+        "types": "./dist/runtime-hardened.d.ts",
+        "default": "./dist/runtime-hardened.js"
+      },
+      "require": {
+        "types": "./dist/runtime-hardened.d.cts",
+        "default": "./dist/runtime-hardened.cjs"
+      }
+    },
+    "./runtime-csp/global": {
+      "default": "./dist/formajs-runtime-hardened.global.js"
     },
     "./tc39": {
       "import": {
@@ -69,7 +85,8 @@
     "./dist/runtime-hardened.js",
     "./dist/runtime-hardened.cjs",
     "./dist/formajs-runtime.global.js",
-    "./dist/formajs-runtime-hardened.global.js"
+    "./dist/formajs-runtime-hardened.global.js",
+    "./dist/runtime-csp.js"
   ],
   "scripts": {
     "build": "tsup && node scripts/post-build.mjs",

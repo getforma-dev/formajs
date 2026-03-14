@@ -28,4 +28,10 @@ for (const ext of ['.d.ts', '.d.cts']) {
   }
 }
 
+// CDN-friendly short names
+copyFileSync('dist/formajs-runtime.global.js', 'dist/runtime.js');
+console.log('post-build: copied dist/formajs-runtime.global.js → dist/runtime.js');
+copyFileSync('dist/formajs-runtime-hardened.global.js', 'dist/runtime-csp.js');
+console.log('post-build: copied dist/formajs-runtime-hardened.global.js → dist/runtime-csp.js');
+
 console.log('post-build: jsx.d.ts copied and referenced in type declarations');
