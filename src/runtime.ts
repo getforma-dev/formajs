@@ -433,6 +433,26 @@ const UNSAFE_METHOD_NAMES = new Set([
   '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
   'eval',
 ]);
+
+/**
+ * Scan an expression string for any UNSAFE_METHOD_NAMES usage.
+ * Uses word-boundary matching to avoid false positives on substrings
+ * (e.g. "constructorValue" should not match "constructor").
+ * Returns the matched blocked name, or null if clean.
+ */
+function findBlockedMethod(expr: string): string | null {
+  for (const name of UNSAFE_METHOD_NAMES) {
+    // Match as property access (.name), bracket access (['name']), or bare identifier
+    // Using word-boundary-aware check: the name must be preceded by a dot or start of string,
+    // and followed by a non-word char or end of string.
+    const re = new RegExp(`(?:^|\\.)${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s*\\(|\\s*$|[^\\w$])`, 'm');
+    if (re.test(expr)) return name;
+    // Also check bracket access: ['constructor'], ["__proto__"]
+    if (expr.includes(`['${name}']`) || expr.includes(`["${name}"]`)) return name;
+  }
+  return null;
+}
+
 const TEXT_BINDING_SYM = Symbol.for('forma-text-binding-cache');
 
 interface TextBindingCache {
@@ -1645,6 +1665,16 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
     cache.set(cleaned, blocked);
     return blocked;
   }
+
+  // Apply UNSAFE_METHOD_NAMES blocklist before new Function — prevents
+  // prototype-pollution and eval injection via the unsafe eval path.
+  const blockedMethod = findBlockedMethod(cleaned);
+  if (blockedMethod) {
+    const msg = `Blocked unsafe method "${blockedMethod}" in expression`;
+    reportDiagnostic('expression-unsupported', cleaned, msg);
+    throw new Error(`[FormaJS] ${msg}: ${cleaned}`);
+  }
+
   try {
     const fn = new Function('__scope', `with(__scope) { return (${cleaned}); }`);
     // Cache proxy — scope.getters is a mutable object, so the proxy
@@ -1808,6 +1838,16 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
     cache.set(cleaned, result);
     return result;
   }
+
+  // Apply UNSAFE_METHOD_NAMES blocklist before new Function — prevents
+  // prototype-pollution and eval injection via the unsafe eval path.
+  const blockedMethod = findBlockedMethod(cleaned);
+  if (blockedMethod) {
+    const msg = `Blocked unsafe method "${blockedMethod}" in handler`;
+    reportDiagnostic('handler-unsupported', cleaned, msg);
+    throw new Error(`[FormaJS] ${msg}: ${cleaned}`);
+  }
+
   try {
     // Accept both `$event` and bare `event` — Claude sometimes generates either.
     const fn = new Function('__scope', '$event', 'event', `with(__scope) { ${cleaned} }`);
