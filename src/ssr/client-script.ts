@@ -32,7 +32,7 @@ function $FORMA_SWAP(id,html){
  * Called when an async resource resolves during streaming.
  */
 export function getSwapTag(id: string, html: string): string {
-  // Escape </script> in the HTML to prevent breaking out of the script tag
-  const escaped = html.replace(/<\/script>/gi, '<\\/script>');
-  return `<script>$FORMA_SWAP("${id}","${escaped.replace(/"/g, '\\"').replace(/\n/g, '\\n')}")</script>`;
+  // Use JSON.stringify for both arguments to handle all edge cases:
+  // backslashes, quotes, newlines, null bytes, </script>, unicode escapes
+  return `<script>$FORMA_SWAP(${JSON.stringify(id)},${JSON.stringify(html)})</script>`;
 }
