@@ -12,7 +12,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        node-version: [20, 22]
+        node-version: [18, 20, 22]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -21,7 +21,14 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm run typecheck
-      - run: npm run test:coverage
+      # coverage-v8 requires node:inspector/promises (Node 20+)
+      - name: Run tests
+        run: |
+          if [ "${{ matrix.node-version }}" = "18" ]; then
+            npm run test
+          else
+            npm run test:coverage
+          fi
       - run: npm run build
 
       - name: Check bundle size

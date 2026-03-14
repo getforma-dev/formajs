@@ -106,7 +106,7 @@
     "url": "https://github.com/getforma-dev/formajs/issues"
   },
   "engines": {
-    "node": ">=20"
+    "node": ">=18"
   },
   "dependencies": {
     "alien-signals": "^1.0.0"
