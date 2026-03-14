@@ -11,9 +11,9 @@ export interface EventBus<T extends Record<string, unknown>> {
 export function createBus<
   T extends Record<string, unknown> = Record<string, unknown>,
 >(): EventBus<T> {
-  const listeners = new Map<keyof T, Set<Function>>();
+  const listeners = new Map<keyof T, Set<(payload: any) => void>>();
 
-  function getHandlers<K extends keyof T>(event: K): Set<Function> {
+  function getHandlers<K extends keyof T>(event: K): Set<(payload: any) => void> {
     let set = listeners.get(event);
     if (!set) {
       set = new Set();

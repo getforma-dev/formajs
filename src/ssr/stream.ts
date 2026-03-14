@@ -13,43 +13,7 @@
  */
 
 import { getSwapScript, getSwapTag } from './client-script.js';
-
-// Re-use render helpers from render.ts
-// We need the VNode type and rendering logic
-interface VNode {
-  tag: string;
-  props: Record<string, unknown> | null;
-  children: unknown[];
-}
-
-function isVNode(v: unknown): v is VNode {
-  return v != null && typeof v === 'object' && 'tag' in v && 'children' in v;
-}
-
-// Escape functions
-function escapeHtml(str: string): string {
-  return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#x27;');
-}
-
-function escapeAttr(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
-}
-
-const VOID_ELEMENTS = new Set([
-  'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
-  'link', 'meta', 'param', 'source', 'track', 'wbr',
-]);
-
-const PROP_TO_ATTR: Record<string, string> = {
-  className: 'class',
-  htmlFor: 'for',
-  tabIndex: 'tabindex',
-};
+import { escapeHtml, escapeAttr, isVNode, VOID_ELEMENTS, PROP_TO_ATTR, type VNode } from './render.js';
 
 // ---------------------------------------------------------------------------
 // Suspense boundary tracking
@@ -60,8 +24,11 @@ interface PendingBoundary {
   promise: Promise<string>;
 }
 
-let suspenseCounter = 0;
-let pendingBoundaries: PendingBoundary[] = [];
+/** Per-render mutable state, scoped to a single renderToStreamNew call. */
+interface StreamState {
+  suspenseCounter: number;
+  pendingBoundaries: PendingBoundary[];
+}
 
 // ---------------------------------------------------------------------------
 // Synchronous render to buffer (for non-async content)
@@ -183,9 +150,11 @@ export async function* renderToStreamNew(
   node: unknown,
   options?: StreamOptions,
 ): AsyncGenerator<string> {
-  // Reset state
-  suspenseCounter = 0;
-  pendingBoundaries = [];
+  // Per-render state — scoped to this generator invocation
+  const state: StreamState = {
+    suspenseCounter: 0,
+    pendingBoundaries: [],
+  };
 
   const injectSwap = options?.injectSwapScript !== false;
 
@@ -196,7 +165,7 @@ export async function* renderToStreamNew(
 
   // Render the main tree synchronously, collecting Suspense boundaries
   const mainParts: string[] = [];
-  renderStreamNode(node, mainParts);
+  renderStreamNode(node, mainParts, state);
   yield mainParts.join('');
 
   // Yield bootstrap script if provided
@@ -206,9 +175,9 @@ export async function* renderToStreamNew(
 
   // Wait for and yield all pending Suspense boundaries
   // Each resolves independently (out-of-order)
-  while (pendingBoundaries.length > 0) {
-    const pending = [...pendingBoundaries];
-    pendingBoundaries = [];
+  while (state.pendingBoundaries.length > 0) {
+    const pending = [...state.pendingBoundaries];
+    state.pendingBoundaries = [];
 
     // Race all pending boundaries — yield each as it resolves
     const results = await Promise.allSettled(
@@ -231,19 +200,19 @@ export async function* renderToStreamNew(
  * Render a node synchronously. If a Suspense boundary is encountered,
  * render the fallback inline and queue the async resolution.
  */
-function renderStreamNode(node: unknown, parts: string[]): void {
+function renderStreamNode(node: unknown, parts: string[], state: StreamState): void {
   if (node == null || node === true || node === false) return;
   if (typeof node === 'string') { parts.push(escapeHtml(node)); return; }
   if (typeof node === 'number') { parts.push(String(node)); return; }
-  if (typeof node === 'function') { renderStreamNode(node(), parts); return; }
+  if (typeof node === 'function') { renderStreamNode(node(), parts, state); return; }
   if (Array.isArray(node)) {
-    for (const child of node) renderStreamNode(child, parts);
+    for (const child of node) renderStreamNode(child, parts, state);
     return;
   }
 
   // Suspense boundary: render fallback, queue async resolution
   if (isSuspenseVNode(node)) {
-    const id = `forma-s:${suspenseCounter++}`;
+    const id = `forma-s:${state.suspenseCounter++}`;
     const fallback = node.props.fallback;
     const asyncFn = node.children[0]!;
 
@@ -258,7 +227,7 @@ function renderStreamNode(node: unknown, parts: string[]): void {
       renderSync(resolved, resolvedParts);
       return resolvedParts.join('');
     });
-    pendingBoundaries.push({ id, promise });
+    state.pendingBoundaries.push({ id, promise });
     return;
   }
 
@@ -284,7 +253,7 @@ function renderStreamNode(node: unknown, parts: string[]): void {
     if (props?.['dangerouslySetInnerHTML']) {
       parts.push((props['dangerouslySetInnerHTML'] as { __html: string }).__html);
     } else {
-      for (const child of children) renderStreamNode(child, parts);
+      for (const child of children) renderStreamNode(child, parts, state);
     }
     parts.push('</', tag, '>');
     return;

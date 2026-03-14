@@ -1,20 +1,18 @@
-import { ssrSignal } from './ssr-reactive.js';
-
 // Void elements that don't have closing tags
-const VOID_ELEMENTS = new Set([
+export const VOID_ELEMENTS = new Set([
   'area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input',
   'link', 'meta', 'param', 'source', 'track', 'wbr',
 ]);
 
 // Map of prop names to HTML attribute names
-const PROP_TO_ATTR: Record<string, string> = {
+export const PROP_TO_ATTR: Record<string, string> = {
   className: 'class',
   htmlFor: 'for',
   tabIndex: 'tabindex',
 };
 
 // Escape HTML entities
-function escapeHtml(str: string): string {
+export function escapeHtml(str: string): string {
   return str
     .replace(/&/g, '&amp;')
     .replace(/</g, '&lt;')
@@ -24,7 +22,7 @@ function escapeHtml(str: string): string {
 }
 
 // Escape attribute values
-function escapeAttr(str: string): string {
+export function escapeAttr(str: string): string {
   return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
 }
 
@@ -135,18 +133,13 @@ function renderToBuffer(node: unknown, parts: string[]): void {
   parts.push(escapeHtml(String(node)));
 }
 
-function isVNode(v: unknown): v is VNode {
+export function isVNode(v: unknown): v is VNode {
   return v != null && typeof v === 'object' && 'tag' in v && 'children' in v;
 }
 
 // ---------------------------------------------------------------------------
 // Hydration-aware rendering
 // ---------------------------------------------------------------------------
-
-export interface RenderOptions {
-  /** Enable hydration markers in output. */
-  hydrate?: boolean;
-}
 
 let hydrationId = 0;
 

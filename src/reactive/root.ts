@@ -54,7 +54,7 @@ export function createRoot<T>(fn: (dispose: () => void) => T): T {
     // "Safety Car": trim stack array if a deep nesting spike left excess capacity.
     // Without this, a spike of 100 nested roots leaves a length-0 array with
     // 100 slots of allocated memory that never shrinks.
-    if (rootStack.length === 0 && rootStack.length !== (rootStack as any).__capacity) {
+    if (rootStack.length === 0) {
       rootStack.length = 0;
     }
   }

@@ -58,12 +58,10 @@ export function createShow(
   let lastTruthy: boolean | null = null;
   let currentDispose: (() => void) | null = null;
 
-  // Debug label from thenFn for tracing
-  const DEBUG_LABEL = thenFn.toString().slice(0, 60);
-
   const showDispose = internalEffect(() => {
     const truthy = !!when();
     const DEBUG = typeof (globalThis as any).__FORMA_DEBUG__ !== 'undefined';
+    const DEBUG_LABEL = DEBUG ? thenFn.toString().slice(0, 60) : '';
 
     if (truthy === lastTruthy) {
       if (DEBUG) console.log('[forma:show] skip (same)', truthy, DEBUG_LABEL);

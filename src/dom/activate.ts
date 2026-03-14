@@ -6,7 +6,7 @@
  * an independent createRoot scope with try/catch error isolation.
  */
 
-import { createRoot } from 'forma/reactive';
+import { createRoot, __DEV__ } from 'forma/reactive';
 import { hydrateIsland } from './hydrate.js';
 
 /** Function that creates a component's DOM tree (same for CSR and hydration). */
@@ -57,7 +57,7 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
     const hydrateFn = registry[componentName];
 
     if (!hydrateFn) {
-      console.warn(`[forma] No hydrate function for island "${componentName}" (id=${id})`);
+      if (__DEV__) console.warn(`[forma] No hydrate function for island "${componentName}" (id=${id})`);
       root.setAttribute('data-forma-status', 'error');
       continue;
     }
@@ -66,7 +66,7 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
 
     // Stub triggers: warn and fall back to load
     if (trigger === 'interaction' || trigger === 'idle') {
-      console.warn(`[forma] Trigger "${trigger}" not yet implemented for island "${componentName}" (id=${id}), falling back to load`);
+      if (__DEV__) console.warn(`[forma] Trigger "${trigger}" not yet implemented for island "${componentName}" (id=${id}), falling back to load`);
     }
 
     if (trigger === 'visible') {
@@ -111,7 +111,7 @@ function hydrateIslandRoot(
 
     activeRoot.setAttribute('data-forma-status', 'active');
   } catch (err) {
-    console.error(`[forma] Island "${componentName}" (id=${id}) failed:`, err);
+    if (__DEV__) console.error(`[forma] Island "${componentName}" (id=${id}) failed:`, err);
     root.setAttribute('data-forma-status', 'error');
   }
 }
