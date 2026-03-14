@@ -141,7 +141,10 @@ export function isVNode(v: unknown): v is VNode {
 // Hydration-aware rendering
 // ---------------------------------------------------------------------------
 
-let hydrationId = 0;
+/** Per-render hydration context — avoids shared module-level counter. */
+interface HydrationContext {
+  id: number;
+}
 
 /**
  * Render a FormaJS virtual tree to an HTML string with hydration markers.
@@ -149,6 +152,10 @@ let hydrationId = 0;
  * Like `renderToString`, but injects comment markers and `data-forma-h`
  * attributes so the client-side `hydrate()` function can adopt existing
  * DOM nodes without re-creating them.
+ *
+ * Each call creates its own hydration counter, so concurrent calls
+ * (e.g. multiple SSR requests in the same process) produce independent,
+ * non-overlapping hydration IDs.
  *
  * Marker types:
  * - `data-forma-h="N"` — element boundary (attribute on the element)
@@ -168,16 +175,17 @@ let hydrationId = 0;
  * ```
  */
 export function renderToStringWithHydration(node: unknown): string {
-  hydrationId = 0; // reset counter per render
+  const ctx: HydrationContext = { id: 0 };
   const parts: string[] = [];
-  renderToBufferHydrated(node, parts);
+  renderToBufferHydrated(node, parts, ctx);
   return parts.join('');
 }
 
 /**
  * Internal: recursively render into a string array buffer with hydration markers.
+ * The `ctx` object carries the hydration counter so concurrent renders are isolated.
  */
-function renderToBufferHydrated(node: unknown, parts: string[]): void {
+function renderToBufferHydrated(node: unknown, parts: string[], ctx: HydrationContext): void {
   // null/undefined/boolean → empty
   if (node == null || node === true || node === false) return;
 
@@ -189,25 +197,25 @@ function renderToBufferHydrated(node: unknown, parts: string[]): void {
 
   // Function (signal getter / reactive text) → wrap with text markers
   if (typeof node === 'function') {
-    const id = hydrationId++;
+    const id = ctx.id++;
     parts.push(`<!--forma-t:${id}-->`);
-    renderToBufferHydrated(node(), parts);
+    renderToBufferHydrated(node(), parts, ctx);
     parts.push(`<!--/forma-t:${id}-->`);
     return;
   }
 
   // Array → wrap with list markers
   if (Array.isArray(node)) {
-    const id = hydrationId++;
+    const id = ctx.id++;
     parts.push(`<!--forma-l:${id}-->`);
-    for (const child of node) renderToBufferHydrated(child, parts);
+    for (const child of node) renderToBufferHydrated(child, parts, ctx);
     parts.push(`<!--/forma-l:${id}-->`);
     return;
   }
 
   // VNode
   if (isVNode(node)) {
-    const id = hydrationId++;
+    const id = ctx.id++;
     const { tag, props, children } = node;
 
     // Add hydration data-attribute to element
@@ -243,7 +251,7 @@ function renderToBufferHydrated(node: unknown, parts: string[]): void {
     } else {
       // Render children
       for (const child of children) {
-        renderToBufferHydrated(child, parts);
+        renderToBufferHydrated(child, parts, ctx);
       }
     }
 
