@@ -435,20 +435,47 @@ const UNSAFE_METHOD_NAMES = new Set([
 ]);
 
 /**
+ * Pre-compiled regexes for each blocked method name — avoids re-creating
+ * RegExp objects on every call.
+ */
+const BLOCKED_METHOD_REGEXES: Array<{ name: string; dotRe: RegExp; bracketRe: RegExp }> = (() => {
+  const result: Array<{ name: string; dotRe: RegExp; bracketRe: RegExp }> = [];
+  for (const name of UNSAFE_METHOD_NAMES) {
+    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    result.push({
+      name,
+      // Match as property access (.name) or bare identifier at start
+      dotRe: new RegExp(`(?:^|\\.)${escaped}(?:\\s*\\(|\\s*$|[^\\w$])`, 'm'),
+      // Match bracket access with single quotes, double quotes, or backticks
+      bracketRe: new RegExp(`\\[\\s*(?:'${escaped}'|"${escaped}"|` + '`' + escaped + '`' + `)\\s*\\]`),
+    });
+  }
+  return result;
+})();
+
+/**
  * Scan an expression string for any UNSAFE_METHOD_NAMES usage.
  * Uses word-boundary matching to avoid false positives on substrings
  * (e.g. "constructorValue" should not match "constructor").
+ *
+ * Before scanning:
+ * 1. Strips JS block comments (/* ... *​/) and line comments (// ...)
+ * 2. Normalizes whitespace around dots (e.g. "x . constructor" → "x.constructor")
+ * 3. Checks bracket access with backtick template literals
+ *
  * Returns the matched blocked name, or null if clean.
  */
 function findBlockedMethod(expr: string): string | null {
-  for (const name of UNSAFE_METHOD_NAMES) {
-    // Match as property access (.name), bracket access (['name']), or bare identifier
-    // Using word-boundary-aware check: the name must be preceded by a dot or start of string,
-    // and followed by a non-word char or end of string.
-    const re = new RegExp(`(?:^|\\.)${name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}(?:\\s*\\(|\\s*$|[^\\w$])`, 'm');
-    if (re.test(expr)) return name;
-    // Also check bracket access: ['constructor'], ["__proto__"]
-    if (expr.includes(`['${name}']`) || expr.includes(`["${name}"]`)) return name;
+  // Strip block comments (/* ... */)
+  let cleaned = expr.replace(/\/\*[\s\S]*?\*\//g, '');
+  // Strip line comments (// ... to end of line)
+  cleaned = cleaned.replace(/\/\/[^\n]*/g, '');
+  // Normalize whitespace around dots: "x . constructor" → "x.constructor"
+  cleaned = cleaned.replace(/\s*\.\s*/g, '.');
+
+  for (const { name, dotRe, bracketRe } of BLOCKED_METHOD_REGEXES) {
+    if (dotRe.test(cleaned)) return name;
+    if (bracketRe.test(cleaned)) return name;
   }
   return null;
 }

@@ -312,3 +312,61 @@ describe('fragment()', () => {
     expect(frag.textContent).toBe('helloworld');
   });
 });
+
+describe('h() — dangerouslySetInnerHTML validation', () => {
+  it('reactive function returning { __html: string } updates innerHTML', () => {
+    createRoot(() => {
+      const [html, setHtml] = createSignal({ __html: '<b>hello</b>' });
+      const el = h('div', { dangerouslySetInnerHTML: html });
+      expect(el.innerHTML).toBe('<b>hello</b>');
+
+      setHtml({ __html: '<i>updated</i>' });
+      expect(el.innerHTML).toBe('<i>updated</i>');
+    });
+  });
+
+  it('reactive function returning null clears innerHTML', () => {
+    createRoot(() => {
+      const [html, setHtml] = createSignal<{ __html: string } | null>({ __html: '<b>hello</b>' });
+      const el = h('div', { dangerouslySetInnerHTML: html });
+      expect(el.innerHTML).toBe('<b>hello</b>');
+
+      setHtml(null);
+      expect(el.innerHTML).toBe('');
+    });
+  });
+
+  it('static path throws TypeError for invalid shape (not an object)', () => {
+    expect(() => {
+      h('div', { dangerouslySetInnerHTML: 'not-an-object' });
+    }).toThrow(TypeError);
+  });
+
+  it('static path throws TypeError for object missing __html', () => {
+    expect(() => {
+      h('div', { dangerouslySetInnerHTML: { wrong: 'key' } });
+    }).toThrow(TypeError);
+  });
+
+  it('static path throws TypeError when __html is not a string', () => {
+    expect(() => {
+      h('div', { dangerouslySetInnerHTML: { __html: 42 } });
+    }).toThrow(TypeError);
+  });
+
+  it('reactive path throws TypeError for invalid shape', () => {
+    expect(() => {
+      createRoot(() => {
+        h('div', { dangerouslySetInnerHTML: () => 'not-an-object' });
+      });
+    }).toThrow(TypeError);
+  });
+
+  it('reactive path throws TypeError when __html is not a string', () => {
+    expect(() => {
+      createRoot(() => {
+        h('div', { dangerouslySetInnerHTML: () => ({ __html: 123 }) });
+      });
+    }).toThrow(TypeError);
+  });
+});

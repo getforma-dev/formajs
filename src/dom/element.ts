@@ -468,7 +468,18 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
   }
 
   if (key === 'dangerouslySetInnerHTML') {
-    el.innerHTML = (value as { __html: string }).__html;
+    if (typeof value !== 'object' || !('__html' in (value as any))) {
+      throw new TypeError(
+        'dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof value,
+      );
+    }
+    const html = (value as { __html: string }).__html;
+    if (typeof html !== 'string') {
+      throw new TypeError(
+        'dangerouslySetInnerHTML: __html must be a string, got ' + typeof html,
+      );
+    }
+    el.innerHTML = html;
     return;
   }
 

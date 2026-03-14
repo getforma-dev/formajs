@@ -27,6 +27,25 @@ describe('ssr integration', () => {
     expect(html).toContain('<!--forma-t:');
   });
 
+  it('concurrent renders produce independent hydration IDs', () => {
+    const html1 = renderToStringWithHydration(
+      sh('div', null, sh('span', null, 'A'), sh('span', null, 'B')),
+    );
+    const html2 = renderToStringWithHydration(
+      sh('div', null, sh('p', null, 'X'), sh('p', null, 'Y')),
+    );
+
+    // Both should start their hydration IDs at 0 (independent counters)
+    expect(html1).toContain('data-forma-h="0"');
+    expect(html2).toContain('data-forma-h="0"');
+
+    // Both should have sequential IDs for children
+    expect(html1).toContain('data-forma-h="1"');
+    expect(html1).toContain('data-forma-h="2"');
+    expect(html2).toContain('data-forma-h="1"');
+    expect(html2).toContain('data-forma-h="2"');
+  });
+
   it('streams fallback first and swap payload after suspense resolves', async () => {
     const stream = renderToStream(
       sh(

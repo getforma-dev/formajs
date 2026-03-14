@@ -69,4 +69,53 @@ describe('runtime unsafe-eval hardening', () => {
     expect(getUnsafeEvalMode()).toBe('locked-off');
     expect(container.querySelector('#out')?.textContent).toBe('0');
   });
+
+  it('blocks constructor in new Function path', () => {
+    setUnsafeEvalMode('mutable');
+    setUnsafeEval(true);
+
+    // Build container off-document to avoid MutationObserver auto-mount race
+    const offscreen = document.createElement('div');
+    offscreen.innerHTML = `
+      <div data-forma-state='{"x":0}'>
+        <button id="btn" data-on:click="{x.constructor('alert(1)')()}">hack</button>
+      </div>
+    `;
+
+    expect(() => {
+      mount(offscreen);
+    }).toThrow(/Blocked unsafe method "constructor"/);
+  });
+
+  it('catches template literal bracket access bypass attempt', () => {
+    setUnsafeEvalMode('mutable');
+    setUnsafeEval(true);
+
+    const offscreen = document.createElement('div');
+    offscreen.innerHTML = `
+      <div data-forma-state='{"x":0}'>
+        <button id="btn" data-on:click="{x[\`constructor\`]('alert(1)')()}">hack</button>
+      </div>
+    `;
+
+    expect(() => {
+      mount(offscreen);
+    }).toThrow(/Blocked unsafe method "constructor"/);
+  });
+
+  it('catches comment injection bypass attempt', () => {
+    setUnsafeEvalMode('mutable');
+    setUnsafeEval(true);
+
+    const offscreen = document.createElement('div');
+    offscreen.innerHTML = `
+      <div data-forma-state='{"x":0}'>
+        <button id="btn" data-on:click="{x./**/constructor('alert(1)')()}">hack</button>
+      </div>
+    `;
+
+    expect(() => {
+      mount(offscreen);
+    }).toThrow(/Blocked unsafe method "constructor"/);
+  });
 });

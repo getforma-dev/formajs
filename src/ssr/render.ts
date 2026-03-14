@@ -117,7 +117,17 @@ function renderToBuffer(node: unknown, parts: string[]): void {
 
     // dangerouslySetInnerHTML
     if (props?.['dangerouslySetInnerHTML']) {
-      parts.push((props['dangerouslySetInnerHTML'] as { __html: string }).__html);
+      const raw = props['dangerouslySetInnerHTML'];
+      if (typeof raw === 'object' && raw != null && '__html' in raw) {
+        const html = (raw as { __html: unknown }).__html;
+        if (typeof html === 'string') {
+          parts.push(html);
+        } else if (typeof console !== 'undefined') {
+          console.warn('[FormaJS SSR] dangerouslySetInnerHTML.__html must be a string, got ' + typeof html);
+        }
+      } else if (typeof console !== 'undefined') {
+        console.warn('[FormaJS SSR] dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof raw);
+      }
     } else {
       // Render children
       for (const child of children) {
@@ -247,7 +257,17 @@ function renderToBufferHydrated(node: unknown, parts: string[], ctx: HydrationCo
 
     // dangerouslySetInnerHTML
     if (props?.['dangerouslySetInnerHTML']) {
-      parts.push((props['dangerouslySetInnerHTML'] as { __html: string }).__html);
+      const raw = props['dangerouslySetInnerHTML'];
+      if (typeof raw === 'object' && raw != null && '__html' in raw) {
+        const html = (raw as { __html: unknown }).__html;
+        if (typeof html === 'string') {
+          parts.push(html);
+        } else if (typeof console !== 'undefined') {
+          console.warn('[FormaJS SSR] dangerouslySetInnerHTML.__html must be a string, got ' + typeof html);
+        }
+      } else if (typeof console !== 'undefined') {
+        console.warn('[FormaJS SSR] dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof raw);
+      }
     } else {
       // Render children
       for (const child of children) {
