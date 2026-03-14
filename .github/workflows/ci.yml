@@ -19,3 +19,15 @@ jobs:
       - run: npm run typecheck
       - run: npm run test:coverage
       - run: npm run build
+
+      - name: Check bundle size
+        run: |
+          MAX_SIZE=25000  # 25KB gzipped
+          INDEX_SIZE=$(gzip -c dist/index.js | wc -c)
+          RUNTIME_SIZE=$(gzip -c dist/formajs-runtime.global.js | wc -c)
+          echo "dist/index.js: ${INDEX_SIZE} bytes gzipped"
+          echo "dist/formajs-runtime.global.js: ${RUNTIME_SIZE} bytes gzipped"
+          if [ "$INDEX_SIZE" -gt "$MAX_SIZE" ]; then
+            echo "::error::Bundle size ${INDEX_SIZE} exceeds limit ${MAX_SIZE} bytes"
+            exit 1
+          fi

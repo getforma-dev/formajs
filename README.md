@@ -6,6 +6,18 @@
 
 Reactive DOM library with fine-grained signals. No virtual DOM — `h()` creates real elements, signals update only what changed. ~15KB gzipped.
 
+## Install
+
+```bash
+npm install @getforma/core
+```
+
+Or use the CDN (no build step required):
+
+```html
+<script src="https://unpkg.com/@getforma/core/dist/formajs-runtime.global.js"></script>
+```
+
 ## Why FormaJS?
 
 Most UI libraries make you choose: simple but limited (Alpine, htmx), or powerful but complex (React, Vue, Svelte). FormaJS gives you a single reactive core that scales from a CDN script tag to a full-stack Rust SSR pipeline.
@@ -36,7 +48,29 @@ Drop a script tag, write `data-*` attributes. Zero config, zero tooling.
 </div>
 ```
 
-Supports: `data-text`, `data-show`, `data-if`, `data-model`, `data-on:event`, `data-class:name`, `data-bind:attr`, `data-list`, `data-computed`, `data-persist`, `data-fetch`. CSP-safe expression parser — no `eval()` by default.
+#### Supported Directives
+
+| Directive | Description | Example |
+|-----------|-------------|---------|
+| `data-forma-state` | Declare reactive state (JSON) | `data-forma-state='{"count": 0}'` |
+| `data-text` | Bind text content | `data-text="{count}"` |
+| `data-show` | Toggle visibility (display) | `data-show="{isOpen}"` |
+| `data-if` | Conditional render (add/remove from DOM) | `data-if="{loggedIn}"` |
+| `data-model` | Two-way binding (inputs) | `data-model="{email}"` |
+| `data-on:event` | Event handler | `data-on:click="{count++}"` |
+| `data-class:name` | Conditional CSS class | `data-class:active="{isActive}"` |
+| `data-bind:attr` | Dynamic attribute | `data-bind:href="{url}"` |
+| `data-list` | List rendering with keyed reconciliation | `data-list="{items}"` |
+| `data-computed` | Computed value | `data-computed="doubled = count * 2"` |
+| `data-persist` | Persist state to localStorage | `data-persist="{count}"` |
+| `data-fetch` | Fetch data from URL | `data-fetch="GET /api/items → items"` |
+| `data-transition:*` | Enter/leave CSS transitions | `data-transition:enter="fade-in"` |
+
+CSP-safe expression parser — no `eval()` or `new Function()` by default. For strict CSP environments, use the hardened build:
+
+```html
+<script src="https://unpkg.com/@getforma/core/dist/formajs-runtime-hardened.global.js"></script>
+```
 
 ### 2. Hyperscript — `h()`
 
@@ -124,10 +158,10 @@ createShow(loggedIn,
 
 // createSwitch — multi-branch with caching
 const [view, setView] = createSignal('home');
-createSwitch(view, {
-  home: () => h('div', null, 'Home'),
-  settings: () => h('div', null, 'Settings'),
-});
+createSwitch(view, [
+  { match: 'home', render: () => h('div', null, 'Home') },
+  { match: 'settings', render: () => h('div', null, 'Settings') },
+], () => h('div', null, '404 Not Found'));
 ```
 
 ### List Rendering
@@ -163,6 +197,36 @@ state.user.name;        // 'Alice'
 // Mutate — only affected subscribers update
 setState('user', 'name', 'Bob');
 setState('items', items => [...items, 4]);
+```
+
+### Components
+
+```typescript
+import { defineComponent, onMount, onUnmount, h } from '@getforma/core';
+
+const Timer = defineComponent(() => {
+  const [seconds, setSeconds] = createSignal(0);
+
+  onMount(() => {
+    const id = setInterval(() => setSeconds(s => s + 1), 1000);
+    return () => clearInterval(id); // cleanup on unmount
+  });
+
+  return h('span', null, () => `${seconds()}s`);
+});
+
+document.body.appendChild(Timer());
+```
+
+### Context (Dependency Injection)
+
+```typescript
+import { createContext, provide, inject } from '@getforma/core';
+
+const ThemeCtx = createContext('light');
+
+provide(ThemeCtx, 'dark');
+const theme = inject(ThemeCtx); // 'dark'
 ```
 
 ## Islands Architecture
@@ -211,7 +275,7 @@ See the [`examples/`](./examples) directory:
 
 | Package | Description |
 |---------|-------------|
-| [@getforma/core](https://www.npmjs.com/package/@getforma/core) | This library |
+| [@getforma/core](https://www.npmjs.com/package/@getforma/core) | This library — `npm install @getforma/core` |
 | [@getforma/compiler](https://www.npmjs.com/package/@getforma/compiler) | SSR compiler — `.tsx` to FMIR binary |
 | [@getforma/build](https://www.npmjs.com/package/@getforma/build) | esbuild wrapper with JSX + SSR preconfigured |
 | [create-forma-app](https://www.npmjs.com/package/@getforma/create-app) | `npx @getforma/create-app` project scaffolder |
