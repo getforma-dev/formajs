@@ -11,6 +11,9 @@
 import { internalEffect } from 'forma/reactive';
 import { hydrating, type HydrationDescriptor } from './hydrate.js';
 
+/** Symbol used as JSX Fragment factory. h(Fragment, null, ...children) returns DocumentFragment. */
+export const Fragment = Symbol.for('forma.fragment');
+
 // ---------------------------------------------------------------------------
 // SVG namespace and tag detection
 // ---------------------------------------------------------------------------
@@ -533,11 +536,23 @@ function appendChild(parent: Node, child: unknown): void {
  * )
  * ```
  */
+// Overloads: Fragment returns DocumentFragment, string returns HTMLElement
+export function h(tag: typeof Fragment, props?: null, ...children: unknown[]): DocumentFragment;
+export function h(tag: string, props?: Record<string, unknown> | null, ...children: unknown[]): HTMLElement;
 export function h(
-  tag: string,
+  tag: string | typeof Fragment,
   props?: Record<string, unknown> | null,
   ...children: unknown[]
-): HTMLElement {
+): HTMLElement | DocumentFragment {
+  // Fragment: return DocumentFragment with children
+  if (tag === Fragment) {
+    const frag = document.createDocumentFragment();
+    for (const child of children) {
+      appendChild(frag, child);
+    }
+    return frag;
+  }
+
   if (hydrating) {
     return { type: 'element', tag, props: props ?? null, children } as unknown as HTMLElement;
   }

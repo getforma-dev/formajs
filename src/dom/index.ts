@@ -4,7 +4,7 @@
  * Re-exports all DOM module primitives.
  */
 
-export { h, fragment, cleanup } from './element.js';
+export { h, Fragment, fragment, cleanup } from './element.js';
 export { createText } from './text.js';
 export { mount } from './mount.js';
 export { createList, reconcileList, longestIncreasingSubsequence } from './list.js';
