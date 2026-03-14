@@ -230,6 +230,7 @@ if (buildUnsafeEvalMode) {
   _unsafeEvalMode = buildUnsafeEvalMode;
   if (_unsafeEvalMode === 'locked-off') _allowUnsafeEval = false;
   if (_unsafeEvalMode === 'locked-on') _allowUnsafeEval = true;
+  if (_unsafeEvalMode === 'mutable') _allowUnsafeEval = true;
 }
 
 const runtimeConfig = readRuntimeConfig();
@@ -1671,6 +1672,20 @@ function getScopeCache<T>(cache: WeakMap<Scope, Map<string, T>>, scope: Scope): 
   return scoped;
 }
 
+/** Build an actionable hint for expressions/handlers that failed CSP-safe parsing. */
+function cspExpressionHint(expr: string): string {
+  if (expr.includes('...')) {
+    return `Unsupported expression in CSP-safe mode: spread syntax detected. Use .concat() instead, or enable unsafe-eval via setUnsafeEval(true).`;
+  }
+  if (expr.includes('?.')) {
+    return `Unsupported expression in CSP-safe mode: optional chaining detected. Use "x && x.prop" instead, or enable unsafe-eval via setUnsafeEval(true).`;
+  }
+  if (expr.includes('=>')) {
+    return `Unsupported expression in CSP-safe mode: arrow function detected. Extract logic to a data-computed attribute, or enable unsafe-eval via setUnsafeEval(true).`;
+  }
+  return `Unsupported expression in CSP-safe mode. Simplify the expression or enable unsafe-eval via setUnsafeEval(true).`;
+}
+
 function buildEvaluator(expr: string, scope: Scope): () => unknown {
   const cleaned = expr.replace(RE_STRIP_BRACES, '').trim();
   const cache = getScopeCache(scopeExpressionCache, scope);
@@ -1687,7 +1702,7 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
   // Fallback to Function constructor (for complex expressions)
   if (!_allowUnsafeEval) {
     dbg('buildEvaluator: blocked unsafe eval fallback for expression:', cleaned);
-    reportDiagnostic('expression-unsupported', cleaned, 'Unsupported expression in CSP-safe mode');
+    reportDiagnostic('expression-unsupported', cleaned, cspExpressionHint(cleaned));
     const blocked = () => undefined;
     cache.set(cleaned, blocked);
     return blocked;
@@ -1717,7 +1732,7 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
     cache.set(cleaned, unsafe);
     return unsafe;
   } catch {
-    reportDiagnostic('expression-unsupported', cleaned, 'Expression failed to compile');
+    reportDiagnostic('expression-unsupported', cleaned, 'Expression too complex for CSP-safe mode. Enable unsafe-eval via FormaRuntime.unsafeEval = true, or use the standard (non-hardened) build.');
     const failed = () => undefined;
     cache.set(cleaned, failed);
     return failed;
@@ -1857,7 +1872,7 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
   // mutate state (e.g. "count++", "active = !active").
   if (!_allowUnsafeEval) {
     dbg('buildHandler: blocked unsafe eval fallback for expression:', cleaned);
-    reportDiagnostic('handler-unsupported', cleaned, 'Unsupported handler in CSP-safe mode');
+    reportDiagnostic('handler-unsupported', cleaned, cspExpressionHint(cleaned));
     const result: HandlerBuildResult = {
       handler: () => {},
       supported: false,
@@ -1907,7 +1922,7 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
     cache.set(cleaned, result);
     return result;
   } catch {
-    reportDiagnostic('handler-unsupported', cleaned, 'Handler failed to compile');
+    reportDiagnostic('handler-unsupported', cleaned, 'Expression too complex for CSP-safe mode. Enable unsafe-eval via FormaRuntime.unsafeEval = true, or use the standard (non-hardened) build.');
     const result: HandlerBuildResult = {
       handler: () => {},
       supported: false,
@@ -2798,6 +2813,7 @@ function setUnsafeEvalMode(mode: UnsafeEvalMode): void {
   _unsafeEvalMode = mode;
   if (mode === 'locked-off') _allowUnsafeEval = false;
   if (mode === 'locked-on') _allowUnsafeEval = true;
+  if (mode === 'mutable') _allowUnsafeEval = true;
   // Rebuild caches whenever policy changes.
   scopeExpressionCache = new WeakMap<Scope, Map<string, () => unknown>>();
   scopeHandlerCache = new WeakMap<Scope, Map<string, HandlerBuildResult>>();
