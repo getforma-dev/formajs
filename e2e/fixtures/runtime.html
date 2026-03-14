@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FormaJS Runtime E2E Tests</title>
+  <style>
+    .hidden { display: none; }
+    .highlight { background: yellow; }
+    .active { font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<!-- Test: data-text -->
+<section id="test-text">
+  <div data-forma-state='{"name": "Alice", "count": 0}'>
+    <p id="text-name" data-text="{name}"></p>
+    <p id="text-count" data-text="{count}"></p>
+    <p id="text-expr" data-text="{'Hello ' + name}"></p>
+    <button id="text-btn" data-on:click="{name = 'Bob'}">Change Name</button>
+    <button id="count-btn" data-on:click="{count++}">Increment</button>
+  </div>
+</section>
+
+<!-- Test: data-show -->
+<section id="test-show">
+  <div data-forma-state='{"visible": true}'>
+    <p id="show-target" data-show="{visible}">I am visible</p>
+    <button id="show-toggle" data-on:click="{visible = !visible}">Toggle</button>
+  </div>
+</section>
+
+<!-- Test: data-if -->
+<section id="test-if">
+  <div data-forma-state='{"loggedIn": false}'>
+    <p id="if-target" data-if="{loggedIn}">Welcome back!</p>
+    <button id="if-toggle" data-on:click="{loggedIn = !loggedIn}">Login</button>
+  </div>
+</section>
+
+<!-- Test: data-model (two-way binding) -->
+<section id="test-model">
+  <div data-forma-state='{"email": ""}'>
+    <input id="model-input" type="text" data-model="{email}" />
+    <p id="model-output" data-text="{email}"></p>
+  </div>
+</section>
+
+<!-- Test: data-class:name -->
+<section id="test-class">
+  <div data-forma-state='{"isActive": false}'>
+    <p id="class-target" data-class:active="{isActive}">Styled</p>
+    <button id="class-toggle" data-on:click="{isActive = !isActive}">Toggle Active</button>
+  </div>
+</section>
+
+<!-- Test: data-bind:attr -->
+<section id="test-bind">
+  <div data-forma-state='{"url": "https://example.com", "isDisabled": true}'>
+    <a id="bind-link" data-bind:href="{url}">Link</a>
+    <button id="bind-disabled" data-bind:disabled="{isDisabled}">Disabled Button</button>
+    <button id="bind-toggle" data-on:click="{isDisabled = !isDisabled}">Toggle Disabled</button>
+  </div>
+</section>
+
+<!-- Test: data-computed -->
+<section id="test-computed">
+  <div data-forma-state='{"price": 10, "qty": 3}'>
+    <p id="computed-total" data-text="{total}" data-computed="total = price * qty"></p>
+    <button id="computed-inc" data-on:click="{qty++}">Add One</button>
+  </div>
+</section>
+
+<!-- Test: data-on:click with counter -->
+<section id="test-events">
+  <div data-forma-state='{"clicks": 0}'>
+    <p id="event-count" data-text="{clicks}"></p>
+    <button id="event-btn" data-on:click="{clicks++}">Click Me</button>
+    <button id="event-reset" data-on:click="{clicks = 0}">Reset</button>
+  </div>
+</section>
+
+<!-- Test: data-list -->
+<section id="test-list">
+  <div data-forma-state='{"items": ["Apple", "Banana", "Cherry"]}'>
+    <ul id="list-container" data-list="{items}">
+      <li data-text="{item}"></li>
+    </ul>
+    <button id="list-add" data-on:click="{items = items.concat('Date')}">Add Date</button>
+  </div>
+</section>
+
+<!-- Test: data-persist -->
+<section id="test-persist">
+  <div data-forma-state='{"saved": "initial"}'>
+    <input id="persist-input" type="text" data-model="{saved}" />
+    <span data-persist="{saved}"></span>
+    <p id="persist-output" data-text="{saved}"></p>
+  </div>
+</section>
+
+<!-- Test: multiple state scopes are independent -->
+<section id="test-scopes">
+  <div data-forma-state='{"x": 1}'>
+    <p id="scope-a" data-text="{x}"></p>
+    <button id="scope-a-btn" data-on:click="{x++}">Inc A</button>
+  </div>
+  <div data-forma-state='{"x": 100}'>
+    <p id="scope-b" data-text="{x}"></p>
+    <button id="scope-b-btn" data-on:click="{x++}">Inc B</button>
+  </div>
+</section>
+
+<script src="/formajs-runtime.global.js"></script>
+</body>
+</html>
