@@ -268,10 +268,52 @@ function handleEvent(el: Element, key: string, value: unknown): void {
  * **Security:** No sanitization is performed. Never pass user-controlled
  * strings through `__html` — this will create an XSS vulnerability.
  * Only use with trusted, server-generated markup.
+ *
+ * Supports both static `{ __html: string }` values and reactive functions
+ * that return `{ __html: string }`.
  */
 function handleInnerHTML(el: Element, _key: string, value: unknown): void {
-  const v = value as { __html: string };
-  el.innerHTML = v.__html;
+  if (typeof value === 'function') {
+    internalEffect(() => {
+      const resolved = (value as () => unknown)();
+      if (resolved == null) {
+        el.innerHTML = '';
+        return;
+      }
+      if (typeof resolved !== 'object' || !('__html' in (resolved as any))) {
+        throw new TypeError(
+          'dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof resolved,
+        );
+      }
+      const html = (resolved as { __html: string }).__html;
+      if (typeof html !== 'string') {
+        throw new TypeError(
+          'dangerouslySetInnerHTML: __html must be a string, got ' + typeof html,
+        );
+      }
+      const cache = getCache(el);
+      if (cache['innerHTML'] === html) return;
+      cache['innerHTML'] = html;
+      el.innerHTML = html;
+    });
+  } else {
+    if (value == null) {
+      el.innerHTML = '';
+      return;
+    }
+    if (typeof value !== 'object' || !('__html' in (value as any))) {
+      throw new TypeError(
+        'dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof value,
+      );
+    }
+    const html = (value as { __html: string }).__html;
+    if (typeof html !== 'string') {
+      throw new TypeError(
+        'dangerouslySetInnerHTML: __html must be a string, got ' + typeof html,
+      );
+    }
+    el.innerHTML = html;
+  }
 }
 
 /** Handle xlink: namespaced SVG attributes. */
