@@ -28,7 +28,8 @@ export default defineConfig([
     esbuildOptions(options) {
       options.alias = formaAlias;
       // Enable pure annotations for tree-shaking
-      options.pure = ['createSignal', 'createComputed', 'createEffect', 'createStore', 'createBus'];
+      // createEffect is NOT pure — it registers reactive subscriptions as side effects
+      options.pure = ['createSignal', 'createComputed', 'createStore', 'createBus'];
     },
   },
   // IIFE global build — for <script src="formajs.min.js"> usage

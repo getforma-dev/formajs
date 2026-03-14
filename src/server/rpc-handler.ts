@@ -95,9 +95,14 @@ export async function handleRPC(
       return { data: result, __revalidate: revalidateData };
     }
 
-    return result as RPCResponse;
+    return { data: result };
   } catch (err) {
-    const message = err instanceof Error ? err.message : String(err);
+    // Don't leak internal error details to clients
+    const isDev = typeof process !== 'undefined'
+      && process.env?.NODE_ENV === 'development';
+    const message = isDev && err instanceof Error
+      ? err.message
+      : 'Internal server error';
     return { error: message };
   }
 }

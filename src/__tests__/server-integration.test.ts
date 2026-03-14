@@ -17,7 +17,7 @@ describe('server integration', () => {
     expect(getRegisteredEndpoints()).toContain(endpoint);
 
     const result = await handleRPC(endpoint, { args: [2, 3] });
-    expect(result as unknown).toBe(5);
+    expect(result).toEqual({ data: 5 });
   });
 
   it('blocks forbidden endpoint names', async () => {

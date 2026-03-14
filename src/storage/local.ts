@@ -53,8 +53,10 @@ export function createLocalStorage<T>(
     },
 
     set(value: T): void {
-      const serialized = serialize(value);
-      localStorage.setItem(key, serialized);
+      try {
+        const serialized = serialize(value);
+        localStorage.setItem(key, serialized);
+      } catch { /* QuotaExceededError or storage disabled — silently ignore */ }
     },
 
     remove(): void {

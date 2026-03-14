@@ -86,6 +86,11 @@ export function applyRevalidation(revalidateData: Record<string, unknown>): void
  * ```
  */
 export function enableAutoRevalidation(): () => void {
+  if (typeof window === 'undefined') {
+    // SSR/Node.js — no-op
+    return () => {};
+  }
+
   const handler = (event: Event) => {
     const detail = (event as CustomEvent).detail;
     if (detail && typeof detail === 'object') {

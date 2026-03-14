@@ -109,7 +109,7 @@
     "node": ">=18"
   },
   "dependencies": {
-    "alien-signals": "^1.0.0"
+    "alien-signals": "~1.0.0"
   },
   "overrides": {
     "rollup": "^4.59.0"

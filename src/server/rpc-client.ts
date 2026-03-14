@@ -12,7 +12,7 @@
  * @param endpoint - The RPC endpoint path (e.g. "/rpc/createTodo_a1b2c3")
  * @returns An async function that sends args to the server and returns the result
  */
-export function $$serverFunction<T extends (...args: any[]) => Promise<any>>(
+export function $$serverFunction<T extends (...args: unknown[]) => Promise<unknown>>(
   endpoint: string,
 ): T {
   const rpcFn = async (...args: unknown[]): Promise<unknown> => {

@@ -3,7 +3,7 @@
  * directive to dist/index.d.ts and dist/index.d.cts so consumers get
  * JSX types automatically when importing @getforma/core.
  */
-import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, readFileSync, writeFileSync, existsSync } from 'node:fs';
 
 const REF = '/// <reference path="./jsx.d.ts" />\n';
 
@@ -15,6 +15,16 @@ for (const file of ['dist/index.d.ts', 'dist/index.d.cts']) {
   const content = readFileSync(file, 'utf8');
   if (!content.includes('jsx.d.ts')) {
     writeFileSync(file, REF + content);
+  }
+}
+
+// Ensure runtime-hardened type declarations exist (same types as runtime)
+for (const ext of ['.d.ts', '.d.cts']) {
+  const src = `dist/runtime${ext}`;
+  const dest = `dist/runtime-hardened${ext}`;
+  if (existsSync(src) && !existsSync(dest)) {
+    copyFileSync(src, dest);
+    console.log(`post-build: copied ${src} → ${dest}`);
   }
 }
 
