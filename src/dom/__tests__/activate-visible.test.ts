@@ -71,7 +71,7 @@ describe('activateIslands visible trigger', () => {
 
     // Simulate intersection
     observerCallback(
-      [{ isIntersecting: true, target: el } as IntersectionObserverEntry],
+      [{ isIntersecting: true, target: el } as unknown as IntersectionObserverEntry],
       observerInstance as unknown as IntersectionObserver,
     );
 
@@ -86,7 +86,7 @@ describe('activateIslands visible trigger', () => {
     activateIslands({ Counter: hydrateFn });
 
     observerCallback(
-      [{ isIntersecting: false, target: el } as IntersectionObserverEntry],
+      [{ isIntersecting: false, target: el } as unknown as IntersectionObserverEntry],
       observerInstance as unknown as IntersectionObserver,
     );
 
