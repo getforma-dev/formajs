@@ -1339,6 +1339,119 @@ function cloneAttributeTemplates(el: Element, item: unknown): void {
   }
 }
 
+// ── Chained access / optional chaining parser ──
+
+/**
+ * Represents a single step in a property/method chain.
+ * - type 'prop': property access (`.name` or `?.name`)
+ * - type 'call': method call (`.method(args)` or `?.method(args)`)
+ */
+interface ChainStep {
+  type: 'prop' | 'call';
+  name: string;
+  optional: boolean; // true for `?.`
+  argFns?: Array<() => unknown>; // only for 'call' type
+}
+
+/**
+ * Parse an expression that starts with an identifier and is followed by
+ * zero or more chain steps: `.prop`, `?.prop`, `.method(args)`, `?.method(args)`.
+ * Returns null if the expression doesn't match this pattern.
+ *
+ * Handles: "user.name", "user?.name", "str.trim().toUpperCase()",
+ * "obj?.method()", "items.filter(x).map(y)", "a.b.c.d" (any depth).
+ */
+function parseChainedAccess(expr: string, scope: Scope): (() => unknown) | null {
+  // Must start with an identifier (or Math)
+  let pos = 0;
+  const identMatch = expr.match(/^[a-zA-Z_$]\w*/);
+  if (!identMatch) return null;
+
+  const rootName = identMatch[0]!;
+  pos = rootName.length;
+
+  // Must have at least one chain step after the identifier
+  if (pos >= expr.length) return null;
+  // Next char must be '.' or '?' (for '?.')
+  if (expr[pos] !== '.' && !(expr[pos] === '?' && expr[pos + 1] === '.')) return null;
+
+  const steps: ChainStep[] = [];
+
+  while (pos < expr.length) {
+    let optional = false;
+
+    // Check for `?.` (optional chaining) or `.` (regular access)
+    if (expr[pos] === '?' && expr[pos + 1] === '.') {
+      optional = true;
+      pos += 2;
+    } else if (expr[pos] === '.') {
+      pos += 1;
+    } else {
+      // Not a chain continuation — unexpected character
+      return null;
+    }
+
+    // Parse property/method name
+    const nameMatch = expr.slice(pos).match(/^\w+/);
+    if (!nameMatch) return null;
+    const name = nameMatch[0]!;
+    pos += name.length;
+
+    if (UNSAFE_METHOD_NAMES.has(name)) return () => undefined;
+
+    // Check if this is a method call: followed by `(`
+    if (pos < expr.length && expr[pos] === '(') {
+      const balanced = readBalancedSegment(expr, pos, '(', ')');
+      if (!balanced) return null;
+
+      const argsRaw = balanced.inner.trim();
+      const argFns: Array<() => unknown> = [];
+      for (const arg of splitCallArgs(argsRaw)) {
+        const parsed = parseExpression(arg, scope);
+        if (!parsed) return null;
+        argFns.push(parsed);
+      }
+
+      steps.push({ type: 'call', name, optional, argFns });
+      pos = balanced.end + 1;
+    } else {
+      steps.push({ type: 'prop', name, optional });
+    }
+  }
+
+  // If we didn't consume the entire expression, this isn't a simple chain
+  if (pos !== expr.length) return null;
+
+  // If there are no steps, fall back (just an identifier)
+  if (steps.length === 0) return null;
+
+  // Build the root expression getter
+  const rootExpr = rootName === 'Math'
+    ? (() => Math)
+    : (() => scope.getters[rootName]?.());
+
+  return () => {
+    let val: any = rootExpr();
+    for (const step of steps) {
+      if (val == null) {
+        if (step.optional) return undefined;
+        // Non-optional access on null/undefined — use ?. semantics
+        // (existing behavior used ?. for dot access)
+        return undefined;
+      }
+      if (step.type === 'prop') {
+        val = val[step.name];
+      } else {
+        const method = val[step.name];
+        if (typeof method !== 'function') return undefined;
+        const args = step.argFns!.map(fn => fn());
+        val = method.apply(val, args);
+      }
+    }
+    return val;
+  };
+}
+
 // ── CSP-safe expression parser ──
 
 /**
@@ -1425,30 +1538,15 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
     return () => scope.getters[expr]?.();
   }
 
-  // Dot access: "user.name", "items.length"
-  const dotMatch = expr.match(RE_DOT_ACCESS);
-  if (dotMatch) {
-    const p1 = dotMatch[1]!, p2 = dotMatch[2]!;
-    return () => {
-      const obj = scope.getters[p1]?.();
-      return (obj as any)?.[p2];
-    };
+  // Chained access / method calls / optional chaining:
+  // "user.name", "user?.name", "str.trim().toUpperCase()", "obj?.method()", "items.filter(x).map(y)"
+  // Also handles simple dot access, deep dot access, and single method calls.
+  {
+    const chainResult = parseChainedAccess(expr, scope);
+    if (chainResult) return chainResult;
   }
 
-  // Deep dot access: "user.address.city" (up to 4 levels)
-  const deepDotMatch = expr.match(RE_DEEP_DOT);
-  if (deepDotMatch) {
-    const p1 = deepDotMatch[1]!, p2 = deepDotMatch[2]!, p3 = deepDotMatch[3]!, p4 = deepDotMatch[4];
-    return () => {
-      let val: any = scope.getters[p1]?.();
-      val = val?.[p2];
-      val = val?.[p3];
-      if (p4) val = val?.[p4];
-      return val;
-    };
-  }
-
-  // Method call: "num.toLocaleString()", "Math.floor(x)"
+  // Grouped method call: "(expr).method(args)" — base is a parenthesized expression
   const groupedCallMatch = expr.match(RE_GROUP_METHOD_CALL);
   if (groupedCallMatch) {
     const baseRaw = groupedCallMatch[1]!.trim();
@@ -1458,36 +1556,6 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
     if (UNSAFE_METHOD_NAMES.has(methodName)) return () => undefined;
 
     const baseExpr = parseExpression(baseRaw, scope);
-    if (!baseExpr) return null;
-
-    const argFns: Array<() => unknown> = [];
-    for (const arg of splitCallArgs(argsRaw)) {
-      const parsed = parseExpression(arg, scope);
-      if (!parsed) return null;
-      argFns.push(parsed);
-    }
-
-    return () => {
-      const base = baseExpr() as any;
-      const method = base?.[methodName];
-      if (typeof method !== 'function') return undefined;
-      const args = argFns.map(fn => fn());
-      return method.apply(base, args);
-    };
-  }
-
-  // Method call: "num.toLocaleString()", "Math.floor(x)"
-  const callMatch = expr.match(RE_METHOD_CALL);
-  if (callMatch) {
-    const baseName = callMatch[1]!;
-    const methodName = callMatch[2]!;
-    const argsRaw = callMatch[3]!.trim();
-
-    if (UNSAFE_METHOD_NAMES.has(methodName)) return () => undefined;
-
-    const baseExpr = baseName === 'Math'
-      ? (() => Math)
-      : parseExpression(baseName, scope);
     if (!baseExpr) return null;
 
     const argFns: Array<() => unknown> = [];
@@ -1525,6 +1593,29 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
     }
     if (objExpr) {
       return () => (objExpr() as any)?.[key];
+    }
+  }
+
+  // Array literal: "[1, 2, 3]", "[item.name, item.id]", "['a', 'b']"
+  if (expr.startsWith('[')) {
+    const balanced = readBalancedSegment(expr, 0, '[', ']');
+    if (balanced && balanced.end === expr.length - 1) {
+      const inner = balanced.inner.trim();
+      if (inner === '') {
+        // Empty array: []
+        return () => [];
+      }
+      const elements = splitCallArgs(inner);
+      const elementFns: Array<() => unknown> = [];
+      let allParsed = true;
+      for (const el of elements) {
+        const parsed = parseExpression(el.trim(), scope);
+        if (!parsed) { allParsed = false; break; }
+        elementFns.push(parsed);
+      }
+      if (allParsed) {
+        return () => elementFns.map(fn => fn());
+      }
     }
   }
 
@@ -1677,9 +1768,7 @@ function cspExpressionHint(expr: string): string {
   if (expr.includes('...')) {
     return `Unsupported expression in CSP-safe mode: spread syntax detected. Use .concat() instead, or enable unsafe-eval via setUnsafeEval(true).`;
   }
-  if (expr.includes('?.')) {
-    return `Unsupported expression in CSP-safe mode: optional chaining detected. Use "x && x.prop" instead, or enable unsafe-eval via setUnsafeEval(true).`;
-  }
+  // Note: optional chaining (?.) is now supported by the CSP-safe parser.
   if (expr.includes('=>')) {
     return `Unsupported expression in CSP-safe mode: arrow function detected. Extract logic to a data-computed attribute, or enable unsafe-eval via setUnsafeEval(true).`;
   }
