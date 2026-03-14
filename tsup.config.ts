@@ -10,6 +10,7 @@ export default defineConfig([
       runtime: 'src/runtime.ts',
       'tc39-compat': 'src/reactive/tc39-compat.ts',
       'ssr/index': 'src/ssr/index.ts',
+      'directives/index': 'src/directives/index.ts',
     },
     format: ['esm', 'cjs'],
     dts: true,
@@ -97,6 +98,24 @@ export default defineConfig([
     define: {
       '__DEV__': 'false',
       '__FORMA_UNSAFE_EVAL_MODE__': '"locked-off"',
+    },
+    esbuildOptions(options) {
+      options.alias = formaAlias;
+    },
+  },
+  // IIFE directives build — for <script src="formajs-directives.js"> zero-build-step usage
+  {
+    entry: { 'formajs-directives': 'src/directives/index.ts' },
+    format: ['iife'],
+    globalName: 'FormaDirectives',
+    outDir: 'dist',
+    minify: true,
+    sourcemap: true,
+    target: 'es2022',
+    platform: 'browser',
+    define: {
+      '__DEV__': 'false',
+      '__FORMA_UNSAFE_EVAL_MODE__': '"mutable"',
     },
     esbuildOptions(options) {
       options.alias = formaAlias;

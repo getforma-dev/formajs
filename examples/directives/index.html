@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FormaJS Directives Demo</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, -apple-system, sans-serif; max-width: 720px; margin: 2rem auto; padding: 0 1rem; color: #1a1a1a; line-height: 1.6; }
+    h1 { margin-bottom: 0.5rem; }
+    h2 { margin: 2rem 0 0.5rem; color: #333; border-bottom: 1px solid #ddd; padding-bottom: 0.25rem; }
+    section { margin-bottom: 2rem; padding: 1rem; border: 1px solid #e0e0e0; border-radius: 8px; background: #fafafa; }
+    button { padding: 0.4rem 0.8rem; border: 1px solid #999; border-radius: 4px; background: #fff; cursor: pointer; font-size: 0.9rem; }
+    button:hover { background: #f0f0f0; }
+    input, select, textarea { padding: 0.4rem; border: 1px solid #ccc; border-radius: 4px; font-size: 0.9rem; }
+    code { background: #eee; padding: 0.15rem 0.3rem; border-radius: 3px; font-size: 0.85rem; }
+    .active { color: green; font-weight: bold; }
+    .highlight { background: yellow; }
+    ul { margin-left: 1.5rem; }
+    pre { background: #272822; color: #f8f8f2; padding: 1rem; border-radius: 4px; overflow-x: auto; font-size: 0.85rem; margin: 0.5rem 0; }
+  </style>
+</head>
+<body>
+
+  <h1>FormaJS Directives</h1>
+  <p>Zero-build-step reactive HTML. Just add <code>data-forma-*</code> attributes.</p>
+
+  <!-- ================================================================= -->
+  <h2>Counter (data-forma-text, data-forma-click)</h2>
+  <!-- ================================================================= -->
+  <section data-forma-state="{ count: 0 }">
+    <p>Count: <strong data-forma-text="count"></strong></p>
+    <button data-forma-click="count++">Increment</button>
+    <button data-forma-click="count--">Decrement</button>
+    <button data-forma-click="count = 0">Reset</button>
+  </section>
+
+  <!-- ================================================================= -->
+  <h2>Two-Way Binding (data-forma-model)</h2>
+  <!-- ================================================================= -->
+  <section data-forma-state="{ name: '', agreed: false }">
+    <div style="margin-bottom: 0.5rem">
+      <label>Name: <input data-forma-model="name" placeholder="Type your name"></label>
+    </div>
+    <p data-forma-show="name.length > 0" data-forma-text="'Hello, ' + name + '!'"></p>
+    <div style="margin-top: 0.5rem">
+      <label><input type="checkbox" data-forma-model="agreed"> I agree to the terms</label>
+    </div>
+    <p data-forma-show="agreed"><strong>Thank you for agreeing!</strong></p>
+  </section>
+
+  <!-- ================================================================= -->
+  <h2>Show / Hide (data-forma-show, data-forma-hide)</h2>
+  <!-- ================================================================= -->
+  <section data-forma-state="{ visible: true }">
+    <button data-forma-click="visible = !visible" data-forma-text="visible ? 'Hide' : 'Show'"></button>
+    <p data-forma-show="visible" style="margin-top: 0.5rem">This paragraph is conditionally visible.</p>
+    <p data-forma-hide="visible" style="margin-top: 0.5rem; color: #999;">The other paragraph is hidden right now.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <h2>Conditional Rendering (data-forma-if)</h2>
+  <!-- ================================================================= -->
+  <section data-forma-state="{ loggedIn: false }">
+    <button data-forma-click="loggedIn = !loggedIn" data-forma-text="loggedIn ? 'Log Out' : 'Log In'"></button>
+    <p data-forma-if="loggedIn" style="margin-top: 0.5rem; color: green;">Welcome back! You are logged in.</p>
+    <p data-forma-if="!loggedIn" style="margin-top: 0.5rem; color: #999;">Please log in.</p>
+  </section>
+
+  <!-- ================================================================= -->
+  <h2>Dynamic Classes (data-forma-class)</h2>
+  <!-- ================================================================= -->
+  <section data-forma-state="{ isActive: false, isHighlighted: false }">
+    <p data-forma-class="{ active: isActive, highlight: isHighlighted }">
+      This text can be styled dynamically.
+    </p>
+    <div style="margin-top: 0.5rem">
+      <button data-forma-click="isActive = !isActive">Toggle Active</button>
+      <button data-forma-click="isHighlighted = !isHighlighted">Toggle Highlight</button>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <h2>Dynamic Attributes (data-forma-attr)</h2>
+  <!-- ================================================================= -->
+  <section data-forma-state="{ loading: false }">
+    <button
+      data-forma-attr="{ disabled: loading }"
+      data-forma-text="loading ? 'Loading...' : 'Submit'"
+      data-forma-click="loading = true"
+    ></button>
+    <button data-forma-click="loading = false" style="margin-left: 0.5rem">Reset</button>
+  </section>
+
+  <!-- ================================================================= -->
+  <h2>List Rendering (data-forma-for)</h2>
+  <!-- ================================================================= -->
+  <section data-forma-state="{ fruits: ['Apple', 'Banana', 'Cherry'], newFruit: '' }">
+    <ul>
+      <li data-forma-for="fruit in fruits" data-forma-text="fruit"></li>
+    </ul>
+    <div style="margin-top: 0.5rem">
+      <input data-forma-model="newFruit" placeholder="Add a fruit">
+      <button data-forma-click="fruits = newFruit ? [...fruits, newFruit] : fruits; newFruit = ''">Add</button>
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <h2>HTML Content (data-forma-html)</h2>
+  <!-- ================================================================= -->
+  <section data-forma-state="{ markup: '<em>Italic</em> and <strong>Bold</strong>' }">
+    <div data-forma-html="markup"></div>
+    <div style="margin-top: 0.5rem">
+      <input data-forma-model="markup" style="width: 100%" placeholder="Enter HTML">
+    </div>
+  </section>
+
+  <!-- ================================================================= -->
+  <h2>Multiple Independent Scopes</h2>
+  <!-- ================================================================= -->
+  <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 1rem;">
+    <section data-forma-state="{ count: 0 }">
+      <p>Scope A: <strong data-forma-text="count"></strong></p>
+      <button data-forma-click="count++">+1</button>
+    </section>
+    <section data-forma-state="{ count: 100 }">
+      <p>Scope B: <strong data-forma-text="count"></strong></p>
+      <button data-forma-click="count++">+1</button>
+    </section>
+  </div>
+
+  <script src="../../dist/formajs-directives.global.js"></script>
+</body>
+</html>
