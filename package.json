@@ -57,16 +57,6 @@
         "types": "./dist/ssr/index.d.cts",
         "default": "./dist/ssr/index.cjs"
       }
-    },
-    "./directives": {
-      "import": {
-        "types": "./dist/directives/index.d.ts",
-        "default": "./dist/directives/index.js"
-      },
-      "require": {
-        "types": "./dist/directives/index.d.cts",
-        "default": "./dist/directives/index.cjs"
-      }
     }
   },
   "files": [
@@ -79,8 +69,7 @@
     "./dist/runtime-hardened.js",
     "./dist/runtime-hardened.cjs",
     "./dist/formajs-runtime.global.js",
-    "./dist/formajs-runtime-hardened.global.js",
-    "./dist/formajs-directives.global.js"
+    "./dist/formajs-runtime-hardened.global.js"
   ],
   "scripts": {
     "build": "tsup && node scripts/post-build.mjs",
