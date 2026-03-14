@@ -122,11 +122,11 @@ function renderToBuffer(node: unknown, parts: string[]): void {
         const html = (raw as { __html: unknown }).__html;
         if (typeof html === 'string') {
           parts.push(html);
-        } else if (typeof console !== 'undefined') {
-          console.warn('[FormaJS SSR] dangerouslySetInnerHTML.__html must be a string, got ' + typeof html);
+        } else {
+          throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
         }
-      } else if (typeof console !== 'undefined') {
-        console.warn('[FormaJS SSR] dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof raw);
+      } else {
+        throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
       }
     } else {
       // Render children
@@ -262,11 +262,11 @@ function renderToBufferHydrated(node: unknown, parts: string[], ctx: HydrationCo
         const html = (raw as { __html: unknown }).__html;
         if (typeof html === 'string') {
           parts.push(html);
-        } else if (typeof console !== 'undefined') {
-          console.warn('[FormaJS SSR] dangerouslySetInnerHTML.__html must be a string, got ' + typeof html);
+        } else {
+          throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
         }
-      } else if (typeof console !== 'undefined') {
-        console.warn('[FormaJS SSR] dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof raw);
+      } else {
+        throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
       }
     } else {
       // Render children

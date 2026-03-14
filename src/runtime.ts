@@ -379,7 +379,7 @@ const RE_FETCH_METHOD = /^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i;
 const RE_STRIP_ITEM_BRACES = /^\{item\.?|\}$/g;
 // Detect expressions referencing DOM event parameters — these can't be resolved
 // through scope getters and must fall through to the new Function handler path.
-const RE_EVENT_REF = /\bevent\b|\$event\b/;
+const RE_EVENT_REF = /\bevent\s*[.([]|\$event\b/;
 const RE_REFETCH_CALL = /^\$refetch\(\s*['"]([^'"]+)['"]\s*\)$/;
 
 interface TransitionSpec {
@@ -435,7 +435,7 @@ const compiledTemplateCache = new Map<string, CompiledTemplate>();
 const UNSAFE_METHOD_NAMES = new Set([
   'constructor', '__proto__', 'prototype',
   '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
-  'eval',
+  'eval', 'Function',
 ]);
 
 /**
