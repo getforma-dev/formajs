@@ -11,8 +11,15 @@
 import { internalEffect } from 'forma/reactive';
 import { hydrating, type HydrationDescriptor } from './hydrate.js';
 
-/** Symbol used as JSX Fragment factory. h(Fragment, null, ...children) returns DocumentFragment. */
-export const Fragment = Symbol.for('forma.fragment');
+/**
+ * Symbol used as JSX Fragment factory. h(Fragment, null, ...children) returns DocumentFragment.
+ *
+ * Typed as a callable for TypeScript's JSX checker — at runtime it's a symbol
+ * that h() detects via `tag === Fragment`. esbuild transforms `<>...</>` into
+ * `h(Fragment, null, ...)` which never actually calls Fragment.
+ */
+export const Fragment: (props: { children?: unknown }) => DocumentFragment =
+  Symbol.for('forma.fragment') as any;
 
 // ---------------------------------------------------------------------------
 // SVG namespace and tag detection
@@ -553,8 +560,11 @@ export function h(
     return frag;
   }
 
+  // After the Fragment guard above, tag is guaranteed to be a string
+  const tagName = tag as string;
+
   if (hydrating) {
-    return { type: 'element', tag, props: props ?? null, children } as unknown as HTMLElement;
+    return { type: 'element', tag: tagName, props: props ?? null, children } as unknown as HTMLElement;
   }
 
   // "Flexible Wings" exploit: for HTML elements, clone a pre-created prototype
@@ -562,12 +572,12 @@ export function h(
   // that copies the element's internal state without parsing the tag string.
   // Skip the SVG Set lookup entirely when the tag is in the proto cache (hot path).
   let el: Element;
-  if (ELEMENT_PROTOS && ELEMENT_PROTOS[tag]) {
-    el = ELEMENT_PROTOS[tag]!.cloneNode(false) as HTMLElement;
-  } else if (SVG_TAGS.has(tag)) {
-    el = document.createElementNS(SVG_NS, tag);
+  if (ELEMENT_PROTOS && ELEMENT_PROTOS[tagName]) {
+    el = ELEMENT_PROTOS[tagName]!.cloneNode(false) as HTMLElement;
+  } else if (SVG_TAGS.has(tagName)) {
+    el = document.createElementNS(SVG_NS, tagName);
   } else {
-    el = getProto(tag).cloneNode(false) as HTMLElement;
+    el = getProto(tagName).cloneNode(false) as HTMLElement;
   }
 
   // "Blown Diffuser" exploit: split props into static and dynamic paths.

@@ -72,7 +72,7 @@
     "./dist/formajs-runtime-hardened.global.js"
   ],
   "scripts": {
-    "build": "tsup",
+    "build": "tsup && node scripts/post-build.mjs",
     "pack:release": "npm run build && npm pack --pack-destination releases",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",

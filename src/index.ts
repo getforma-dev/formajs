@@ -1,3 +1,5 @@
+/// <reference path="./jsx.d.ts" />
+
 // Reactive core
 export {
   createSignal, createEffect, createComputed, createMemo, batch,

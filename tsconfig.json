@@ -10,6 +10,9 @@
     "rootDir": "./src",
     "sourceMap": true,
     "skipLibCheck": true,
+    "jsx": "react",
+    "jsxFactory": "h",
+    "jsxFragmentFactory": "Fragment",
     "paths": {
       "forma/*": ["./src/*"]
     }

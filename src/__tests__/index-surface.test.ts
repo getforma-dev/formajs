@@ -6,6 +6,7 @@ describe('public api surface', () => {
     expect(typeof forma.createSignal).toBe('function');
     expect(typeof forma.createEffect).toBe('function');
     expect(typeof forma.h).toBe('function');
+    expect(typeof forma.Fragment).toBe('symbol');
     expect(typeof forma.mount).toBe('function');
   });
 
