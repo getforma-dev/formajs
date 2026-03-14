@@ -127,12 +127,12 @@ mount(() => <Counter />, '#app');
 
 ### Standard (recommended)
 ```html
-<script src="https://unpkg.com/@getforma/core/dist/runtime.js"></script>
+<script src="https://unpkg.com/@getforma/core/dist/forma-runtime.js"></script>
 ```
 
 ### CSP-Safe (strict Content-Security-Policy)
 ```html
-<script src="https://unpkg.com/@getforma/core/dist/runtime-csp.js"></script>
+<script src="https://unpkg.com/@getforma/core/dist/forma-runtime-csp.js"></script>
 ```
 
 > The CSP build uses a hand-written expression parser and never calls `new Function`.

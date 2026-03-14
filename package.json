@@ -86,7 +86,8 @@
     "./dist/runtime-hardened.cjs",
     "./dist/formajs-runtime.global.js",
     "./dist/formajs-runtime-hardened.global.js",
-    "./dist/runtime-csp.js"
+    "./dist/forma-runtime.js",
+    "./dist/forma-runtime-csp.js"
   ],
   "scripts": {
     "build": "tsup && node scripts/post-build.mjs",
