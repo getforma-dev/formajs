@@ -71,4 +71,31 @@ describe('ssr integration', () => {
     expect(output).toContain('Resolved!');
     expect(output).toContain('forma-s:0');
   });
+
+  it('SSR throws TypeError for invalid dangerouslySetInnerHTML (wrong shape)', () => {
+    expect(() => {
+      renderToString(sh('div', { dangerouslySetInnerHTML: 'bad' }));
+    }).toThrow(TypeError);
+    expect(() => {
+      renderToString(sh('div', { dangerouslySetInnerHTML: 'bad' }));
+    }).toThrow('dangerouslySetInnerHTML must be { __html: string }');
+  });
+
+  it('SSR throws TypeError for invalid dangerouslySetInnerHTML (non-string __html)', () => {
+    expect(() => {
+      renderToString(sh('div', { dangerouslySetInnerHTML: { __html: 123 } }));
+    }).toThrow(TypeError);
+    expect(() => {
+      renderToString(sh('div', { dangerouslySetInnerHTML: { __html: 123 } }));
+    }).toThrow('dangerouslySetInnerHTML must be { __html: string }');
+  });
+
+  it('SSR hydration throws TypeError for invalid dangerouslySetInnerHTML', () => {
+    expect(() => {
+      renderToStringWithHydration(sh('div', { dangerouslySetInnerHTML: 42 }));
+    }).toThrow(TypeError);
+    expect(() => {
+      renderToStringWithHydration(sh('div', { dangerouslySetInnerHTML: { __html: false } }));
+    }).toThrow('dangerouslySetInnerHTML must be { __html: string }');
+  });
 });

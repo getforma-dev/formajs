@@ -118,4 +118,36 @@ describe('runtime unsafe-eval hardening', () => {
       mount(offscreen);
     }).toThrow(/Blocked unsafe method "constructor"/);
   });
+
+  it('blocks .Function() access in handler', () => {
+    setUnsafeEvalMode('mutable');
+    setUnsafeEval(true);
+
+    const offscreen = document.createElement('div');
+    offscreen.innerHTML = `
+      <div data-forma-state='{"x": 0}'>
+        <button id="btn" data-on:click="x.Function('return 1')()">go</button>
+      </div>
+    `;
+
+    expect(() => {
+      mount(offscreen);
+    }).toThrow(/Blocked unsafe method "Function"/);
+  });
+
+  it('blocks .__proto__ access in handler', () => {
+    setUnsafeEvalMode('mutable');
+    setUnsafeEval(true);
+
+    const offscreen = document.createElement('div');
+    offscreen.innerHTML = `
+      <div data-forma-state='{"x": 0}'>
+        <button id="btn" data-on:click="x.__proto__.polluted = true">go</button>
+      </div>
+    `;
+
+    expect(() => {
+      mount(offscreen);
+    }).toThrow(/Blocked unsafe method "__proto__"/);
+  });
 });
