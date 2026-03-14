@@ -7,6 +7,7 @@ export {
   setAttr,
   setText,
   setHTML,
+  setHTMLUnsafe,
 } from './mutate';
 export {
   closest,

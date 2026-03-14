@@ -262,7 +262,13 @@ function handleEvent(el: Element, key: string, value: unknown): void {
   );
 }
 
-/** Handle dangerouslySetInnerHTML prop. */
+/**
+ * Handle dangerouslySetInnerHTML prop.
+ *
+ * **Security:** No sanitization is performed. Never pass user-controlled
+ * strings through `__html` — this will create an XSS vulnerability.
+ * Only use with trusted, server-generated markup.
+ */
 function handleInnerHTML(el: Element, _key: string, value: unknown): void {
   const v = value as { __html: string };
   el.innerHTML = v.__html;

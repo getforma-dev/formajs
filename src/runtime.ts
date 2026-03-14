@@ -428,7 +428,11 @@ interface CompiledTemplate {
 }
 
 const compiledTemplateCache = new Map<string, CompiledTemplate>();
-const UNSAFE_METHOD_NAMES = new Set(['constructor', '__proto__', 'prototype']);
+const UNSAFE_METHOD_NAMES = new Set([
+  'constructor', '__proto__', 'prototype',
+  '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
+  'eval',
+]);
 const TEXT_BINDING_SYM = Symbol.for('forma-text-binding-cache');
 
 interface TextBindingCache {
@@ -1848,17 +1852,25 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
 
 // ── State initialization ──
 
+const FORBIDDEN_STATE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 function parseState(raw: string): Record<string, unknown> {
+  let parsed: Record<string, unknown>;
   try {
-    return JSON.parse(raw);
+    parsed = JSON.parse(raw);
   } catch {
     // Relaxed: unquoted keys
     try {
-      return JSON.parse(raw.replace(RE_UNQUOTED_KEYS, '"$1":'));
+      parsed = JSON.parse(raw.replace(RE_UNQUOTED_KEYS, '"$1":'));
     } catch {
       return {};
     }
   }
+  // Strip prototype-pollution keys
+  for (const key of FORBIDDEN_STATE_KEYS) {
+    if (key in parsed) delete parsed[key];
+  }
+  return parsed;
 }
 
 // ── DOM scanner ──

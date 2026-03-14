@@ -13,11 +13,13 @@ import { createSignal } from 'forma/reactive/index.js';
 
 export type WSStatus = 'connecting' | 'open' | 'closed' | 'error';
 
-export interface WSOptions {
+export interface WSOptions<TReceive = unknown> {
   protocols?: string | string[];
   reconnect?: boolean; // default true
   reconnectInterval?: number; // ms, default 1000
   maxReconnects?: number; // default 5
+  /** Custom parser for incoming messages. Defaults to JSON.parse with raw data fallback. */
+  parse?: (data: string) => TReceive;
 }
 
 export interface WSConnection<TSend = unknown, TReceive = unknown> {
@@ -46,7 +48,7 @@ export interface WSConnection<TSend = unknown, TReceive = unknown> {
  */
 export function createWebSocket<TSend = unknown, TReceive = unknown>(
   url: string,
-  options?: WSOptions,
+  options?: WSOptions<TReceive>,
 ): WSConnection<TSend, TReceive> {
   const shouldReconnect = options?.reconnect ?? true;
   const baseInterval = options?.reconnectInterval ?? 1000;
@@ -73,13 +75,13 @@ export function createWebSocket<TSend = unknown, TReceive = unknown>(
       reconnectCount = 0; // Reset on successful connection
     };
 
+    const parseMessage = options?.parse ?? ((raw: string): TReceive => {
+      try { return JSON.parse(raw) as TReceive; }
+      catch { return raw as TReceive; }
+    });
+
     socket.onmessage = (event: MessageEvent) => {
-      let parsed: TReceive;
-      try {
-        parsed = JSON.parse(event.data as string) as TReceive;
-      } catch {
-        parsed = event.data as TReceive;
-      }
+      const parsed = parseMessage(event.data as string);
       setData(parsed);
       for (const handler of handlers) {
         handler(parsed);

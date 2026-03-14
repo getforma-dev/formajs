@@ -15,6 +15,8 @@ export interface TypedStorage<T> {
 export interface StorageOptions<T> {
   serialize?: (v: T) => string;
   deserialize?: (s: string) => T;
+  /** Optional validator — return true if the deserialized value is valid. */
+  validate?: (v: unknown) => v is T;
 }
 
 /**
@@ -33,6 +35,7 @@ export function createSessionStorage<T>(
 ): TypedStorage<T> {
   const serialize = options?.serialize ?? JSON.stringify;
   const deserialize = options?.deserialize ?? JSON.parse;
+  const validate = options?.validate;
 
   return {
     key,
@@ -41,7 +44,9 @@ export function createSessionStorage<T>(
       try {
         const raw = sessionStorage.getItem(key);
         if (raw === null) return null;
-        return deserialize(raw) as T;
+        const value = deserialize(raw);
+        if (validate && !validate(value)) return null;
+        return value as T;
       } catch {
         return null;
       }

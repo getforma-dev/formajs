@@ -11,9 +11,11 @@ import { createSignal } from 'forma/reactive/index.js';
 // Types
 // ---------------------------------------------------------------------------
 
-export interface SSEOptions {
+export interface SSEOptions<T = unknown> {
   withCredentials?: boolean;
   headers?: Record<string, string>; // Note: native EventSource does not support custom headers
+  /** Custom parser for incoming messages. Defaults to JSON.parse with raw data fallback. */
+  parse?: (data: string) => T;
 }
 
 export interface SSEConnection<T = unknown> {
@@ -41,7 +43,7 @@ export interface SSEConnection<T = unknown> {
  */
 export function createSSE<T = unknown>(
   url: string,
-  options?: SSEOptions,
+  options?: SSEOptions<T>,
 ): SSEConnection<T> {
   const [data, setData] = createSignal<T | null>(null);
   const [error, setError] = createSignal<Event | null>(null);
@@ -56,14 +58,13 @@ export function createSSE<T = unknown>(
     setError(null);
   };
 
+  const parseMessage = options?.parse ?? ((raw: string): T => {
+    try { return JSON.parse(raw) as T; }
+    catch { return raw as T; }
+  });
+
   source.onmessage = (event: MessageEvent) => {
-    try {
-      const parsed = JSON.parse(event.data as string) as T;
-      setData(parsed);
-    } catch {
-      // If the data isn't JSON, set it as-is
-      setData(event.data as T);
-    }
+    setData(parseMessage(event.data as string));
   };
 
   source.onerror = (event: Event) => {
@@ -82,12 +83,12 @@ export function createSSE<T = unknown>(
     },
 
     on(event: string, handler: (data: unknown) => void): () => void {
+      const parseEvent = options?.parse ?? ((raw: string) => {
+        try { return JSON.parse(raw); }
+        catch { return raw; }
+      });
       const listener = (e: MessageEvent) => {
-        try {
-          handler(JSON.parse(e.data as string));
-        } catch {
-          handler(e.data);
-        }
+        handler(parseEvent(e.data as string));
       };
       source.addEventListener(event, listener as EventListener);
       return () => {

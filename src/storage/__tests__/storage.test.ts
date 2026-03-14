@@ -67,6 +67,19 @@ describe('createLocalStorage', () => {
     const store = createLocalStorage<any>('corrupt');
     expect(store.get()).toBe(null);
   });
+
+  it('validate rejects invalid data', () => {
+    interface User { name: string; age: number }
+    const isUser = (v: unknown): v is User =>
+      typeof v === 'object' && v !== null && 'name' in v && 'age' in v;
+
+    const store = createLocalStorage<User>('validated', { validate: isUser });
+    localStorage.setItem('validated', JSON.stringify({ name: 'Alice', age: 30 }));
+    expect(store.get()).toEqual({ name: 'Alice', age: 30 });
+
+    localStorage.setItem('validated', JSON.stringify({ wrong: 'shape' }));
+    expect(store.get()).toBe(null);
+  });
 });
 
 describe('createSessionStorage', () => {
@@ -104,5 +117,15 @@ describe('createSessionStorage', () => {
     });
     store.set(21);
     expect(store.get()).toBe(21);
+  });
+
+  it('validate rejects invalid data', () => {
+    const isString = (v: unknown): v is string => typeof v === 'string';
+    const store = createSessionStorage<string>('validated', { validate: isString });
+    sessionStorage.setItem('validated', JSON.stringify('hello'));
+    expect(store.get()).toBe('hello');
+
+    sessionStorage.setItem('validated', JSON.stringify(42));
+    expect(store.get()).toBe(null);
   });
 });

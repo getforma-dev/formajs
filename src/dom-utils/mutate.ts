@@ -46,6 +46,24 @@ export function setText(el: HTMLElement, text: string): void {
   el.textContent = text;
 }
 
+/**
+ * Set raw HTML on an element. **No sanitization is performed.**
+ *
+ * Prefer `setText()` for user-controlled content. Only use this when you
+ * trust the HTML source (e.g., server-rendered markup you control).
+ *
+ * @deprecated Use `setHTMLUnsafe` instead — renamed to signal risk.
+ */
 export function setHTML(el: HTMLElement, html: string): void {
+  el.innerHTML = html;
+}
+
+/**
+ * Set raw HTML on an element. **No sanitization is performed.**
+ *
+ * Prefer `setText()` for user-controlled content. Only use this when you
+ * trust the HTML source (e.g., server-rendered markup you control).
+ */
+export function setHTMLUnsafe(el: HTMLElement, html: string): void {
   el.innerHTML = html;
 }

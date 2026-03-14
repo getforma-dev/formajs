@@ -19,6 +19,8 @@ interface PersistOptions<T> {
   serialize?: (v: T) => string;
   /** Custom deserializer. Defaults to JSON.parse. */
   deserialize?: (s: string) => T;
+  /** Optional validator — return true if the deserialized value is valid. Rejects corrupt/tampered data. */
+  validate?: (v: unknown) => v is T;
 }
 
 // ---------------------------------------------------------------------------
@@ -47,13 +49,16 @@ export function persist<T>(
   const storage = options?.storage ?? globalThis.localStorage;
   const serialize = options?.serialize ?? JSON.stringify;
   const deserialize = options?.deserialize ?? JSON.parse;
+  const validate = options?.validate;
 
   // Step 1: Hydrate from storage (if a value exists)
   try {
     const stored = storage.getItem(key);
     if (stored !== null) {
       const value = deserialize(stored);
-      sourceSet(value);
+      if (!validate || validate(value)) {
+        sourceSet(value);
+      }
     }
   } catch {
     // Stored data is invalid or storage is unavailable -- ignore and keep

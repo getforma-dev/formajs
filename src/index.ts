@@ -21,7 +21,7 @@ export { createStore, createHistory, persist } from './state';
 export { createBus, delegate, onKey } from './events';
 
 // DOM Utils
-export { $, $$, addClass, removeClass, toggleClass, setStyle, setAttr, setText, setHTML,
+export { $, $$, addClass, removeClass, toggleClass, setStyle, setAttr, setText, setHTML, setHTMLUnsafe,
          closest, children, siblings, parent, nextSibling, prevSibling,
          onResize, onIntersect, onMutation } from './dom-utils';
 
