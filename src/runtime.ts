@@ -377,6 +377,9 @@ const RE_COMPUTED = /^(\w+)\s*=\s*(.+)$/;
 const RE_FETCH = /^(.+?)(?:→|->)\s*(\S+)(.*)$/;
 const RE_FETCH_METHOD = /^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i;
 const RE_STRIP_ITEM_BRACES = /^\{item\.?|\}$/g;
+// Detect expressions referencing DOM event parameters — these can't be resolved
+// through scope getters and must fall through to the new Function handler path.
+const RE_EVENT_REF = /\bevent\b|\$event\b/;
 const RE_REFETCH_CALL = /^\$refetch\(\s*['"]([^'"]+)['"]\s*\)$/;
 
 interface TransitionSpec {
@@ -815,6 +818,10 @@ function consumeStatement(raw: string): { body: string; rest: string } | null {
 function parseIfHandler(expr: string, scope: Scope): ((e: Event) => void) | null {
   const input = expr.trim();
   if (!RE_IF_PREFIX.test(input)) return null;
+
+  // If the expression references DOM event parameters (`event`, `$event`),
+  // bail out — these aren't in scope getters and must use new Function.
+  if (RE_EVENT_REF.test(input)) return null;
 
   let idx = 2;
   while (idx < input.length && /\s/.test(input[idx]!)) idx++;
@@ -1943,7 +1950,15 @@ function parseHandler(expr: string, scope: Scope): ((e: Event) => void) | null {
 }
 
 function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
-  const cleaned = expr.replace(RE_STRIP_BRACES, '').trim();
+  // Strip balanced outer braces (e.g., `{count++}` → `count++`) but NOT
+  // unbalanced ones like `if (x) { a = b }` where the `}` is a code-block close.
+  let cleaned = expr.trim();
+  if (cleaned.startsWith('{')) {
+    const seg = readBalancedSegment(cleaned, 0, '{', '}');
+    if (seg && seg.end === cleaned.length - 1) {
+      cleaned = seg.inner.trim();
+    }
+  }
   const cache = getScopeCache(scopeHandlerCache, scope);
   const cached = cache.get(cleaned);
   if (cached) return cached;
