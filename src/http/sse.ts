@@ -5,7 +5,7 @@
  * Zero dependencies — native browser APIs only.
  */
 
-import { createSignal } from 'forma/reactive/index.js';
+import { createSignal } from 'forma/reactive';
 
 // ---------------------------------------------------------------------------
 // Types

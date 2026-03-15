@@ -76,11 +76,6 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
 
     const trigger = root.getAttribute('data-forma-hydrate') || 'load';
 
-    // Stub triggers: warn and fall back to load
-    if (trigger === 'interaction' || trigger === 'idle') {
-      if (__DEV__) console.warn(`[forma] Trigger "${trigger}" not yet implemented for island "${componentName}" (id=${id}), falling back to load`);
-    }
-
     if (trigger === 'visible') {
       // Defer hydration until island enters the viewport
       const observer = new IntersectionObserver(
@@ -94,8 +89,23 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
         { rootMargin: '200px' },
       );
       observer.observe(root);
+    } else if (trigger === 'idle') {
+      const hydrate = () => hydrateIslandRoot(root, id, componentName, hydrateFn, sharedProps);
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(hydrate);
+      } else {
+        setTimeout(hydrate, 200);
+      }
+    } else if (trigger === 'interaction') {
+      const hydrate = () => {
+        root.removeEventListener('pointerdown', hydrate, true);
+        root.removeEventListener('focusin', hydrate, true);
+        hydrateIslandRoot(root, id, componentName, hydrateFn, sharedProps);
+      };
+      root.addEventListener('pointerdown', hydrate, { capture: true, once: true });
+      root.addEventListener('focusin', hydrate, { capture: true, once: true });
     } else {
-      // load (default), interaction (stub), idle (stub) — hydrate immediately
+      // load (default) — hydrate immediately
       hydrateIslandRoot(root, id, componentName, hydrateFn, sharedProps);
     }
   }

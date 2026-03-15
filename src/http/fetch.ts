@@ -5,7 +5,7 @@
  * Zero dependencies — native browser APIs only.
  */
 
-import { createSignal, internalEffect } from 'forma/reactive/index.js';
+import { createSignal, internalEffect } from 'forma/reactive';
 
 // ---------------------------------------------------------------------------
 // Types

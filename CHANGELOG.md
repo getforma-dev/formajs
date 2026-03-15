@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.0] - 2026-03-15
+
+### Added
+- **S6:** Real `idle` and `interaction` hydration triggers — `idle` defers via `requestIdleCallback` (with `setTimeout` fallback for Safari), `interaction` hydrates on first `pointerdown` or `focusin`. No more stubs.
+- **S3:** Function components in `h()` — `h(Counter, {count: 5})` now calls the function with merged props and children. CSR-only (no hydration descriptors or SSR).
+- **S7:** Turbo Streams design evaluation — documented that existing `createSSE` + `reconcile()` covers the use case without new abstractions.
+
+### Fixed
+- **C3:** Hydrated event listeners now use AbortController — `cleanup(el)` properly removes event listeners attached during island hydration, matching the pattern from `element.ts`.
+- **C8:** Standardized HTTP module import paths — `forma/reactive/index.js` → `forma/reactive` in fetch, SSE, and WebSocket modules.
+
 ## [0.5.1] - 2026-03-15
 
 ### Changed

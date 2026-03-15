@@ -94,28 +94,39 @@ describe('activateIslands visible trigger', () => {
     expect(el.getAttribute('data-forma-status')).toBe('pending');
   });
 
-  it('falls back to load for interaction trigger with warning', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('defers interaction-trigger islands until user interaction', () => {
     const el = makeIsland(1, 'Counter', 'interaction');
     const hydrateFn = vi.fn(() => null);
     activateIslands({ Counter: hydrateFn });
 
+    // Should NOT hydrate immediately — waits for user interaction
+    expect(hydrateFn).not.toHaveBeenCalled();
+    expect(el.getAttribute('data-forma-status')).toBe('pending');
+
+    // Simulate pointerdown to trigger hydration
+    el.dispatchEvent(new Event('pointerdown', { bubbles: true }));
     expect(hydrateFn).toHaveBeenCalledOnce();
     expect(el.getAttribute('data-forma-status')).toBe('active');
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('interaction'));
-    warnSpy.mockRestore();
   });
 
-  it('falls back to load for idle trigger with warning', () => {
-    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  it('defers idle-trigger islands behind requestIdleCallback', () => {
+    let idleCallback: (() => void) | undefined;
+    vi.stubGlobal('requestIdleCallback', (cb: () => void) => { idleCallback = cb; return 1; });
+
     const el = makeIsland(1, 'Counter', 'idle');
     const hydrateFn = vi.fn(() => null);
     activateIslands({ Counter: hydrateFn });
 
+    // Should NOT hydrate immediately — waits for idle callback
+    expect(hydrateFn).not.toHaveBeenCalled();
+    expect(el.getAttribute('data-forma-status')).toBe('pending');
+
+    // Fire the idle callback
+    idleCallback!();
     expect(hydrateFn).toHaveBeenCalledOnce();
     expect(el.getAttribute('data-forma-status')).toBe('active');
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('idle'));
-    warnSpy.mockRestore();
+
+    vi.unstubAllGlobals();
   });
 
   it('creates IntersectionObserver with 200px rootMargin', () => {

@@ -669,11 +669,11 @@ The longer syntax is a feature, not a gap. Document it as such in the README.
 | C5 | 2 | Migrate `createValueSignal` → `createSignal` (4 files) | S | DONE |
 | H4 | 2 | Cap `compiledTemplateCache` at 2048 | S | DONE |
 | S4 | 2 | Add `$el` and `$dispatch` magics | M | DONE |
-| S6 | 3 | Implement `interaction` and `idle` triggers | M | TODO |
-| C3 | 3 | AbortController for hydrated event listeners | S | TODO |
-| S3 | 3 | Support function components in `h()` | L | TODO |
-| C8 | 3 | Standardize HTTP module import paths | S | TODO |
-| S7 | 3 | Turbo Streams evaluation (design doc only) | M | TODO |
+| S6 | 3 | Implement `interaction` and `idle` triggers | M | DONE |
+| C3 | 3 | AbortController for hydrated event listeners | S | DONE |
+| S3 | 3 | Support function components in `h()` | L | DONE |
+| C8 | 3 | Standardize HTTP module import paths | S | DONE |
+| S7 | 3 | Turbo Streams evaluation (design doc only) | M | DONE |
 | C1 | 4 | Tests for `suspense-context.ts` | S | TODO |
 | C2 | 4 | Tests for `rpc-client.ts` / `rpc-handler.ts` | M | TODO |
 | C7 | 4 | Tests for `reducer.ts` | S | TODO |

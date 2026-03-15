@@ -12,6 +12,10 @@ import { h } from './element.js';
 import { reconcileList, createList } from './list.js';
 import { createShow } from './show.js';
 
+// Same symbol identity as element.ts — Symbol.for() guarantees cross-module
+// sharing so cleanup(el) in element.ts aborts controllers created here.
+const ABORT_SYM = Symbol.for('forma-abort');
+
 // ---------------------------------------------------------------------------
 // Hydration state — module-level boolean
 // ---------------------------------------------------------------------------
@@ -206,9 +210,14 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
     // Skip non-function values — they are static and already in the SSR HTML
     if (typeof value !== 'function') continue;
 
-    // Event handlers: onXxx
+    // Event handlers: onXxx — use AbortController so cleanup(el) removes them
     if (key.charCodeAt(0) === 111 /* o */ && key.charCodeAt(1) === 110 /* n */ && key.length > 2) {
-      el.addEventListener(key.slice(2).toLowerCase(), value as EventListener);
+      let ac = (el as any)[ABORT_SYM] as AbortController | undefined;
+      if (!ac) {
+        ac = new AbortController();
+        (el as any)[ABORT_SYM] = ac;
+      }
+      el.addEventListener(key.slice(2).toLowerCase(), value as EventListener, { signal: ac.signal });
       continue;
     }
 

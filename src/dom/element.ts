@@ -602,14 +602,21 @@ function appendChild(parent: Node, child: unknown): void {
  * )
  * ```
  */
-// Overloads: Fragment returns DocumentFragment, string returns HTMLElement
+// Overloads: function component, Fragment, string
+export function h(tag: (props: Record<string, unknown>) => unknown, props?: Record<string, unknown> | null, ...children: unknown[]): Node;
 export function h(tag: typeof Fragment, props?: null, ...children: unknown[]): DocumentFragment;
 export function h(tag: string, props?: Record<string, unknown> | null, ...children: unknown[]): HTMLElement;
 export function h(
-  tag: string | typeof Fragment,
+  tag: string | typeof Fragment | ((props: Record<string, unknown>) => unknown),
   props?: Record<string, unknown> | null,
   ...children: unknown[]
 ): HTMLElement | DocumentFragment {
+  // Function component: call with merged props + children
+  if (typeof tag === 'function' && tag !== Fragment) {
+    const mergedProps = { ...(props ?? {}), children };
+    return tag(mergedProps) as unknown as HTMLElement;
+  }
+
   // Fragment: return DocumentFragment with children
   if (tag === Fragment) {
     const frag = document.createDocumentFragment();
