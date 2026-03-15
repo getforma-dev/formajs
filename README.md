@@ -240,12 +240,17 @@ const [state, setState] = createStore({
   items: [1, 2, 3],
 });
 
-// Read reactively
+// Read reactively — tracked at the exact property path
 state.user.name;        // 'Alice'
+state.items[0];         // 1
 
-// Mutate — only affected subscribers update
-setState('user', 'name', 'Bob');
-setState('items', items => [...items, 4]);
+// Setter API — partial object merge (batched)
+setState({ user: { ...state.user, name: 'Bob' } });
+setState(prev => ({ items: [...prev.items, 4] }));
+
+// Or mutate directly via proxy — only affected subscribers update
+state.user.name = 'Bob';          // only "user.name" subscribers notified
+state.items.push(4);              // array mutation batched automatically
 ```
 
 ### Components
@@ -330,6 +335,40 @@ const ThemeCtx = createContext('light');
 
 provide(ThemeCtx, 'dark');
 const theme = inject(ThemeCtx); // 'dark'
+```
+
+### History (undo/redo)
+
+```typescript
+import { createHistory } from '@getforma/core';
+
+const [state, setState, { undo, redo, canUndo, canRedo }] = createHistory({ text: '' });
+
+setState({ text: 'hello' });
+setState({ text: 'hello world' });
+
+undo();              // state.text === 'hello'
+canUndo();           // true
+redo();              // state.text === 'hello world'
+```
+
+### Reducer
+
+```typescript
+import { createReducer } from '@getforma/core';
+
+const [state, dispatch] = createReducer(
+  (state, action) => {
+    switch (action.type) {
+      case 'INCREMENT': return { count: state.count + 1 };
+      case 'DECREMENT': return { count: state.count - 1 };
+      default: return state;
+    }
+  },
+  { count: 0 },
+);
+
+dispatch({ type: 'INCREMENT' }); // state() === { count: 1 }
 ```
 
 ## Islands Architecture
@@ -432,11 +471,14 @@ FormaJS shares Solid's core insight — fine-grained signals updating the real D
 | **CSP** | Relies on compiler output | Hand-written expression parser; hardened build has no `new Function()` |
 | **Islands** | Via [solid-start](https://start.solidjs.com/) meta-framework | Built-in `activateIslands()` — no meta-framework needed |
 | **Ecosystem** | Mature (router, meta-framework, devtools) | Minimal — reactive core only, you bring the architecture |
+| **SSR runtime** | Node.js required | Node.js via `renderToString`, or Rust walker (no JS runtime on the server) |
 | **Size** | ~7KB | ~15KB (includes runtime parser, stores, SSR) |
 
-**When to choose FormaJS:** You want to progressively enhance server-rendered HTML, need CSP compliance without a build step, or prefer a single library that scales from a `<script>` tag to a full SSR pipeline.
+**When to choose FormaJS:** You want islands hydration built into the library, not bolted on through a meta-framework. You need CSP compliance without a build step. You want three entry points (CDN, hyperscript, JSX) sharing one signal graph. Or you're building on a Rust backend and want your frontend reactive layer to integrate natively with the server stack.
 
-**When to choose Solid:** You want a mature ecosystem with routing, SSR meta-framework, and community-built component libraries.
+**When to choose Solid:** You want a mature JavaScript ecosystem with routing, SSR meta-framework (SolidStart), devtools, and community-built component libraries. Your backend is Node.js and you want SSR in the same language as your frontend.
+
+> FormaJS is the reactive layer of the [Forma stack](https://getforma.dev). The full pipeline compiles components to a binary IR (FMIR), renders them in Rust via `forma-ir`, and serves pages through `forma-server` — SSR without Node.js, binary IR over the wire, deployed for ~$18/month.
 
 ## Stability
 
@@ -452,7 +494,10 @@ Some features are more battle-tested than others:
 | `createStore` (deep reactivity) | **Stable** | |
 | Components (`defineComponent`, lifecycle) | **Stable** | |
 | Context (`createContext`, `provide`, `inject`) | **Stable** | |
-| Islands (`activateIslands`) | **Stable** | 10 activation + 88 hydration tests |
+| Islands (`activateIslands`, disposal, triggers) | **Stable** | 10 activation + 88 hydration + 10 trigger tests |
+| `createHistory` (undo/redo) | **Stable** | |
+| `createReducer` | **Stable** | 8 tests |
+| `data-fetch`, `data-transition:*` | **Stable** | Fully implemented in HTML Runtime |
 | SSR (`renderToString`, `renderToStream`) | **Beta** | Functional, API may evolve |
 | TC39 Signals compat (`Signal.State`, `Signal.Computed`) | **Beta** | 9 tests, but tracks an evolving TC39 proposal |
 
