@@ -100,6 +100,8 @@ Drop a script tag, write `data-*` attributes. Zero config, zero tooling.
 | `data-persist` | Persist state to localStorage | `data-persist="{count}"` |
 | `data-fetch` | Fetch data from URL | `data-fetch="GET /api/items → items"` |
 | `data-transition:*` | Enter/leave CSS transitions | `data-transition:enter="fade-in"` |
+| `$el` | Reference to the current DOM element | `data-on:click="{$el.classList.toggle('active')}"` |
+| `$dispatch` | Fire a CustomEvent (bubbles, crosses Shadow DOM) | `data-on:click="{$dispatch('selected', {id: itemId})}"` |
 
 CSP-safe expression parser — no `eval()` or `new Function()` by default. For strict CSP environments, use the hardened build:
 
@@ -365,6 +367,37 @@ activateIslands({
 
 Each island is activated inside its own `createRoot` scope with error isolation — a broken island never takes down its siblings.
 
+### Hydration Triggers
+
+Control when an island hydrates via `data-forma-hydrate`:
+
+| Trigger | When it hydrates | Use case |
+|---------|-----------------|----------|
+| `load` (default) | Immediately on page load | Above-the-fold interactive content |
+| `visible` | When island enters viewport | Below-the-fold components |
+| `idle` | During browser idle time (`requestIdleCallback`) | Non-critical functionality |
+| `interaction` | On first `pointerdown` or `focusin` | Skeleton+skin pattern |
+
+```html
+<div data-forma-island="1" data-forma-component="Comments" data-forma-hydrate="visible">
+  <!-- Only loads JS when scrolled into view -->
+</div>
+```
+
+### Island Disposal
+
+When swapping module content (e.g., inside `<forma-stage>` Shadow DOM), dispose islands to prevent leaked effects and listeners:
+
+```typescript
+import { deactivateIsland, deactivateAllIslands } from '@getforma/core';
+
+// Dispose all active islands under a root
+deactivateAllIslands(shadowRoot);
+
+// Or dispose a single island
+deactivateIsland(islandElement);
+```
+
 ## Subpath Exports
 
 | Import | Description |
@@ -407,7 +440,7 @@ FormaJS shares Solid's core insight — fine-grained signals updating the real D
 
 ## Stability
 
-FormaJS is at **v0.3.x**. Some features are more battle-tested than others:
+Some features are more battle-tested than others:
 
 | Feature | Status | Notes |
 |---------|--------|-------|
