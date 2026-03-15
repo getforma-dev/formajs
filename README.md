@@ -18,6 +18,41 @@ Or use the CDN (no build step required):
 <script src="https://unpkg.com/@getforma/core/dist/formajs-runtime.global.js"></script>
 ```
 
+### Getting Started with a Bundler
+
+After `npm install`, you need a bundler to resolve the ES module imports. Here's a minimal Vite setup:
+
+```bash
+npm install @getforma/core
+npm install -D vite
+```
+
+```html
+<!-- index.html -->
+<div id="app"></div>
+<script type="module" src="./main.ts"></script>
+```
+
+```typescript
+// main.ts
+import { createSignal, h, mount } from '@getforma/core';
+
+const [count, setCount] = createSignal(0);
+
+mount(() =>
+  h('button', { onClick: () => setCount(count() + 1) },
+    () => `Clicked ${count()} times`
+  ),
+  '#app'
+);
+```
+
+```bash
+npx vite
+```
+
+For **esbuild**, **tsup**, or other bundlers — no special config is needed. FormaJS ships standard ESM and CJS via `package.json` exports.
+
 ## Why FormaJS?
 
 Most UI libraries make you choose: simple but limited (Alpine, htmx), or powerful but complex (React, Vue, Svelte). FormaJS gives you a single reactive core that scales from a CDN script tag to a full-stack Rust SSR pipeline.
@@ -125,15 +160,14 @@ mount(() => <Counter />, '#app');
 
 ## CDN Usage
 
-### Standard (recommended)
-```html
-<script src="https://unpkg.com/@getforma/core/dist/forma-runtime.js"></script>
-```
+Both long and short filenames are provided. They are identical files — use whichever you prefer:
 
-### CSP-Safe (strict Content-Security-Policy)
-```html
-<script src="https://unpkg.com/@getforma/core/dist/forma-runtime-csp.js"></script>
-```
+| Build | URL |
+|-------|-----|
+| **Standard** (recommended) | `unpkg.com/@getforma/core/dist/formajs-runtime.global.js` |
+| Standard (short alias) | `unpkg.com/@getforma/core/dist/forma-runtime.js` |
+| **CSP-safe** (no `new Function`) | `unpkg.com/@getforma/core/dist/formajs-runtime-hardened.global.js` |
+| CSP-safe (short alias) | `unpkg.com/@getforma/core/dist/forma-runtime-csp.js` |
 
 > The CSP build uses a hand-written expression parser and never calls `new Function`.
 > It supports most common patterns. See [examples/csp](./examples/csp) for a working demo.
@@ -231,6 +265,60 @@ const Timer = defineComponent(() => {
 document.body.appendChild(Timer());
 ```
 
+#### Lifecycle: `onMount` vs `onUnmount`
+
+- **`onMount(fn)`** — runs after the component's DOM is created. If `fn` returns a function, that function is automatically registered as an unmount callback.
+- **`onUnmount(fn)`** — explicitly registers a cleanup function that runs when the component is disposed.
+
+Both mechanisms feed into the same cleanup queue — the `onMount` return shorthand is convenience for the common pattern of setting up and tearing down in one place:
+
+```typescript
+// These are equivalent:
+onMount(() => {
+  const id = setInterval(tick, 1000);
+  return () => clearInterval(id);
+});
+
+// vs.
+onMount(() => {
+  const id = setInterval(tick, 1000);
+  onUnmount(() => clearInterval(id));
+});
+```
+
+### Error Handling
+
+**`mount()` fails fast.** If the container selector doesn't match any element, it throws:
+
+```typescript
+mount(() => h('p', null, 'hello'), '#nonexistent');
+// Error: mount: container not found — "#nonexistent"
+```
+
+**Global error handler.** Register a handler for errors in effects and lifecycle callbacks:
+
+```typescript
+import { onError } from '@getforma/core';
+
+onError((error, info) => {
+  console.error(`[${info?.source}]`, error);
+});
+```
+
+**Error boundaries.** Catch rendering errors and display fallback UI with a retry option:
+
+```typescript
+import { createErrorBoundary, h } from '@getforma/core';
+
+createErrorBoundary(
+  () => h(UnstableComponent),
+  (error, retry) => h('div', null,
+    h('p', null, `Something went wrong: ${error.message}`),
+    h('button', { onClick: retry }, 'Retry'),
+  ),
+);
+```
+
 ### Context (Dependency Injection)
 
 ```typescript
@@ -244,26 +332,34 @@ const theme = inject(ThemeCtx); // 'dark'
 
 ## Islands Architecture
 
-For server-rendered HTML, activate independent interactive regions:
+For server-rendered HTML, activate independent interactive regions. Each island callback receives parsed props from `data-forma-props` and returns a component tree — the same `h()` calls you'd use for client-side rendering. The hydration system automatically walks the descriptor tree against the existing SSR DOM, attaching event handlers and reactive bindings without recreating elements.
 
 ```typescript
 import { activateIslands, createSignal, h } from '@getforma/core';
 
 activateIslands({
-  Counter: (el, props) => {
-    const [count, setCount] = createSignal(props.initial ?? 0);
-    // Hydrate: attach reactivity to existing server-rendered DOM
+  Counter: (props) => {
+    const [count, setCount] = createSignal(props?.initial ?? 0);
+
+    // Return the same tree shape as the SSR output.
+    // Hydration matches this against existing DOM — no elements are created.
+    return h('div', null,
+      h('span', null, () => String(count())),
+      h('button', { onClick: () => setCount(c => c + 1) }, '+1'),
+    );
   },
 });
 ```
 
 ```html
 <!-- Server-rendered HTML -->
-<div data-forma-island="Counter" data-forma-props='{"initial": 5}'>
+<div data-forma-island="0" data-forma-component="Counter" data-forma-props='{"initial": 5}'>
   <span>5</span>
   <button>+1</button>
 </div>
 ```
+
+Each island is activated inside its own `createRoot` scope with error isolation — a broken island never takes down its siblings.
 
 ## Subpath Exports
 
@@ -287,6 +383,41 @@ See the [`examples/`](./examples) directory:
 - **csp** — CSP-safe runtime with strict Content-Security-Policy meta tag
 - **todo** — todo list with `createList` and keyed reconciliation
 - **data-table** — sortable table with `createList`
+
+## How Is This Different from Solid?
+
+FormaJS shares Solid's core insight — fine-grained signals updating the real DOM without a virtual DOM. If you know Solid, you'll feel at home. The differences are in scope and delivery:
+
+| | Solid | FormaJS |
+|-|-------|---------|
+| **Build requirement** | Always needs a compiler (JSX transform) | CDN runtime works with zero build step; bundler is optional |
+| **Entry points** | JSX-first | HTML Runtime (`data-*` attributes), `h()` hyperscript, or JSX |
+| **CSP** | Relies on compiler output | Hand-written expression parser; hardened build has no `new Function()` |
+| **Islands** | Via [solid-start](https://start.solidjs.com/) meta-framework | Built-in `activateIslands()` — no meta-framework needed |
+| **Ecosystem** | Mature (router, meta-framework, devtools) | Minimal — reactive core only, you bring the architecture |
+| **Size** | ~7KB | ~15KB (includes runtime parser, stores, SSR) |
+
+**When to choose FormaJS:** You want to progressively enhance server-rendered HTML, need CSP compliance without a build step, or prefer a single library that scales from a `<script>` tag to a full SSR pipeline.
+
+**When to choose Solid:** You want a mature ecosystem with routing, SSR meta-framework, and community-built component libraries.
+
+## Stability
+
+FormaJS is at **v0.3.x**. Some features are more battle-tested than others:
+
+| Feature | Status | Notes |
+|---------|--------|-------|
+| Signals (`createSignal`, `createEffect`, `createComputed`, `batch`) | **Stable** | Core primitive, well-tested |
+| `h()` / JSX rendering | **Stable** | |
+| `mount()`, `createShow`, `createSwitch`, `createList` | **Stable** | |
+| HTML Runtime (`data-*` directives) | **Stable** | Expression parser covers common patterns |
+| CSP-hardened runtime | **Stable** | No `new Function()`, tested with strict CSP headers |
+| `createStore` (deep reactivity) | **Stable** | |
+| Components (`defineComponent`, lifecycle) | **Stable** | |
+| Context (`createContext`, `provide`, `inject`) | **Stable** | |
+| Islands (`activateIslands`) | **Beta** | API may change |
+| SSR (`renderToString`, `renderToStream`) | **Beta** | API may change |
+| TC39 Signals compat (`Signal.State`, `Signal.Computed`) | **Experimental** | Tracks the evolving TC39 proposal |
 
 ## Ecosystem
 
