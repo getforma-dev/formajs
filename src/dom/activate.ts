@@ -101,6 +101,35 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
   }
 }
 
+/**
+ * Dispose a single island, tearing down its reactive root and all effects.
+ *
+ * Safe to call multiple times (idempotent). Sets `data-forma-status` to
+ * `"disposed"` so the island can be distinguished from active/error states.
+ */
+export function deactivateIsland(el: HTMLElement): void {
+  const dispose = (el as any).__formaDispose;
+  if (typeof dispose === 'function') {
+    dispose();
+    delete (el as any).__formaDispose;
+    el.setAttribute('data-forma-status', 'disposed');
+  }
+}
+
+/**
+ * Dispose ALL active islands under a root element (or the whole document).
+ *
+ * Use this when swapping module content — e.g., replacing the contents of
+ * a `<forma-stage>` Shadow DOM during AI generation. Prevents leaked effects
+ * and event listeners from accumulating across swaps.
+ */
+export function deactivateAllIslands(root: Element | Document = document): void {
+  const islands = root.querySelectorAll<HTMLElement>('[data-forma-status="active"]');
+  for (const island of islands) {
+    deactivateIsland(island);
+  }
+}
+
 /** Hydrate a single island root with error isolation. */
 function hydrateIslandRoot(
   root: HTMLElement,

@@ -372,7 +372,8 @@ const RE_TOGGLE = /^(\w+)\s*=\s*!(\w+)$/;
 const RE_ASSIGN = /^(\w+)\s*=\s*(.+)$/;
 const RE_COMPOUND = /^(\w+)\s*(\+=|-=|\*=|\/=)\s*(.+)$/;
 const RE_IF_PREFIX = /^if\b/;
-const RE_UNQUOTED_KEYS = /(\w+)\s*:/g;
+// RE_UNQUOTED_KEYS removed in v0.5.0 — relaxed JSON parsing corrupted URLs
+// and string values containing colons. Use valid JSON in data-forma-state.
 const RE_COMPUTED = /^(\w+)\s*=\s*(.+)$/;
 const RE_FETCH = /^(.+?)(?:→|->)\s*(\S+)(.*)$/;
 const RE_FETCH_METHOD = /^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i;
@@ -463,9 +464,10 @@ const BLOCKED_METHOD_REGEXES: Array<{ name: string; dotRe: RegExp; bracketRe: Re
  * (e.g. "constructorValue" should not match "constructor").
  *
  * Before scanning:
- * 1. Strips JS block comments (/* ... *​/) and line comments (// ...)
+ * 1. Strips JS block comments and line comments
  * 2. Normalizes whitespace around dots (e.g. "x . constructor" → "x.constructor")
- * 3. Checks bracket access with backtick template literals
+ * 3. Checks bracket access with static string literals and backtick templates
+ * 4. Detects string concatenation inside brackets that could produce a blocked name
  *
  * Returns the matched blocked name, or null if clean.
  */
@@ -481,7 +483,45 @@ function findBlockedMethod(expr: string): string | null {
     if (dotRe.test(cleaned)) return name;
     if (bracketRe.test(cleaned)) return name;
   }
+
+  // Layer 2: detect string concatenation inside brackets that could produce
+  // a blocked name. Extract all bracket contents and check if concatenated
+  // string fragments could form a blocked name.
+  // e.g. x['constr' + 'uctor'] → extract 'constr' and 'uctor' → 'constructor'
+  if (cleaned.includes('[')) {
+    const bracketContents = extractBracketContents(cleaned);
+    for (const content of bracketContents) {
+      // Only check contents with concatenation operators
+      if (!content.includes('+')) continue;
+      // Extract all string literal fragments and join them
+      const fragments = content.match(/['"`]([^'"`]*?)['"`]/g);
+      if (!fragments) continue;
+      const joined = fragments.map(f => f.slice(1, -1)).join('');
+      if (UNSAFE_METHOD_NAMES.has(joined)) return joined;
+    }
+  }
+
   return null;
+}
+
+/** Extract the contents of all bracket access expressions (between [ and ]). */
+function extractBracketContents(expr: string): string[] {
+  const results: string[] = [];
+  let depth = 0;
+  let start = -1;
+  for (let i = 0; i < expr.length; i++) {
+    if (expr[i] === '[') {
+      if (depth === 0) start = i + 1;
+      depth++;
+    } else if (expr[i] === ']') {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        results.push(expr.slice(start, i));
+        start = -1;
+      }
+    }
+  }
+  return results;
 }
 
 const TEXT_BINDING_SYM = Symbol.for('forma-text-binding-cache');
@@ -1820,6 +1860,9 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
     const proxy = new Proxy(Object.create(null) as Record<string, unknown>, {
       has(_, key: string) { return key in scope.getters; },
       get(_, key: string) {
+        // Defense-in-depth: block dangerous property access even if
+        // findBlockedMethod missed a bypass (e.g. computed bracket names)
+        if (UNSAFE_METHOD_NAMES.has(key)) return undefined;
         const g = scope.getters[key];
         return g ? g() : undefined;
       },
@@ -2007,6 +2050,8 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
         return key in scope.getters || key in scope.setters;
       },
       get(_, key: string) {
+        // Defense-in-depth: block dangerous property access
+        if (UNSAFE_METHOD_NAMES.has(key)) return undefined;
         const g = scope.getters[key];
         return g ? g() : undefined;
       },
@@ -2045,12 +2090,10 @@ function parseState(raw: string): Record<string, unknown> {
   try {
     parsed = JSON.parse(raw);
   } catch {
-    // Relaxed: unquoted keys
-    try {
-      parsed = JSON.parse(raw.replace(RE_UNQUOTED_KEYS, '"$1":'));
-    } catch {
-      return {};
+    if (_debug) {
+      dbg('parseState: Invalid JSON in data-forma-state — use valid JSON with quoted keys. Got:', raw.slice(0, 200));
     }
+    return {};
   }
   // Strip prototype-pollution keys
   for (const key of FORBIDDEN_STATE_KEYS) {

@@ -8,7 +8,7 @@ export {
 } from './reactive';
 
 // DOM
-export { h, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, reconcileList, longestIncreasingSubsequence } from './dom';
+export { h, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, deactivateIsland, deactivateAllIslands, reconcileList, longestIncreasingSubsequence } from './dom';
 export type { IslandHydrateFn } from './dom';
 
 // Component

@@ -18,5 +18,5 @@ export { getSuspenseContext, pushSuspenseContext, popSuspenseContext } from './s
 export type { SuspenseContext } from './suspense.js';
 export { template, templateMany } from './template.js';
 export { hydrateIsland } from './hydrate.js';
-export { activateIslands } from './activate.js';
+export { activateIslands, deactivateIsland, deactivateAllIslands } from './activate.js';
 export type { IslandHydrateFn } from './activate.js';

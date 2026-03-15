@@ -61,7 +61,11 @@ function renderSync(node: unknown, parts: string[]): void {
     if (VOID_ELEMENTS.has(tag)) { parts.push(' />'); return; }
     parts.push('>');
     if (props?.['dangerouslySetInnerHTML']) {
-      parts.push((props['dangerouslySetInnerHTML'] as { __html: string }).__html);
+      const raw = props['dangerouslySetInnerHTML'];
+      if (typeof raw !== 'object' || raw == null || !('__html' in raw) || typeof (raw as { __html: unknown }).__html !== 'string') {
+        throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
+      }
+      parts.push((raw as { __html: string }).__html);
     } else {
       for (const child of children) renderSync(child, parts);
     }
@@ -251,7 +255,11 @@ function renderStreamNode(node: unknown, parts: string[], state: StreamState): v
     if (VOID_ELEMENTS.has(tag)) { parts.push(' />'); return; }
     parts.push('>');
     if (props?.['dangerouslySetInnerHTML']) {
-      parts.push((props['dangerouslySetInnerHTML'] as { __html: string }).__html);
+      const raw = props['dangerouslySetInnerHTML'];
+      if (typeof raw !== 'object' || raw == null || !('__html' in raw) || typeof (raw as { __html: unknown }).__html !== 'string') {
+        throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
+      }
+      parts.push((raw as { __html: string }).__html);
     } else {
       for (const child of children) renderStreamNode(child, parts, state);
     }
