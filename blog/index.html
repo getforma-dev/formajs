@@ -833,6 +833,23 @@ li::marker {
         </tr>
       </tbody>
     </table>
+
+    <h3>Cleanup: disposing islands on module swap</h3>
+    <p>
+      In Forma's AI pipeline, modules get swapped constantly inside <code>&lt;forma-stage&gt;</code> Shadow DOM during generation. Each island creates a <code>createRoot</code> scope with effects, listeners, and signal subscriptions. Without cleanup, every swap leaks.
+    </p>
+
+<pre data-lang="TypeScript">
+<span class="kw">import</span> { <span class="fn">deactivateAllIslands</span> } <span class="kw">from</span> <span class="str">'@getforma/core'</span>;
+
+<span class="cm">// Before swapping module content in a shadow root:</span>
+<span class="fn">deactivateAllIslands</span>(shadowRoot);
+shadowRoot.innerHTML = newModuleHtml;
+
+<span class="cm">// Or dispose a single island:</span>
+<span class="kw">import</span> { <span class="fn">deactivateIsland</span> } <span class="kw">from</span> <span class="str">'@getforma/core'</span>;
+<span class="fn">deactivateIsland</span>(islandElement);</pre>
+
   </div>
 </section>
 
@@ -1015,6 +1032,11 @@ li::marker {
           <td><a href="https://crates.io/crates/forma-server">forma-server</a></td>
           <td>Rust</td>
           <td>Axum middleware &mdash; SSR rendering, asset serving, CSP headers.</td>
+        </tr>
+        <tr>
+          <td>GateWASM</td>
+          <td>Rust + WASM</td>
+          <td>Reference implementation &mdash; multi-tenant auth with OAuth 2.0 + PKCE, proving the full Forma stack.</td>
         </tr>
       </tbody>
     </table>

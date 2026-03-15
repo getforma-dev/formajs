@@ -8,12 +8,10 @@
 // Core primitives
 export {
   createSignal,
-  createValueSignal,
   value,
   type SignalGetter,
   type SignalSetter,
   type SignalOptions,
-  type ValueSignalSetter,
 } from './signal.js';
 export { createEffect, internalEffect } from './effect.js';
 export { createComputed } from './computed.js';

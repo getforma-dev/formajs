@@ -6,6 +6,7 @@
  * Backed by alien-signals via forma/reactive.
  */
 
+import { reportError } from '../reactive/dev.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -125,8 +126,8 @@ export function defineComponent(
       for (const cb of ctx.unmountCallbacks) {
         try {
           cb();
-        } catch {
-          // Swallow errors in unmount callbacks to ensure all run
+        } catch (e) {
+          reportError(e, 'onUnmount');
         }
       }
 
@@ -134,8 +135,8 @@ export function defineComponent(
       for (const d of ctx.disposers) {
         try {
           d();
-        } catch {
-          // Swallow errors in disposers to ensure all run
+        } catch (e) {
+          reportError(e, 'component disposer');
         }
       }
 
@@ -156,8 +157,8 @@ export function defineComponent(
         if (typeof cleanup === 'function') {
           ctx.unmountCallbacks.push(cleanup);
         }
-      } catch {
-        // Swallow errors in mount callbacks
+      } catch (e) {
+        reportError(e, 'onMount');
       }
     }
 

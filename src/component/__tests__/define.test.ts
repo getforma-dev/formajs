@@ -1,7 +1,8 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { defineComponent, disposeComponent, trackDisposer, onMount, onUnmount } from '../define';
 import { createSignal } from '../../reactive/signal';
 import { createEffect } from '../../reactive/effect';
+import { onError } from '../../reactive/dev';
 
 describe('defineComponent', () => {
   it('accepts a setup function and returns a factory', () => {
@@ -216,6 +217,119 @@ describe('trackDisposer', () => {
     const spy = vi.fn();
     // Should not throw, just silently does nothing
     expect(() => trackDisposer(spy)).not.toThrow();
+  });
+});
+
+describe('lifecycle error reporting', () => {
+  afterEach(() => {
+    // Clear the global error handler after each test by setting a no-op
+    onError(() => {});
+  });
+
+  it('onMount error is reported via onError handler', () => {
+    const errors: Array<{ error: unknown; source?: string }> = [];
+    onError((err, info) => { errors.push({ error: err, source: info?.source }); });
+
+    const mountError = new Error('mount boom');
+    const factory = defineComponent(() => {
+      onMount(() => { throw mountError; });
+      return document.createElement('div');
+    });
+    factory();
+
+    expect(errors.length).toBe(1);
+    expect(errors[0]!.error).toBe(mountError);
+    expect(errors[0]!.source).toBe('onMount');
+  });
+
+  it('onUnmount error is reported via onError handler', () => {
+    const errors: Array<{ error: unknown; source?: string }> = [];
+    onError((err, info) => { errors.push({ error: err, source: info?.source }); });
+
+    const unmountError = new Error('unmount boom');
+    const factory = defineComponent(() => {
+      onUnmount(() => { throw unmountError; });
+      return document.createElement('div');
+    });
+    const el = factory();
+    disposeComponent(el);
+
+    expect(errors.length).toBe(1);
+    expect(errors[0]!.error).toBe(unmountError);
+    expect(errors[0]!.source).toBe('onUnmount');
+  });
+
+  it('disposer error is reported via onError handler', () => {
+    const errors: Array<{ error: unknown; source?: string }> = [];
+    onError((err, info) => { errors.push({ error: err, source: info?.source }); });
+
+    const disposerError = new Error('disposer boom');
+    const factory = defineComponent(() => {
+      trackDisposer(() => { throw disposerError; });
+      return document.createElement('div');
+    });
+    const el = factory();
+    disposeComponent(el);
+
+    expect(errors.length).toBe(1);
+    expect(errors[0]!.error).toBe(disposerError);
+    expect(errors[0]!.source).toBe('component disposer');
+  });
+
+  it('onMount error does not prevent other mount callbacks from running', () => {
+    const errors: Array<{ error: unknown; source?: string }> = [];
+    onError((err, info) => { errors.push({ error: err, source: info?.source }); });
+
+    const log: string[] = [];
+    const factory = defineComponent(() => {
+      onMount(() => { log.push('first'); });
+      onMount(() => { throw new Error('mount error'); });
+      onMount(() => { log.push('third'); });
+      return document.createElement('div');
+    });
+    factory();
+
+    expect(log).toEqual(['first', 'third']);
+    expect(errors.length).toBe(1);
+    expect(errors[0]!.source).toBe('onMount');
+  });
+
+  it('onUnmount error does not prevent other unmount callbacks from running', () => {
+    const errors: Array<{ error: unknown; source?: string }> = [];
+    onError((err, info) => { errors.push({ error: err, source: info?.source }); });
+
+    const log: string[] = [];
+    const factory = defineComponent(() => {
+      onUnmount(() => { log.push('first'); });
+      onUnmount(() => { throw new Error('unmount error'); });
+      onUnmount(() => { log.push('third'); });
+      return document.createElement('div');
+    });
+    const el = factory();
+    disposeComponent(el);
+
+    expect(log).toEqual(['first', 'third']);
+    expect(errors.length).toBe(1);
+    expect(errors[0]!.source).toBe('onUnmount');
+  });
+
+  it('disposer error does not prevent other disposers from running', () => {
+    const errors: Array<{ error: unknown; source?: string }> = [];
+    onError((err, info) => { errors.push({ error: err, source: info?.source }); });
+
+    const log: string[] = [];
+    const factory = defineComponent(() => {
+      trackDisposer(() => { log.push('d1'); });
+      trackDisposer(() => { throw new Error('disposer error'); });
+      trackDisposer(() => { log.push('d3'); });
+      return document.createElement('div');
+    });
+    const el = factory();
+    disposeComponent(el);
+
+    expect(log).toEqual(['d1', 'd3']);
+    expect(errors.length).toBe(1);
+    expect(errors[0]!.source).toBe('component disposer');
   });
 });
 

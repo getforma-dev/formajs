@@ -13,6 +13,11 @@ import { createComputed } from './computed.js';
  * Create a memoized computed value.
  * Identical to `createComputed` — provided for React/SolidJS familiarity.
  *
+ * Note: Unlike SolidJS's createComputed (which is an eager synchronous
+ * side effect), both createComputed and createMemo in FormaJS are lazy
+ * cached derivations — equivalent to SolidJS's createMemo. They are
+ * identical.
+ *
  * The computation runs lazily and caches the result. It only recomputes
  * when a signal it reads during computation changes.
  *

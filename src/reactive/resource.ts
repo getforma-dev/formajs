@@ -8,7 +8,7 @@
  * React equivalent: use() + Suspense (React 19), or useSWR/react-query
  */
 
-import { createSignal, createValueSignal, type SignalGetter } from './signal.js';
+import { createSignal, type SignalGetter } from './signal.js';
 import { internalEffect } from './effect.js';
 import { untrack } from './untrack.js';
 import { getSuspenseContext } from './suspense-context.js';
@@ -68,8 +68,8 @@ export function createResource<T, S = true>(
   options?: ResourceOptions<T>,
 ): Resource<T> {
   const [data, setData] = createSignal<T | undefined>(options?.initialValue);
-  const [loading, setLoading] = createValueSignal(false);
-  const [error, setError] = createValueSignal<unknown>(undefined);
+  const [loading, setLoading] = createSignal(false);
+  const [error, setError] = createSignal<unknown>(undefined);
 
   // Capture the Suspense context at creation time (not at fetch time).
   // This is critical because the Suspense boundary pushes/pops its context

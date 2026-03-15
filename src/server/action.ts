@@ -6,7 +6,7 @@
  * the server responds (or rolls back on error).
  */
 
-import { createValueSignal, batch } from '../reactive/index.js';
+import { createSignal, batch } from '../reactive/index.js';
 import type { Resource } from '../reactive/resource.js';
 
 // ---------------------------------------------------------------------------
@@ -83,8 +83,8 @@ export function createAction<Args extends unknown[], Result>(
   serverFn: (...args: Args) => Promise<Result>,
   options?: ActionOptions<Args, Result>,
 ): Action<Args, Result> {
-  const [pending, setPending] = createValueSignal(false);
-  const [error, setError] = createValueSignal<unknown>(undefined);
+  const [pending, setPending] = createSignal(false);
+  const [error, setError] = createSignal<unknown>(undefined);
 
   const action = async (...args: Args): Promise<Result> => {
     setPending(true);

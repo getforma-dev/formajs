@@ -13,6 +13,11 @@ import { computed as rawComputed } from 'alien-signals';
 /**
  * Create a lazy, cached computed value.
  *
+ * Note: Unlike SolidJS's createComputed (which is an eager synchronous
+ * side effect), this is a lazy cached derivation — equivalent to
+ * SolidJS's createMemo. Both createComputed and createMemo in FormaJS
+ * are identical.
+ *
  * ```ts
  * const [count, setCount] = createSignal(0);
  * const doubled = createComputed(() => count() * 2);

@@ -6,7 +6,7 @@
  * Zero dependencies -- native browser APIs only.
  */
 
-import { createValueSignal, internalEffect, batch } from 'forma/reactive';
+import { createSignal, internalEffect, batch } from 'forma/reactive';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -63,11 +63,11 @@ export function createHistory<T>(
   // ---------- Reactive output signals ----------
   // These are signals that external consumers can subscribe to.
   // We update them explicitly after every mutation.
-  const [stackSignal, setStackSignal] = createValueSignal<T[]>([..._stack]);
-  const [cursorSignal, setCursorSignal] = createValueSignal(_cursor);
+  const [stackSignal, setStackSignal] = createSignal<T[]>([..._stack]);
+  const [cursorSignal, setCursorSignal] = createSignal(_cursor);
   // Separate signal for stack length so canRedo only depends on numeric
   // signals and doesn't re-fire when array reference changes but length stays.
-  const [stackLenSignal, setStackLenSignal] = createValueSignal(_stack.length);
+  const [stackLenSignal, setStackLenSignal] = createSignal(_stack.length);
 
   /** Sync the reactive output signals with internal mutable state. */
   function syncSignals(): void {

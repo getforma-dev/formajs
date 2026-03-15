@@ -663,12 +663,12 @@ The longer syntax is a feature, not a gap. Document it as such in the README.
 | H1 | 1 | SSR stream `dangerouslySetInnerHTML` validation | S | DONE |
 | H5 | 1 | Remove `parseState` relaxed JSON parser | S | DONE |
 | H2 | 1 | `findBlockedMethod` computed bracket bypass | M | DONE |
-| C6 | 2 | Report lifecycle errors via `reportError` | S | TODO |
-| S1 | 2 | Document `createComputed` semantics (not rename) | S | TODO |
-| C4 | 2 | Remove `longestIncreasingSubsequence` from API | S | TODO |
-| C5 | 2 | Migrate `createValueSignal` → `createSignal` (4 files) | S | TODO |
-| H4 | 2 | Cap `compiledTemplateCache` at 2048 | S | TODO |
-| S4 | 2 | Add `$el` and `$dispatch` magics | M | TODO |
+| C6 | 2 | Report lifecycle errors via `reportError` | S | DONE |
+| S1 | 2 | Document `createComputed` semantics (not rename) | S | DONE |
+| C4 | 2 | Remove `longestIncreasingSubsequence` from API | S | DONE |
+| C5 | 2 | Migrate `createValueSignal` → `createSignal` (4 files) | S | DONE |
+| H4 | 2 | Cap `compiledTemplateCache` at 2048 | S | DONE |
+| S4 | 2 | Add `$el` and `$dispatch` magics | M | DONE |
 | S6 | 3 | Implement `interaction` and `idle` triggers | M | TODO |
 | C3 | 3 | AbortController for hydrated event listeners | S | TODO |
 | S3 | 3 | Support function components in `h()` | L | TODO |

@@ -18,4 +18,12 @@ describe('public api surface', () => {
     expect(typeof forma.createLocalStorage).toBe('function');
     expect(typeof forma.createIndexedDB).toBe('function');
   });
+
+  it('does NOT export longestIncreasingSubsequence (internal only)', () => {
+    expect((forma as Record<string, unknown>).longestIncreasingSubsequence).toBeUndefined();
+  });
+
+  it('does NOT export createValueSignal (removed deprecated alias)', () => {
+    expect((forma as Record<string, unknown>).createValueSignal).toBeUndefined();
+  });
 });

@@ -81,9 +81,3 @@ export function createSignal<T>(initialValue: T): [get: SignalGetter<T>, set: Si
 
   return [getter, setter];
 }
-
-/** @deprecated Use createSignal instead. Alias kept for backwards compatibility. */
-export type ValueSignalSetter<T> = SignalSetter<T>;
-
-/** @deprecated Use createSignal instead. Alias kept for backwards compatibility. */
-export const createValueSignal = createSignal;

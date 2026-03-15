@@ -24,7 +24,7 @@
  *   data-fetch="GET /url → prop"       Fetch binding
  *   data-fetch-id="name"               Register fetch for $refetch('name')
  */
-import { createValueSignal, internalEffect, createComputed, batch } from './reactive';
+import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
 
@@ -433,6 +433,15 @@ interface CompiledTemplate {
 }
 
 const compiledTemplateCache = new Map<string, CompiledTemplate>();
+const COMPILED_TEMPLATE_CACHE_MAX = 2048;
+function cacheCompiledTemplate(key: string, template: CompiledTemplate): void {
+  if (compiledTemplateCache.size >= COMPILED_TEMPLATE_CACHE_MAX) {
+    // Evict oldest entry (first inserted)
+    const first = compiledTemplateCache.keys().next().value;
+    if (first !== undefined) compiledTemplateCache.delete(first);
+  }
+  compiledTemplateCache.set(key, template);
+}
 const UNSAFE_METHOD_NAMES = new Set([
   'constructor', '__proto__', 'prototype',
   '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
@@ -935,7 +944,7 @@ function compileTemplate(text: string): CompiledTemplate {
     dynamics,
     hasItemRef: dynamics.length > 0,
   };
-  compiledTemplateCache.set(text, result);
+  cacheCompiledTemplate(text, result);
   return result;
 }
 
@@ -2118,7 +2127,7 @@ function initScope(stateEl: Element): Scope {
   const setters: Record<string, Setter> = {};
 
   for (const [key, initial] of Object.entries(state)) {
-    const [get, set] = createValueSignal(initial);
+    const [get, set] = createSignal(initial);
     getters[key] = get;
     setters[key] = set as Setter;
   }
@@ -2130,6 +2139,20 @@ function initScope(stateEl: Element): Scope {
 }
 
 function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void {
+  // Inject per-element magics: $el and $dispatch
+  // Each element gets its own child scope so $el resolves to the correct element.
+  const elMagics: Record<string, unknown> = {
+    $el: el,
+    $dispatch: (name: string, detail?: unknown) => {
+      el.dispatchEvent(new CustomEvent(name, {
+        bubbles: true,
+        composed: true, // crosses Shadow DOM boundaries (important for <forma-stage>)
+        detail,
+      }));
+    },
+  };
+  scope = createChildScope(scope, elMagics);
+
   // When the server provides a directive map, we know exactly which directives
   // this element has. Skip getAttribute calls for directives it doesn't have.
   // `known` is null when no map is available (fallback: check everything).
@@ -2569,16 +2592,16 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       }
 
       // Create signals for target, loading, and error
-      const [getTarget, setTarget] = createValueSignal<unknown>(null);
+      const [getTarget, setTarget] = createSignal<unknown>(null);
       scope.getters[target] = getTarget;
       scope.setters[target] = setTarget as Setter;
       if (loadingTarget) {
-        const [gl, sl] = createValueSignal(false);
+        const [gl, sl] = createSignal(false);
         scope.getters[loadingTarget] = gl;
         scope.setters[loadingTarget] = sl as Setter;
       }
       if (errorTarget) {
-        const [ge, se] = createValueSignal<unknown>(null);
+        const [ge, se] = createSignal<unknown>(null);
         scope.getters[errorTarget] = ge;
         scope.setters[errorTarget] = se as Setter;
       }
