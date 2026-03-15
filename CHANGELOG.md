@@ -2,6 +2,16 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.6.1] - 2026-03-15
+
+### Added
+- **C1:** Tests for `suspense-context.ts` — 9 tests covering push/pop stack, LIFO ordering, empty stack safety
+- **C2:** Tests for `rpc-client.ts` and `rpc-handler.ts` — 37 tests covering endpoint routing, FORBIDDEN_KEYS protection, error sanitization, fetch mocking, revalidation events
+- **C7:** Tests for `reducer.ts` — 8 tests covering tuple return, reactivity, complex state, counter patterns
+
+### Fixed
+- Moved internal planning documents (hardening plan, Turbo Streams evaluation) out of public repo
+
 ## [0.6.0] - 2026-03-15
 
 ### Added
