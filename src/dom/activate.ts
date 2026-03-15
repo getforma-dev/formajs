@@ -9,8 +9,20 @@
 import { createRoot, __DEV__ } from 'forma/reactive';
 import { hydrateIsland } from './hydrate.js';
 
-/** Function that creates a component's DOM tree (same for CSR and hydration). */
-export type IslandHydrateFn = (props: Record<string, unknown> | null) => unknown;
+/**
+ * Function that hydrates an island.
+ *
+ * @param el     The root element of the island (`[data-forma-island]`).
+ *               Useful for layout measurement, focus management, CSS class
+ *               toggling, third-party library init, or reading extra `data-*`
+ *               attributes from the server-rendered shell.
+ * @param props  Parsed props from `data-forma-props` (inline or script block),
+ *               or `null` if no props were provided.
+ * @returns      A component tree (from `h()` calls) for descriptor-based
+ *               hydration, or `undefined` for imperative islands that set up
+ *               their own effects.
+ */
+export type IslandHydrateFn = (el: HTMLElement, props: Record<string, unknown> | null) => unknown;
 
 /**
  * Load props for an island from either inline attribute or shared script block.
@@ -105,7 +117,7 @@ function hydrateIslandRoot(
     // root element (CSR fallback for empty islands). Track the active root.
     let activeRoot: Element = root;
     createRoot((dispose) => {
-      activeRoot = hydrateIsland(() => hydrateFn(props), root);
+      activeRoot = hydrateIsland(() => hydrateFn(root, props), root);
       (activeRoot as any).__formaDispose = dispose;
     });
 

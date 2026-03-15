@@ -45,7 +45,8 @@ describe('activateIslands', () => {
     const hydrateFn = vi.fn();
     activateIslands({ Simple: hydrateFn });
 
-    expect(hydrateFn).toHaveBeenCalledWith(null);
+    const island = document.querySelector('[data-forma-island]') as HTMLElement;
+    expect(hydrateFn).toHaveBeenCalledWith(island, null);
   });
 
   it('loads inline props from data-forma-props attribute', () => {
@@ -60,7 +61,8 @@ describe('activateIslands', () => {
     const hydrateFn = vi.fn();
     activateIslands({ WithProps: hydrateFn });
 
-    expect(hydrateFn).toHaveBeenCalledWith({ name: 'test', count: 42 });
+    const island = document.querySelector('[data-forma-island]') as HTMLElement;
+    expect(hydrateFn).toHaveBeenCalledWith(island, { name: 'test', count: 42 });
   });
 
   it('loads props from shared script block', () => {
@@ -74,7 +76,8 @@ describe('activateIslands', () => {
     const hydrateFn = vi.fn();
     activateIslands({ ScriptProps: hydrateFn });
 
-    expect(hydrateFn).toHaveBeenCalledWith({ title: 'hello' });
+    const island = document.querySelector('[data-forma-island]') as HTMLElement;
+    expect(hydrateFn).toHaveBeenCalledWith(island, { title: 'hello' });
   });
 
   it('error in island 0 does not prevent island 1 from activating', () => {

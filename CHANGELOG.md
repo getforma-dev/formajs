@@ -2,6 +2,20 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.4.0] - 2026-03-15
+
+### Changed
+- **BREAKING:** `IslandHydrateFn` signature changed from `(props) => unknown` to `(el, props) => unknown` — island callbacks now receive the root `HTMLElement` as the first argument for layout measurement, focus management, CSS class toggling, and third-party library integration
+
+### Docs
+- Added "Getting Started with a Bundler" section (Vite setup)
+- Consolidated CDN URLs into a clear table with all filename variants
+- Documented lifecycle semantics (`onMount` cleanup vs `onUnmount`)
+- Added error handling section (`mount()` fail-fast, `onError()`, `createErrorBoundary`)
+- Added Solid comparison table
+- Added feature stability matrix
+- Expanded ecosystem table with all Forma packages (Rust crates + npm)
+
 ## [0.3.0] - 2026-03-14
 
 ### Security

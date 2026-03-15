@@ -23,7 +23,7 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (props) => {
+      Comp: (_el, props) => {
         receivedProps = props;
         return document.createElement('div');
       },
@@ -44,7 +44,7 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (props) => {
+      Comp: (_el, props) => {
         receivedProps = props;
         return document.createElement('div');
       },
@@ -64,7 +64,7 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (props) => {
+      Comp: (_el, props) => {
         receivedProps = props;
         return document.createElement('div');
       },
@@ -121,7 +121,7 @@ describe('props loading', () => {
     island.setAttribute('data-forma-props', '{"label":"Say \\"hello\\""}');
 
     activateIslands({
-      Comp: (props) => {
+      Comp: (_el, props) => {
         receivedProps = props;
         return document.createElement('div');
       },

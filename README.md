@@ -332,14 +332,18 @@ const theme = inject(ThemeCtx); // 'dark'
 
 ## Islands Architecture
 
-For server-rendered HTML, activate independent interactive regions. Each island callback receives parsed props from `data-forma-props` and returns a component tree — the same `h()` calls you'd use for client-side rendering. The hydration system automatically walks the descriptor tree against the existing SSR DOM, attaching event handlers and reactive bindings without recreating elements.
+For server-rendered HTML, activate independent interactive regions. Each island callback receives the root DOM element and parsed props, then returns a component tree — the same `h()` calls you'd use for client-side rendering. The hydration system walks the descriptor tree against the existing SSR DOM, attaching event handlers and reactive bindings without recreating elements.
 
 ```typescript
 import { activateIslands, createSignal, h } from '@getforma/core';
 
 activateIslands({
-  Counter: (props) => {
+  Counter: (el, props) => {
     const [count, setCount] = createSignal(props?.initial ?? 0);
+
+    // el is the island's root HTMLElement — useful for layout measurement,
+    // focus management, CSS classes, or reading extra data-* attributes.
+    el.classList.add('is-hydrated');
 
     // Return the same tree shape as the SSR output.
     // Hydration matches this against existing DOM — no elements are created.
@@ -415,16 +419,22 @@ FormaJS is at **v0.3.x**. Some features are more battle-tested than others:
 | `createStore` (deep reactivity) | **Stable** | |
 | Components (`defineComponent`, lifecycle) | **Stable** | |
 | Context (`createContext`, `provide`, `inject`) | **Stable** | |
-| Islands (`activateIslands`) | **Beta** | API may change |
-| SSR (`renderToString`, `renderToStream`) | **Beta** | API may change |
-| TC39 Signals compat (`Signal.State`, `Signal.Computed`) | **Experimental** | Tracks the evolving TC39 proposal |
+| Islands (`activateIslands`) | **Stable** | 10 activation + 88 hydration tests |
+| SSR (`renderToString`, `renderToStream`) | **Beta** | Functional, API may evolve |
+| TC39 Signals compat (`Signal.State`, `Signal.Computed`) | **Beta** | 9 tests, but tracks an evolving TC39 proposal |
 
 ## Ecosystem
 
-| Package | Description |
-|---------|-------------|
-| [@getforma/core](https://www.npmjs.com/package/@getforma/core) | This library — `npm install @getforma/core` |
-| [forma](https://github.com/getforma-dev/forma) | Rust server framework (forma-ir + forma-server) |
+FormaJS is the reactive frontend layer of a full-stack Rust + TypeScript framework. The pipeline flows: TypeScript components → `@getforma/compiler` → FMIR binary → `forma-ir` (parse) → `forma-server` (render) → Axum HTTP response.
+
+| Package | Language | Description |
+|---------|----------|-------------|
+| [@getforma/core](https://www.npmjs.com/package/@getforma/core) | TypeScript | This library — reactive DOM, signals, islands, SSR hydration |
+| [@getforma/compiler](https://github.com/getforma-dev/forma-tools) | TypeScript | TypeScript-to-FMIR compiler, Vite plugin, esbuild SSR plugin |
+| [@getforma/build](https://github.com/getforma-dev/forma-tools) | TypeScript | esbuild pipeline with content hashing, compression, manifest |
+| [@getforma/create-app](https://github.com/getforma-dev/create-forma-app) | TypeScript | `npx @getforma/create-app` — scaffold a new Forma project |
+| [forma-ir](https://crates.io/crates/forma-ir) | Rust | FMIR binary format: parser, walker, WASM exports |
+| [forma-server](https://crates.io/crates/forma-server) | Rust | Axum middleware for SSR page rendering, asset serving, CSP |
 
 ## License
 
