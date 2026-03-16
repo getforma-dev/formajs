@@ -162,14 +162,39 @@ mount(() => <Counter />, '#app');
 
 ## CDN Usage
 
-Both long and short filenames are provided. They are identical files — use whichever you prefer:
+### Script tag (IIFE — auto-initializes)
 
-| Build | URL |
-|-------|-----|
-| **Standard** (recommended) | `unpkg.com/@getforma/core/dist/formajs-runtime.global.js` |
-| Standard (short alias) | `unpkg.com/@getforma/core/dist/forma-runtime.js` |
-| **CSP-safe** (no `new Function`) | `unpkg.com/@getforma/core/dist/formajs-runtime-hardened.global.js` |
-| CSP-safe (short alias) | `unpkg.com/@getforma/core/dist/forma-runtime-csp.js` |
+```html
+<!-- unpkg -->
+<script src="https://unpkg.com/@getforma/core@0.8.1/dist/formajs-runtime.global.js"></script>
+
+<!-- jsDelivr (faster globally) -->
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@0.8.1/dist/formajs-runtime.global.js"></script>
+```
+
+### ESM import (no bundler, modern browsers)
+
+```html
+<script type="module">
+  import { createSignal, h, mount } from 'https://cdn.jsdelivr.net/npm/@getforma/core@0.8.1/dist/index.js';
+
+  const [count, setCount] = createSignal(0);
+  mount(() => h('button', { onClick: () => setCount(count() + 1) }, () => `${count()}`), '#app');
+</script>
+```
+
+### All CDN builds
+
+| Build | Filename |
+|-------|----------|
+| **Standard** (recommended) | `formajs-runtime.global.js` |
+| **CSP-safe** (no `new Function`) | `formajs-runtime-hardened.global.js` |
+| Standard (short alias) | `forma-runtime.js` |
+| CSP-safe (short alias) | `forma-runtime-csp.js` |
+
+Available from both `unpkg.com/@getforma/core@VERSION/dist/` and `cdn.jsdelivr.net/npm/@getforma/core@VERSION/dist/`.
+
+For production, always pin the version (e.g., `@0.8.1`). Unversioned URLs resolve to latest.
 
 > The CSP build uses a hand-written expression parser and never calls `new Function`.
 > It supports most common patterns. See [examples/csp](./examples/csp) for a working demo.
