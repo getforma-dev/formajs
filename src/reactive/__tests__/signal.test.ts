@@ -1,5 +1,6 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createSignal, value } from '../signal';
+import { createEffect, createRoot } from '../index';
 
 describe('createSignal', () => {
   it('creates with initial value', () => {
@@ -109,5 +110,110 @@ describe('createSignal', () => {
 
     expect(prevValues).toEqual([0, 1, 2]);
     expect(count()).toBe(3);
+  });
+});
+
+describe('createSignal with equals option', () => {
+  it('skips update when equals returns true (literal setter)', () => {
+    let effectCount = 0;
+    const [pos, setPos] = createSignal(
+      { x: 0, y: 0 },
+      { equals: (a, b) => a.x === b.x && a.y === b.y },
+    );
+
+    createRoot(() => {
+      createEffect(() => {
+        pos();
+        effectCount++;
+      });
+    });
+
+    const before = effectCount;
+    // Same values — should be skipped
+    setPos({ x: 0, y: 0 });
+    expect(effectCount).toBe(before);
+    expect(pos()).toEqual({ x: 0, y: 0 });
+  });
+
+  it('applies update when equals returns false', () => {
+    let effectCount = 0;
+    const [pos, setPos] = createSignal(
+      { x: 0, y: 0 },
+      { equals: (a, b) => a.x === b.x && a.y === b.y },
+    );
+
+    createRoot(() => {
+      createEffect(() => {
+        pos();
+        effectCount++;
+      });
+    });
+
+    const before = effectCount;
+    setPos({ x: 1, y: 0 });
+    expect(effectCount).toBeGreaterThan(before);
+    expect(pos()).toEqual({ x: 1, y: 0 });
+  });
+
+  it('skips update with functional setter when equals returns true', () => {
+    let effectCount = 0;
+    const [count, setCount] = createSignal(5, {
+      equals: (a, b) => a === b,
+    });
+
+    createRoot(() => {
+      createEffect(() => {
+        count();
+        effectCount++;
+      });
+    });
+
+    const before = effectCount;
+    // Functional update that returns the same value
+    setCount(prev => prev);
+    expect(effectCount).toBe(before);
+  });
+
+  it('applies functional update when equals returns false', () => {
+    const [count, setCount] = createSignal(5, {
+      equals: (a, b) => a === b,
+    });
+
+    setCount(prev => prev + 1);
+    expect(count()).toBe(6);
+  });
+
+  it('works without equals option (default behavior)', () => {
+    const [count, setCount] = createSignal(0);
+    setCount(1);
+    expect(count()).toBe(1);
+    // Same reference — alien-signals uses !== internally
+    setCount(1);
+    expect(count()).toBe(1);
+  });
+
+  it('custom equals with array comparison', () => {
+    const [items, setItems] = createSignal(
+      [1, 2, 3],
+      { equals: (a, b) => a.length === b.length && a.every((v, i) => v === b[i]) },
+    );
+
+    let effectCount = 0;
+    createRoot(() => {
+      createEffect(() => {
+        items();
+        effectCount++;
+      });
+    });
+
+    const before = effectCount;
+    // Same content — should skip
+    setItems([1, 2, 3]);
+    expect(effectCount).toBe(before);
+
+    // Different content — should apply
+    setItems([1, 2, 4]);
+    expect(effectCount).toBeGreaterThan(before);
+    expect(items()).toEqual([1, 2, 4]);
   });
 });

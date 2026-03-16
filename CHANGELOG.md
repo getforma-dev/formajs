@@ -2,6 +2,25 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.0] - 2026-03-15
+
+### Changed
+- **Upgraded alien-signals from 1.0.x to 3.1.2.** Replaced `pauseTracking`/`resumeTracking` with `getActiveSub`/`setActiveSub`. This brings the v2 Pending flag optimization (fewer intermediate recomputations) and aligns with Vue 3.6's reactivity engine.
+
+### Added
+- **`SignalOptions.equals` — custom equality for `createSignal`.** When provided, the setter reads the current value and only updates the signal if `equals(prev, next)` returns `false`. Works with both literal and functional setters. Previously declared in the type but never wired up — now fully functional.
+
+```typescript
+const [pos, setPos] = createSignal(
+  { x: 0, y: 0 },
+  { equals: (a, b) => a.x === b.x && a.y === b.y },
+);
+setPos({ x: 0, y: 0 }); // skipped — values are equal
+setPos({ x: 1, y: 0 }); // applied — values differ
+```
+
+- TC39 compat `Signal.State` now passes `equals` through to `createSignal` natively instead of wrapping with its own setter logic.
+
 ## [0.7.1] - 2026-03-15
 
 ### Fixed

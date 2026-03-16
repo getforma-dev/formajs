@@ -13,12 +13,6 @@
 import { createSignal, type SignalOptions } from './signal.js';
 import { createComputed } from './computed.js';
 
-/** Extended options for TC39-compatible State, adding custom equality. */
-interface StateOptions<T> extends SignalOptions<T> {
-  /** Custom equality check. Default: Object.is (via alien-signals). */
-  equals?: (prev: T, next: T) => boolean;
-}
-
 /**
  * TC39-compatible reactive state container.
  * Equivalent to `Signal.State` in the TC39 proposal.
@@ -33,20 +27,11 @@ export class State<T> {
   private _get: () => T;
   private _set: (v: T | ((prev: T) => T)) => void;
 
-  constructor(initialValue: T, options?: StateOptions<T>) {
-    const [getter, setter] = createSignal(initialValue);
+  constructor(initialValue: T, options?: SignalOptions<T>) {
+    // createSignal now natively supports equals — pass options through
+    const [getter, setter] = createSignal(initialValue, options);
     this._get = getter;
-
-    // Handle custom equality in the TC39 compat layer (not in createSignal hot path)
-    if (options?.equals) {
-      const eq = options.equals;
-      this._set = (v: T | ((prev: T) => T)) => {
-        const next = typeof v === 'function' ? (v as (prev: T) => T)(getter()) : v;
-        if (!eq(getter(), next)) setter(() => next);
-      };
-    } else {
-      this._set = setter;
-    }
+    this._set = setter;
 
     if (options?.name) {
       Object.defineProperty(getter, 'name', { value: options.name });

@@ -7,7 +7,7 @@
  * TC39 Signals equivalent: Signal.subtle.untrack()
  */
 
-import { pauseTracking, resumeTracking } from 'alien-signals';
+import { getActiveSub, setActiveSub } from 'alien-signals';
 
 /**
  * Execute a function without tracking signal reads.
@@ -22,10 +22,10 @@ import { pauseTracking, resumeTracking } from 'alien-signals';
  * ```
  */
 export function untrack<T>(fn: () => T): T {
-  pauseTracking();
+  const prev = setActiveSub(undefined);
   try {
     return fn();
   } finally {
-    resumeTracking();
+    setActiveSub(prev);
   }
 }
