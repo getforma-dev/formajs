@@ -44,3 +44,12 @@ jobs:
       - run: npm publish --provenance --access public
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Notify create-forma-app to update dependency
+        if: success()
+        uses: peter-evans/repository-dispatch@v3
+        with:
+          token: ${{ secrets.FORMA_DISPATCH_TOKEN }}
+          repository: getforma-dev/create-forma-app
+          event-type: core-release
+          client-payload: '{"version": "${{ github.ref_name }}"}'
