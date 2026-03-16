@@ -814,16 +814,26 @@ See the [`examples/`](./examples) directory:
 
 ## Part of the Forma Stack
 
-FormaJS is the reactive frontend layer of a full-stack Rust + TypeScript framework.
+### Frontend (TypeScript)
 
-| Package | Language | Description |
-|---|---|---|
-| [@getforma/core](https://www.npmjs.com/package/@getforma/core) | TypeScript | This library — reactive DOM, signals, islands, SSR hydration |
-| [@getforma/compiler](https://github.com/getforma-dev/forma-tools) | TypeScript | TypeScript-to-FMIR compiler, Vite plugin, esbuild SSR plugin |
-| [@getforma/build](https://github.com/getforma-dev/forma-tools) | TypeScript | esbuild pipeline with content hashing, compression, manifest |
-| [@getforma/create-app](https://github.com/getforma-dev/create-forma-app) | TypeScript | `npx @getforma/create-app` — scaffold a new Forma project |
-| [forma-ir](https://crates.io/crates/forma-ir) | Rust | FMIR binary format: parser, walker, WASM exports |
-| [forma-server](https://crates.io/crates/forma-server) | Rust | Axum middleware for SSR, asset serving, CSP |
+| Package | Description |
+|---|---|
+| [@getforma/core](https://www.npmjs.com/package/@getforma/core) | **This library** — reactive DOM, signals, islands, SSR hydration |
+| [@getforma/compiler](https://www.npmjs.com/package/@getforma/compiler) | Vite plugin — h() optimization, server function transforms, FMIR emission |
+| [@getforma/build](https://www.npmjs.com/package/@getforma/build) | Production pipeline — esbuild bundling, content hashing, compression, manifest |
+
+### Backend (Rust)
+
+| Package | Description |
+|---|---|
+| [forma-ir](https://crates.io/crates/forma-ir) | FMIR binary format — parser, walker, WASM exports |
+| [forma-server](https://crates.io/crates/forma-server) | Axum middleware — SSR page rendering, asset serving, CSP headers |
+
+### Full Framework
+
+| Package | Description |
+|---|---|
+| [@getforma/create-app](https://github.com/getforma-dev/create-forma-app) | `npx @getforma/create-app` — scaffolds a Rust server + TypeScript frontend project |
 
 ---
 
