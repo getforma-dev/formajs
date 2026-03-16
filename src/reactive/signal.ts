@@ -7,7 +7,7 @@
  * TC39 Signals equivalent: Signal.State
  */
 
-import { signal as createRawSignal, getActiveSub, setActiveSub } from 'alien-signals';
+import { signal as createRawSignal, setActiveSub } from 'alien-signals';
 
 // ---------------------------------------------------------------------------
 // Public API

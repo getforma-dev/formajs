@@ -7,7 +7,7 @@
  * TC39 Signals equivalent: Signal.subtle.untrack()
  */
 
-import { getActiveSub, setActiveSub } from 'alien-signals';
+import { setActiveSub } from 'alien-signals';
 
 /**
  * Execute a function without tracking signal reads.
