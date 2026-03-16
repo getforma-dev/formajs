@@ -1,19 +1,33 @@
 ---
 name: Bug Report
-about: Report a bug in FormaJS
+about: Something isn't working as expected
+title: ""
 labels: bug
+assignees: ""
 ---
 
-**Describe the bug**
-A clear description of what the bug is.
+**What happened?**
+A clear description of the bug.
 
-**To reproduce**
-Steps to reproduce the behavior.
+**Steps to reproduce**
+1.
+2.
+3.
 
 **Expected behavior**
-What you expected to happen.
+What should happen instead.
 
 **Environment**
-- FormaJS version:
-- Browser:
-- Node version:
+- FormaJS version: (e.g., 1.0.3)
+- Entry point: (JSX / h() / HTML Runtime / SSR)
+- Browser: (e.g., Chrome 120, Safari 18)
+- Bundler: (e.g., Vite 5, esbuild, none/CDN)
+- Node version: (if SSR)
+
+**Code example**
+```tsx
+// Minimal reproduction
+```
+
+**Additional context**
+Screenshots, error messages, console output.
