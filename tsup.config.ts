@@ -35,13 +35,16 @@ export default defineConfig([
       options.pure = ['createSignal', 'createComputed', 'createStore', 'createBus'];
     },
   },
-  // IIFE global build — for <script src="formajs.min.js"> usage
+  // IIFE global build — for <script src="formajs.global.js"> usage
+  // NOT minified — CDN serves with gzip/brotli anyway, and minified single-line
+  // files trigger false-positive "obfuscated code" flags in supply chain scanners
+  // (Socket.dev, Snyk). Users who need minification use their own bundler.
   {
     entry: { formajs: 'src/index.ts' },
     format: ['iife'],
     globalName: 'FormaJS',
     outDir: 'dist',
-    minify: true,
+    minify: false,
     sourcemap: true,
     target: 'es2022',
     define: {
@@ -52,13 +55,13 @@ export default defineConfig([
       options.alias = formaAlias;
     },
   },
-  // IIFE runtime build — for <script src="formajs.runtime.min.js"> (HTML API)
+  // IIFE runtime build — for <script src="formajs-runtime.global.js"> (HTML API)
   {
     entry: { 'formajs-runtime': 'src/runtime.ts' },
     format: ['iife'],
     globalName: 'FormaRuntime',
     outDir: 'dist',
-    minify: true,
+    minify: false,
     sourcemap: true,
     target: 'es2022',
     define: {
@@ -97,7 +100,7 @@ export default defineConfig([
     format: ['iife'],
     globalName: 'FormaRuntime',
     outDir: 'dist',
-    minify: true,
+    minify: false,
     treeshake: true,
     sourcemap: true,
     target: 'es2022',

@@ -2,6 +2,11 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.1] - 2026-03-16
+
+### Fixed
+- **IIFE global builds no longer minified** — Socket.dev flagged single-line minified files as "obfuscated code" (high severity false positive). IIFE builds are now unminified multi-line code. CDNs serve with gzip/brotli anyway so the wire size impact is negligible. Users who need minification use their own bundler.
+
 ## [1.0.0] - 2026-03-16
 
 ### BREAKING CHANGES
