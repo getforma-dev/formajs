@@ -812,7 +812,7 @@ See the [`examples/`](./examples) directory:
 
 ---
 
-## Ecosystem
+## Part of the Forma Stack
 
 FormaJS is the reactive frontend layer of a full-stack Rust + TypeScript framework.
 
