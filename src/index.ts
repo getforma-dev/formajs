@@ -28,7 +28,7 @@ export { createBus, delegate, onKey } from './events';
 export type { EventBus, KeyOptions } from './events';
 
 // DOM Utils
-export { $, $$, addClass, removeClass, toggleClass, setStyle, setAttr, setText, setHTML, setHTMLUnsafe,
+export { $, $$, addClass, removeClass, toggleClass, setStyle, setAttr, setText, setHTMLUnsafe,
          closest, children, siblings, parent, nextSibling, prevSibling,
          onResize, onIntersect, onMutation } from './dom-utils';
 

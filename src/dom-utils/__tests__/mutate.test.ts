@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { addClass, removeClass, toggleClass, setStyle, setAttr, setText, setHTML, setHTMLUnsafe } from '../mutate';
+import { addClass, removeClass, toggleClass, setStyle, setAttr, setText, setHTMLUnsafe } from '../mutate';
 
 describe('addClass', () => {
   it('adds a single class', () => {
@@ -106,16 +106,8 @@ describe('setText', () => {
   });
 });
 
-describe('setHTML', () => {
-  it('sets inner HTML', () => {
-    const el = document.createElement('div');
-    setHTML(el, '<strong>bold</strong>');
-    expect(el.innerHTML).toBe('<strong>bold</strong>');
-  });
-});
-
 describe('setHTMLUnsafe', () => {
-  it('sets inner HTML (same behavior as setHTML)', () => {
+  it('sets inner HTML', () => {
     const el = document.createElement('div');
     setHTMLUnsafe(el, '<em>italic</em>');
     expect(el.innerHTML).toBe('<em>italic</em>');

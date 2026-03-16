@@ -6,7 +6,6 @@ export {
   setStyle,
   setAttr,
   setText,
-  setHTML,
   setHTMLUnsafe,
 } from './mutate';
 export {
