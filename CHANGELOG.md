@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.2] - 2026-03-15
+
+### Docs
+- Added jsDelivr CDN URLs alongside unpkg
+- Added ESM import example for modern browsers (no bundler)
+- Added version pinning guidance for production
+- Updated runtime.ts header with all 6 design inspirations, complete file map, build output documentation, and monolith rationale
+
 ## [0.8.1] - 2026-03-15
 
 ### Added
