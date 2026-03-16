@@ -26,4 +26,9 @@ describe('public api surface', () => {
   it('does NOT export createValueSignal (removed deprecated alias)', () => {
     expect((forma as Record<string, unknown>).createValueSignal).toBeUndefined();
   });
+
+  it('does NOT export WASM helpers (removed from main entry point)', () => {
+    expect((forma as Record<string, unknown>).renderLocal).toBeUndefined();
+    expect((forma as Record<string, unknown>).renderIsland).toBeUndefined();
+  });
 });

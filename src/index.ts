@@ -50,5 +50,3 @@ export type { ActionOptions, Action } from './server';
 export type { MutationResponse } from './server';
 export type { RPCRequest, RPCResponse } from './server';
 
-// WASM
-export { renderLocal, renderIsland } from './wasm/forma-wasm.js';

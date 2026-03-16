@@ -2,6 +2,17 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.1] - 2026-03-15
+
+### Fixed
+- **CSP parser operator precedence:** Arithmetic now correctly evaluates before comparison (`a + b > c` = `(a+b) > c`), and AND binds tighter than OR (`a || b && c` = `a || (b&&c)`). Previously produced silent wrong results for compound expressions.
+- **Store `deepClone` circular reference guard:** `setState(prev => ...)` no longer stack-overflows on stores with circular references.
+
+### Changed
+- **Removed `SignalOptions.equals`:** Was declared in the type but never wired to alien-signals. Removed to prevent false API expectations. TC39 compat `Signal.State` retains its own local `equals` option.
+- **Removed `renderLocal`/`renderIsland` from main exports:** These WASM-only functions throw without `window.__FORMA_WASM__` config. They remain available via direct import from `@getforma/core/wasm` path but no longer appear in the main barrel export.
+- **Documented store `ownKeys` limitation:** `Object.keys()`, `for...in`, and spread are not reactive on store proxies.
+
 ## [0.7.0] - 2026-03-15
 
 ### Security

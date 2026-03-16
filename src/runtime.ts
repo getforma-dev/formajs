@@ -1696,23 +1696,23 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
     }
   }
 
-  // Logical AND: "a && b"
-  const andMatch = expr.match(RE_AND);
-  if (andMatch) {
-    const left = parseExpression(andMatch[1]!.trim(), scope);
-    const right = parseExpression(andMatch[2]!.trim(), scope);
-    if (left && right) {
-      return () => left() && right();
-    }
-  }
-
-  // Logical OR: "a || b"
+  // Logical OR: "a || b" (lower precedence than AND — checked first)
   const orMatch = expr.match(RE_OR);
   if (orMatch) {
     const left = parseExpression(orMatch[1]!.trim(), scope);
     const right = parseExpression(orMatch[2]!.trim(), scope);
     if (left && right) {
       return () => left() || right();
+    }
+  }
+
+  // Logical AND: "a && b" (higher precedence than OR — checked after)
+  const andMatch = expr.match(RE_AND);
+  if (andMatch) {
+    const left = parseExpression(andMatch[1]!.trim(), scope);
+    const right = parseExpression(andMatch[2]!.trim(), scope);
+    if (left && right) {
+      return () => left() && right();
     }
   }
 
@@ -1740,7 +1740,22 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
   }
 
   // Arithmetic: +, -, *, /, %
-  // Try * / % first (higher precedence), then + -
+  // Addition/subtraction first (lower precedence — checked first), then * / %
+  const addMatch = expr.match(RE_ADD);
+  if (addMatch) {
+    const left = parseExpression(addMatch[1]!.trim(), scope);
+    const right = parseExpression(addMatch[3]!.trim(), scope);
+    if (left && right) {
+      const op = addMatch[2]!;
+      return () => {
+        const l = left(), r = right();
+        if (op === '+') return (l as any) + (r as any);
+        return (l as number) - (r as number);
+      };
+    }
+  }
+
+  // Multiplication / division / modulo (higher precedence — checked after addition)
   const mulMatch = expr.match(RE_MUL);
   if (mulMatch) {
     const left = parseExpression(mulMatch[1]!.trim(), scope);
@@ -1754,21 +1769,6 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
           case '/': return l / r;
           case '%': return l % r;
         }
-      };
-    }
-  }
-
-  // Addition / subtraction (also handles string concatenation for +)
-  const addMatch = expr.match(RE_ADD);
-  if (addMatch) {
-    const left = parseExpression(addMatch[1]!.trim(), scope);
-    const right = parseExpression(addMatch[3]!.trim(), scope);
-    if (left && right) {
-      const op = addMatch[2]!;
-      return () => {
-        const l = left(), r = right();
-        if (op === '+') return (l as any) + (r as any);
-        return (l as number) - (r as number);
       };
     }
   }

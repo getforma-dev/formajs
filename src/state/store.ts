@@ -74,15 +74,17 @@ function shouldWrap(v: unknown): v is object {
 // Deep-clone helper (used for functional setter snapshots)
 // ---------------------------------------------------------------------------
 
-function deepClone<T>(obj: T): T {
-  if (obj == null || typeof obj !== 'object') return obj;
-  if (Array.isArray(obj)) return obj.map(deepClone) as unknown as T;
-  if (obj instanceof Date) return new Date(obj.getTime()) as unknown as T;
+function deepClone(obj: unknown, seen?: WeakSet<object>): unknown {
+  if (obj === null || typeof obj !== 'object') return obj;
+  if (!seen) seen = new WeakSet();
+  if (seen.has(obj as object)) return obj; // circular — return ref as-is
+  seen.add(obj as object);
+  if (Array.isArray(obj)) return obj.map(item => deepClone(item, seen));
   const out: Record<string, unknown> = {};
-  for (const key of Object.keys(obj as object)) {
-    out[key] = deepClone((obj as Record<string, unknown>)[key]);
+  for (const key of Object.keys(obj as Record<string, unknown>)) {
+    out[key] = deepClone((obj as any)[key], seen);
   }
-  return out as T;
+  return out;
 }
 
 // ---------------------------------------------------------------------------
@@ -120,6 +122,11 @@ function deepClone<T>(obj: T): T {
  * // Array mutations
  * state.items.push({ text: 'Walk dog', done: false });
  * ```
+ *
+ * **Limitation:** `Object.keys(state)`, `for...in`, and spread (`{...state}`)
+ * are NOT reactive. Adding or removing a property will not trigger effects
+ * that iterated over keys. Use signals or explicit arrays for collections
+ * that need to react to membership changes.
  */
 export function createStore<T extends object>(
   initial: T,
@@ -424,7 +431,7 @@ export function createStore<T extends object>(
    * does not create additional subscriptions.
    */
   function getCurrentSnapshot(): T {
-    return untrack(() => deepClone(initial));
+    return untrack(() => deepClone(initial) as T);
   }
 
   // -------------------------------------------------------------------------

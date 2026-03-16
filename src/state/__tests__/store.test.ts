@@ -425,6 +425,16 @@ describe('createStore', () => {
     setState({ count: 1 });
     expect(state.count).toBe(1);
   });
+
+  it('deepClone handles circular references without stack overflow', () => {
+    const initial: any = { a: 1, nested: { b: 2 } };
+    initial.self = initial;
+    initial.nested.parent = initial;
+    const [state, setState] = createStore(initial);
+    // setState with functional updater triggers deepClone
+    expect(() => setState(prev => ({ ...prev, a: 99 }))).not.toThrow();
+    expect(state.a).toBe(99);
+  });
 });
 
 // ===========================================================================

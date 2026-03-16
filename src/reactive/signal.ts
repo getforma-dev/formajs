@@ -19,8 +19,6 @@ export type SignalSetter<T> = (v: T | ((prev: T) => T)) => void;
 export interface SignalOptions<T> {
   /** Debug name — attached to getter in dev mode for devtools inspection. */
   name?: string;
-  /** Custom equality check. Default: Object.is (via alien-signals). */
-  equals?: (prev: T, next: T) => boolean;
 }
 
 /**
