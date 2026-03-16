@@ -1,28 +1,96 @@
 /**
- * FormaJS HTML Runtime — Alpine-like declarative API via data-* attributes.
+ * FormaJS HTML Runtime
+ *
+ * Declarative reactive UI via data-* attributes, powered by fine-grained
+ * signals (alien-signals 3.x). Takes inspiration from Alpine.js (directives),
+ * SolidJS (signal model), and Qwik (deferred hydration) — combined into a
+ * single, CSP-safe runtime with zero build step required.
+ *
+ * ┌─────────────────────────────────────────────────────────────────────┐
+ * │  Yes, this file is 3,188 lines. It's a monolith on purpose.       │
+ * │                                                                     │
+ * │  The HTML Runtime is a self-contained unit: expression parser,      │
+ * │  handler compiler, transition system, DOM scanner, and observer     │
+ * │  all share mutable state (debug flags, caches, eval mode). Keeping  │
+ * │  them in one file avoids circular imports, simplifies the build     │
+ * │  (single IIFE for CDN), and means `grep` always finds what you     │
+ * │  need. The sections are clearly marked — use the map below.        │
+ * │                                                                     │
+ * │  Will it be split someday? Maybe. But today it works, it's tested  │
+ * │  (799 tests), and it ships at 15KB gzipped. If you're reading this │
+ * │  and judging the line count — fair. But read the code first. :)    │
+ * └─────────────────────────────────────────────────────────────────────┘
  *
  * Usage:
- *   <script src="formajs.runtime.min.js"></script>
+ *   <script src="formajs-runtime.global.js"></script>
  *   <div data-forma-state='{"count": 0}'>
  *     <p data-text="{count}"></p>
  *     <button data-on:click="{count++}">+1</button>
  *   </div>
  *
- * Supported attributes:
- *   data-forma-state='{"key": value}'  State declaration (JSON)
- *   data-text="{expr}"                 Text content binding
- *   data-show="{expr}"                 Display toggle (display: none)
- *   data-transition:*="..."            Enter/leave transitions for data-show
- *   data-if="{expr}"                   Conditional render (remove/restore)
- *   data-model="{prop}"                Two-way input binding
- *   data-on:event="{expr}"             Event handler
- *   data-class:name="{expr}"           Conditional CSS class
- *   data-bind:attr="{expr}"            Dynamic attribute
- *   data-computed="name = expr"        Computed value
- *   data-persist="{prop}"              localStorage sync
- *   data-list="{expr}"                 List rendering (first child = template)
- *   data-fetch="GET /url → prop"       Fetch binding
- *   data-fetch-id="name"               Register fetch for $refetch('name')
+ * ── FILE MAP ──────────────────────────────────────────────────────────
+ *
+ *   Line ~31-71     Core types & scope (Getter, Setter, Scope, createChildScope)
+ *   Line ~73-253    Configuration & diagnostics (debug, CSP modes, containment)
+ *   Line ~254-344   Performance utilities (yieldToMain, containment hints)
+ *   Line ~346-534   Regexes, caches, security blocklist (findBlockedMethod)
+ *   Line ~536-923   Parsing utilities (splitCallArgs, readBalancedSegment, if-handler)
+ *   Line ~925-1049  Template compilation (data-list templates)
+ *   Line ~1051-1396 CSS Transitions (parse, run, enter/leave phases)
+ *   Line ~1398-1809 CSP-safe expression parser (chained access, operators, literals)
+ *   Line ~1811-2091 Evaluator & handler builder (CSP path + new Function fallback)
+ *   Line ~2093-2184 State initialization & safe $el proxy
+ *   Line ~2186-2682 bindElement() — the central directive processor
+ *   Line ~2684-2952 MutationObserver, directive map, mountScope/unmountScope
+ *   Line ~2954-3064 Init/destroy, mount/unmount, public API setters
+ *   Line ~3066-3188 DevTools API, reconciler bridge, exports
+ *
+ * ── SUPPORTED DIRECTIVES ──────────────────────────────────────────────
+ *
+ *   State & Reactivity:
+ *     data-forma-state='{"key": val}'    Declare reactive state (valid JSON)
+ *     data-computed="name = expr"        Derived value (lazy, cached)
+ *     data-persist="{prop}"              Sync state to localStorage
+ *
+ *   Content Binding:
+ *     data-text="{expr}"                 Bind text content
+ *     data-show="{expr}"                 Toggle visibility (display: none)
+ *     data-if="{expr}"                   Conditional render (remove/insert DOM)
+ *     data-model="{prop}"                Two-way input binding
+ *     data-list="{expr}"                 List rendering (keyed reconciliation)
+ *
+ *   Attributes & Classes:
+ *     data-on:event="{expr}"             Event handler (e.g. data-on:click)
+ *     data-class:name="{expr}"           Conditional CSS class
+ *     data-bind:attr="{expr}"            Dynamic attribute binding
+ *
+ *   Transitions (for data-show and data-if):
+ *     data-transition:enter="classes"        Classes during enter phase
+ *     data-transition:enter-from="classes"   Classes at enter start
+ *     data-transition:enter-to="classes"     Classes at enter end
+ *     data-transition:leave="classes"        Classes during leave phase
+ *     data-transition:leave-from="classes"   Classes at leave start
+ *     data-transition:leave-to="classes"     Classes at leave end
+ *
+ *   Data Fetching:
+ *     data-fetch="GET /url → prop"       Fetch data into state
+ *     data-fetch="POST /url → prop"      POST with state as body
+ *     data-fetch-id="name"               Register for $refetch('name')
+ *
+ *   Configuration (on <script> tag):
+ *     data-forma-unsafe-eval="true"      Enable new Function() fallback
+ *     data-forma-diagnostics="true"      Enable expression diagnostics
+ *     data-forma-auto-containment="true" Enable CSS containment hints
+ *
+ * ── MAGIC VARIABLES ──────────────────────────────────────────────────
+ *
+ *   Available in all expressions and handlers:
+ *     $el          The current DOM element (safe proxy — see createSafeElProxy)
+ *     $dispatch    Fire a CustomEvent: $dispatch('name', detail?)
+ *                  Events bubble and cross Shadow DOM (composed: true)
+ *     $event       The DOM event object (in data-on:* handlers only)
+ *     event        Alias for $event (also in data-on:* handlers)
+ *     $refetch     Re-trigger a data-fetch: $refetch('fetch-id')
  */
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
