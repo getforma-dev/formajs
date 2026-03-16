@@ -174,7 +174,7 @@ See [The `h()` function](#the-h-function) below for the full signature and all c
 
 ### 3. HTML Runtime (no build step)
 
-Drop a script tag, write `data-*` attributes. Zero config, zero tooling — works from a CDN.
+One `<script>` tag. One HTML file. No npm, no bundler, no `node_modules`, no config files. Just open it in a browser.
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/@getforma/core@latest/dist/formajs-runtime.global.js"></script>
@@ -186,7 +186,52 @@ Drop a script tag, write `data-*` attributes. Zero config, zero tooling — work
 </div>
 ```
 
-The expression parser is hand-written — no `eval()`, no `new Function()` by default. For strict CSP environments, use the hardened build:
+That's a working reactive counter. No JavaScript file. No build step. Just HTML.
+
+**Here's what you get from a single HTML file with one script tag:**
+
+```html
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@latest/dist/formajs-runtime.global.js"></script>
+
+<div data-forma-state='{
+  "query": "",
+  "items": ["Apples", "Bananas", "Cherries", "Dates", "Elderberries"],
+  "darkMode": false
+}'>
+
+  <!-- Two-way binding: type in the input, the list filters instantly -->
+  <input data-model="{query}" placeholder="Search fruits...">
+
+  <!-- Computed value: derived from query, updates automatically -->
+  <p data-computed="matchCount = items.filter(i => i.toLowerCase().includes(query.toLowerCase())).length"
+     data-text="{'Found ' + matchCount + ' results'}"></p>
+
+  <!-- Conditional rendering: show/hide based on state -->
+  <p data-show="{query.length > 0 && matchCount === 0}">No matches found.</p>
+
+  <!-- List rendering: keyed reconciliation, only changed items re-render -->
+  <ul data-list="{items.filter(i => i.toLowerCase().includes(query.toLowerCase()))}">
+    <li>{item}</li>
+  </ul>
+
+  <!-- Event handling with $dispatch: cross-component communication -->
+  <button data-on:click="{darkMode = !darkMode}">
+    Toggle Dark Mode
+  </button>
+
+  <!-- Dynamic classes and attributes -->
+  <div data-class:dark="{darkMode}" data-bind:data-theme="{darkMode ? 'dark' : 'light'}">
+    Theme is: <span data-text="{darkMode ? 'Dark' : 'Light'}"></span>
+  </div>
+
+  <!-- Persist to localStorage: survives page refresh -->
+  <div data-persist="{darkMode}"></div>
+</div>
+```
+
+That single HTML file gives you: reactive state, two-way data binding, computed values, conditional rendering, list rendering with filtering, event handling, dynamic CSS classes, dynamic attributes, and localStorage persistence. **No JavaScript written. No build tools installed.**
+
+The expression parser is hand-written and CSP-safe — no `eval()`, no `new Function()` by default. For strict CSP environments, use the hardened build:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/@getforma/core@latest/dist/formajs-runtime-hardened.global.js"></script>
