@@ -1,0 +1,17 @@
+{
+  "$schema": "https://typedoc.org/schema.json",
+  "entryPoints": ["src/index.ts"],
+  "out": "api-docs",
+  "name": "FormaJS API Reference",
+  "readme": "none",
+  "excludePrivate": true,
+  "excludeInternal": true,
+  "excludeExternals": true,
+  "plugin": [],
+  "theme": "default",
+  "hideGenerator": true,
+  "navigationLinks": {
+    "npm": "https://www.npmjs.com/package/@getforma/core",
+    "GitHub": "https://github.com/getforma-dev/formajs"
+  }
+}

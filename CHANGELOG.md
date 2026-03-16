@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.0] - 2026-03-15
+
+### Added
+- **`data-ref` directive and `$refs` magic** — register elements with `data-ref="name"` and access them from expressions via `$refs.name`. Refs are scoped to their `data-forma-state` parent. Supports reading properties (`$refs.input.value`), calling methods (`$refs.input.focus()`), and manipulating classes (`$refs.panel.classList.toggle('open')` via unsafe-eval path).
+- **TypeDoc API reference generation** — `npm run docs` generates API documentation from JSDoc comments to `api-docs/`. Added `typedoc` dev dependency and `typedoc.json` config.
+
 ## [0.8.2] - 2026-03-15
 
 ### Docs

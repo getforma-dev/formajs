@@ -86,6 +86,9 @@
  *     data-transition:leave-from="classes"   Classes at leave start
  *     data-transition:leave-to="classes"     Classes at leave end
  *
+ *   Refs:
+ *     data-ref="name"                    Register element for $refs.name access
+ *
  *   Data Fetching:
  *     data-fetch="GET /url → prop"       Fetch data into state
  *     data-fetch="POST /url → prop"      POST with state as body
@@ -104,6 +107,7 @@
  *                  Events bubble and cross Shadow DOM (composed: true)
  *     $event       The DOM event object (in data-on:* handlers only)
  *     event        Alias for $event (also in data-on:* handlers)
+ *     $refs        Named element references: $refs.myInput (via data-ref="myInput")
  *     $refetch     Re-trigger a data-fetch: $refetch('fetch-id')
  */
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
@@ -2870,6 +2874,28 @@ function mountScope(root: Element): void {
 
   const scope = initScope(root);
   const disposers: (() => void)[] = [];
+
+  // Build $refs — a lazy proxy that resolves data-ref="name" to elements.
+  // Scanned once at mount time; the proxy resolves lazily on access.
+  const refsMap = new Map<string, Element>();
+  const refEls = root.querySelectorAll('[data-ref]');
+  for (let i = 0; i < refEls.length; i++) {
+    const el = refEls[i]!;
+    const name = el.getAttribute('data-ref');
+    if (name) refsMap.set(name, el);
+  }
+  // Also check the root itself
+  const rootRefName = root.getAttribute('data-ref');
+  if (rootRefName) refsMap.set(rootRefName, root);
+
+  scope.getters['$refs'] = () => new Proxy({} as Record<string, Element>, {
+    get(_, name: string) {
+      return refsMap.get(name) ?? undefined;
+    },
+    has(_, name: string) {
+      return refsMap.has(name);
+    },
+  });
 
   // Bind the root itself
   bindElement(root, scope, disposers);

@@ -100,8 +100,10 @@ Drop a script tag, write `data-*` attributes. Zero config, zero tooling.
 | `data-persist` | Persist state to localStorage | `data-persist="{count}"` |
 | `data-fetch` | Fetch data from URL | `data-fetch="GET /api/items → items"` |
 | `data-transition:*` | Enter/leave CSS transitions | `data-transition:enter="fade-in"` |
+| `data-ref` | Register element for `$refs` access | `data-ref="myInput"` |
 | `$el` | Reference to the current DOM element | `data-on:click="{$el.classList.toggle('active')}"` |
 | `$dispatch` | Fire a CustomEvent (bubbles, crosses Shadow DOM) | `data-on:click="{$dispatch('selected', {id: itemId})}"` |
+| `$refs` | Named element references | `data-on:click="{$refs.myInput.focus()}"` |
 
 CSP-safe expression parser — no `eval()` or `new Function()` by default. For strict CSP environments, use the hardened build:
 
