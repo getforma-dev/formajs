@@ -14,7 +14,7 @@
  *   Lit         — root element access during hydration, (el, props) pattern
  *
  * ┌─────────────────────────────────────────────────────────────────────┐
- * │  Yes, this file is 3,188 lines. It's a monolith on purpose.       │
+ * │  Yes, this file is ~3,300 lines. It's a monolith on purpose.      │
  * │                                                                     │
  * │  The HTML Runtime is a self-contained unit: expression parser,      │
  * │  handler compiler, transition system, DOM scanner, and observer     │
@@ -24,12 +24,20 @@
  * │  need. The sections are clearly marked — use the map below.        │
  * │                                                                     │
  * │  Will it be split someday? Maybe. But today it works, it's tested  │
- * │  (799 tests), and it ships at 15KB gzipped. If you're reading this │
+ * │  (811 tests), and it ships at 15KB gzipped. If you're reading this │
  * │  and judging the line count — fair. But read the code first. :)    │
  * └─────────────────────────────────────────────────────────────────────┘
  *
- * Usage (CDN — this file compiles to dist/formajs-runtime.global.js):
- *   <script src="https://unpkg.com/@getforma/core/dist/formajs-runtime.global.js"></script>
+ * This file is the HTML Runtime — a subpath of @getforma/core:
+ *   import '@getforma/core/runtime'          (ESM)
+ *   <script src="...runtime.global.js">      (CDN)
+ *
+ * It is separate from the main @getforma/core entry point, which exports
+ * signals, h(), mount, stores, etc. The main entry has zero network code.
+ * HTTP/storage/server are at @getforma/core/http, /storage, /server.
+ *
+ * Usage (CDN):
+ *   <script src="https://unpkg.com/@getforma/core@1.0.0/dist/formajs-runtime.global.js"></script>
  *   <div data-forma-state='{"count": 0}'>
  *     <p data-text="{count}"></p>
  *     <button data-on:click="{count++}">+1</button>
@@ -39,8 +47,8 @@
  *   dist/runtime.js                        ESM (import '@getforma/core/runtime')
  *   dist/runtime.cjs                       CommonJS (require)
  *   dist/formajs-runtime.global.js         IIFE for <script> tags (auto-inits)
- *   dist/runtime-hardened.js               ESM, unsafe-eval locked off
- *   dist/formajs-runtime-hardened.global.js IIFE, unsafe-eval locked off
+ *   dist/runtime-hardened.js               ESM, unsafe-eval locked off (zero new Function)
+ *   dist/formajs-runtime-hardened.global.js IIFE, unsafe-eval locked off (zero new Function)
  *
  * ── FILE MAP ──────────────────────────────────────────────────────────
  *
