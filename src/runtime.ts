@@ -2,9 +2,16 @@
  * FormaJS HTML Runtime
  *
  * Declarative reactive UI via data-* attributes, powered by fine-grained
- * signals (alien-signals 3.x). Takes inspiration from Alpine.js (directives),
- * SolidJS (signal model), and Qwik (deferred hydration) — combined into a
- * single, CSP-safe runtime with zero build step required.
+ * signals (alien-signals 3.x). Combined into a single, CSP-safe runtime
+ * with zero build step required.
+ *
+ * Design inspirations:
+ *   Alpine.js   — data-* directive model, progressive enhancement
+ *   SolidJS     — fine-grained signals, [getter, setter] tuple, real DOM
+ *   Qwik        — deferred hydration triggers (idle, interaction, visible)
+ *   Astro       — islands architecture, independent interactive regions
+ *   Hotwire     — server-driven UI, reconciler with scope modes
+ *   Lit         — root element access during hydration, (el, props) pattern
  *
  * ┌─────────────────────────────────────────────────────────────────────┐
  * │  Yes, this file is 3,188 lines. It's a monolith on purpose.       │
@@ -21,12 +28,19 @@
  * │  and judging the line count — fair. But read the code first. :)    │
  * └─────────────────────────────────────────────────────────────────────┘
  *
- * Usage:
- *   <script src="formajs-runtime.global.js"></script>
+ * Usage (CDN — this file compiles to dist/formajs-runtime.global.js):
+ *   <script src="https://unpkg.com/@getforma/core/dist/formajs-runtime.global.js"></script>
  *   <div data-forma-state='{"count": 0}'>
  *     <p data-text="{count}"></p>
  *     <button data-on:click="{count++}">+1</button>
  *   </div>
+ *
+ * Build outputs from this source file:
+ *   dist/runtime.js                        ESM (import '@getforma/core/runtime')
+ *   dist/runtime.cjs                       CommonJS (require)
+ *   dist/formajs-runtime.global.js         IIFE for <script> tags (auto-inits)
+ *   dist/runtime-hardened.js               ESM, unsafe-eval locked off
+ *   dist/formajs-runtime-hardened.global.js IIFE, unsafe-eval locked off
  *
  * ── FILE MAP ──────────────────────────────────────────────────────────
  *
