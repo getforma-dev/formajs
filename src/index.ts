@@ -32,28 +32,7 @@ export { $, $$, addClass, removeClass, toggleClass, setStyle, setAttr, setText, 
          closest, children, siblings, parent, nextSibling, prevSibling,
          onResize, onIntersect, onMutation } from './dom-utils';
 
-// Storage
-export { createLocalStorage, createSessionStorage, createIndexedDB } from './storage';
-export type { TypedStorage, StorageOptions, IDBStore } from './storage';
-
-// HTTP
-export { createFetch, fetchJSON, createSSE, createWebSocket } from './http';
-export type { FetchResult, FetchOptions, SSEConnection, SSEOptions, WSConnection, WSOptions, WSStatus } from './http';
-
-// Server
-export {
-  createAction,
-  registerResource,
-  unregisterResource,
-  applyRevalidation,
-  enableAutoRevalidation,
-  withRevalidation,
-  $$serverFunction,
-  registerServerFunction,
-  getServerFunction,
-  getRegisteredEndpoints,
-  handleRPC,
-  createRPCMiddleware,
-} from './server';
-export type { ActionOptions, Action, MutationResponse, RPCRequest, RPCResponse, ServerFunction } from './server';
-
+// ─── Subpath imports (not in this bundle — zero network code here) ───
+// HTTP:    import { createFetch, createSSE, createWebSocket } from '@getforma/core/http'
+// Storage: import { createLocalStorage, createIndexedDB } from '@getforma/core/storage'
+// Server:  import { createAction, $$serverFunction } from '@getforma/core/server'

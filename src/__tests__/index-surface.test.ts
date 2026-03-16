@@ -10,13 +10,44 @@ describe('public api surface', () => {
     expect(typeof forma.mount).toBe('function');
   });
 
-  it('exports server/http/storage entry points', () => {
-    expect(typeof forma.$$serverFunction).toBe('function');
-    expect(typeof forma.createAction).toBe('function');
-    expect(typeof forma.createFetch).toBe('function');
-    expect(typeof forma.fetchJSON).toBe('function');
-    expect(typeof forma.createLocalStorage).toBe('function');
-    expect(typeof forma.createIndexedDB).toBe('function');
+  it('exports state and event primitives', () => {
+    expect(typeof forma.createStore).toBe('function');
+    expect(typeof forma.createHistory).toBe('function');
+    expect(typeof forma.createBus).toBe('function');
+    expect(typeof forma.createReducer).toBe('function');
+  });
+
+  it('exports island management', () => {
+    expect(typeof forma.activateIslands).toBe('function');
+    expect(typeof forma.deactivateIsland).toBe('function');
+    expect(typeof forma.deactivateAllIslands).toBe('function');
+  });
+
+  it('exports reactive introspection (alien-signals 3.x)', () => {
+    expect(typeof forma.isSignal).toBe('function');
+    expect(typeof forma.isComputed).toBe('function');
+    expect(typeof forma.getBatchDepth).toBe('function');
+    expect(typeof forma.trigger).toBe('function');
+  });
+
+  it('does NOT export HTTP primitives (moved to @getforma/core/http)', () => {
+    expect((forma as Record<string, unknown>).createFetch).toBeUndefined();
+    expect((forma as Record<string, unknown>).fetchJSON).toBeUndefined();
+    expect((forma as Record<string, unknown>).createSSE).toBeUndefined();
+    expect((forma as Record<string, unknown>).createWebSocket).toBeUndefined();
+  });
+
+  it('does NOT export storage primitives (moved to @getforma/core/storage)', () => {
+    expect((forma as Record<string, unknown>).createLocalStorage).toBeUndefined();
+    expect((forma as Record<string, unknown>).createSessionStorage).toBeUndefined();
+    expect((forma as Record<string, unknown>).createIndexedDB).toBeUndefined();
+  });
+
+  it('does NOT export server primitives (moved to @getforma/core/server)', () => {
+    expect((forma as Record<string, unknown>).$$serverFunction).toBeUndefined();
+    expect((forma as Record<string, unknown>).createAction).toBeUndefined();
+    expect((forma as Record<string, unknown>).handleRPC).toBeUndefined();
+    expect((forma as Record<string, unknown>).registerServerFunction).toBeUndefined();
   });
 
   it('does NOT export longestIncreasingSubsequence (internal only)', () => {

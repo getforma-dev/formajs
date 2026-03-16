@@ -505,9 +505,14 @@ deactivateIsland(islandElement);
 
 ## Subpath Exports
 
+The main entry point (`@getforma/core`) has **zero network code** — no `fetch`, no WebSocket, no `process.env`. Network-capable modules are separate subpath imports.
+
 | Import | Description |
 |--------|-------------|
-| `@getforma/core` | Signals, `h()`, `mount()`, lists, stores, components |
+| `@getforma/core` | Signals, `h()`, `mount()`, lists, stores, components, islands, events, DOM utils |
+| `@getforma/core/http` | `createFetch`, `fetchJSON`, `createSSE`, `createWebSocket` |
+| `@getforma/core/storage` | `createLocalStorage`, `createSessionStorage`, `createIndexedDB` |
+| `@getforma/core/server` | `createAction`, `$$serverFunction`, `handleRPC`, `createRPCMiddleware` |
 | `@getforma/core/runtime` | HTML Runtime — `initRuntime()`, `mount()`, `unmount()` |
 | `@getforma/core/runtime/global` | HTML Runtime global build (IIFE, for `<script>` tags) |
 | `@getforma/core/runtime-hardened` | Runtime with `new Function()` locked off (strict CSP) |
@@ -515,6 +520,20 @@ deactivateIsland(islandElement);
 | `@getforma/core/runtime-csp/global` | CSP-safe global build (IIFE, for `<script>` tags) |
 | `@getforma/core/ssr` | Server-side rendering — `renderToString()`, `renderToStream()` |
 | `@getforma/core/tc39` | TC39-compatible `Signal.State` and `Signal.Computed` classes |
+
+```typescript
+// Core (zero network code)
+import { createSignal, h, mount, createStore } from '@getforma/core';
+
+// HTTP (only if needed)
+import { createFetch, createSSE } from '@getforma/core/http';
+
+// Storage (only if needed)
+import { createLocalStorage } from '@getforma/core/storage';
+
+// Server (only if needed)
+import { createAction, $$serverFunction } from '@getforma/core/server';
+```
 
 ## Examples
 

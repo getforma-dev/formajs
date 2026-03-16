@@ -1,7 +1,7 @@
 {
   "name": "@getforma/core",
   "author": "Forma <victor@getforma.dev>",
-  "version": "0.9.1",
+  "version": "1.0.0",
   "description": "Real DOM reactive library — fine-grained signals, islands architecture, SSR hydration. No virtual DOM, no diffing. ~15KB gzipped.",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -72,6 +72,36 @@
       "require": {
         "types": "./dist/ssr/index.d.cts",
         "default": "./dist/ssr/index.cjs"
+      }
+    },
+    "./http": {
+      "import": {
+        "types": "./dist/http.d.ts",
+        "default": "./dist/http.js"
+      },
+      "require": {
+        "types": "./dist/http.d.cts",
+        "default": "./dist/http.cjs"
+      }
+    },
+    "./storage": {
+      "import": {
+        "types": "./dist/storage.d.ts",
+        "default": "./dist/storage.js"
+      },
+      "require": {
+        "types": "./dist/storage.d.cts",
+        "default": "./dist/storage.cjs"
+      }
+    },
+    "./server": {
+      "import": {
+        "types": "./dist/server.d.ts",
+        "default": "./dist/server.js"
+      },
+      "require": {
+        "types": "./dist/server.d.cts",
+        "default": "./dist/server.cjs"
       }
     }
   },

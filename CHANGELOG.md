@@ -2,6 +2,22 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.0] - 2026-03-16
+
+### BREAKING CHANGES
+- **HTTP, storage, and server modules moved to subpath exports.** The main `@getforma/core` entry point no longer includes network-capable code. Import from the new subpaths:
+  - `import { createFetch, createSSE, createWebSocket } from '@getforma/core/http'`
+  - `import { createLocalStorage, createSessionStorage, createIndexedDB } from '@getforma/core/storage'`
+  - `import { createAction, $$serverFunction, handleRPC } from '@getforma/core/server'`
+- The main bundle (`dist/index.js`, `dist/index.cjs`) now has **zero `fetch`, zero `WebSocket`, zero `process.env`** — improving supply chain security scores.
+
+### Why 1.0.0
+- Subpath exports lock in the final API shape
+- Security hardening complete (CSP bypass fixed, `$el` sandboxed, SSR injection fixed)
+- alien-signals 3.x integrated with `SignalOptions.equals`, type guards, `trigger`
+- 811 tests, full TypeDoc coverage, zero warnings
+- Production-proven in GateWASM auth system
+
 ## [0.9.1] - 2026-03-15
 
 ### Changed
