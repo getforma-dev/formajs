@@ -2,6 +2,19 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.8.1] - 2026-03-15
+
+### Added
+- **Reactive introspection APIs** (from alien-signals 3.x):
+  - `isSignal(fn)` — type guard: is this a signal getter?
+  - `isComputed(fn)` — type guard: is this a computed value?
+  - `isEffect(fn)` — type guard: is this a raw effect?
+  - `isEffectScope(fn)` — type guard: is this an effect scope?
+  - `getBatchDepth()` — returns current batch nesting depth (0 outside batch)
+  - `trigger(fn)` — force a computed/effect to recompute even if dependencies unchanged
+- **`createComputed` now receives previous value** — the getter function receives `(previousValue?: T)` for efficient diffing patterns without a separate signal
+- **`createRoot` now uses alien-signals `effectScope`** — native graph-level effect tracking replaces the userland disposer array for reactive cleanup. Userland disposers (event listeners, timers) still use the array.
+
 ## [0.8.0] - 2026-03-15
 
 ### Changed

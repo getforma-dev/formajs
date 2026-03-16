@@ -4,27 +4,34 @@
  * Explicit reactive ownership scope. All effects created inside a root
  * are automatically disposed when the root is torn down.
  *
- * Replaces the module-level disposalBag pattern in mount.ts.
+ * Uses alien-signals' `effectScope` under the hood for native graph-level
+ * effect tracking, with a userland disposer list for non-effect cleanup
+ * (e.g., event listeners, DOM references, timers).
  */
+
+import { effectScope as rawEffectScope } from 'alien-signals';
 
 // ---------------------------------------------------------------------------
 // Root scope tracking
 // ---------------------------------------------------------------------------
 
 let currentRoot: RootScope | null = null;
-// "Safety Car": use a fixed-capacity stack to prevent unbounded growth
-// from deeply nested createRoot calls. Stack is trimmed after pop.
 const rootStack: (RootScope | null)[] = [];
 
 interface RootScope {
+  /** Userland disposers (event listeners, DOM refs, timers, etc.) */
   disposers: (() => void)[];
+  /** alien-signals effect scope dispose — tears down all reactive effects */
+  scopeDispose: (() => void) | null;
 }
 
 /**
  * Create a reactive root scope.
  *
- * All effects created (via `createEffect`) inside the callback are tracked.
- * The returned `dispose` function tears them all down.
+ * All effects created (via `createEffect`) inside the callback are tracked
+ * at both the reactive graph level (via alien-signals effectScope) and the
+ * userland level (via registerDisposer). The returned `dispose` function
+ * tears down everything.
  *
  * ```ts
  * const dispose = createRoot(() => {
@@ -35,29 +42,35 @@ interface RootScope {
  * ```
  */
 export function createRoot<T>(fn: (dispose: () => void) => T): T {
-  const scope: RootScope = { disposers: [] };
+  const scope: RootScope = { disposers: [], scopeDispose: null };
 
   rootStack.push(currentRoot);
   currentRoot = scope;
 
   const dispose = () => {
+    // Dispose alien-signals effect scope first (reactive graph cleanup)
+    if (scope.scopeDispose) {
+      try { scope.scopeDispose(); } catch { /* ensure userland disposers still run */ }
+      scope.scopeDispose = null;
+    }
+    // Then run userland disposers
     for (const d of scope.disposers) {
       try { d(); } catch { /* ensure all disposers run */ }
     }
     scope.disposers.length = 0;
   };
 
+  let result: T;
   try {
-    return fn(dispose);
+    // Wrap in alien-signals effectScope for native effect tracking
+    scope.scopeDispose = rawEffectScope(() => {
+      result = fn(dispose);
+    });
   } finally {
     currentRoot = rootStack.pop() ?? null;
-    // "Safety Car": trim stack array if a deep nesting spike left excess capacity.
-    // Without this, a spike of 100 nested roots leaves a length-0 array with
-    // 100 slots of allocated memory that never shrinks.
-    if (rootStack.length === 0) {
-      rootStack.length = 0;
-    }
   }
+
+  return result!;
 }
 
 /**

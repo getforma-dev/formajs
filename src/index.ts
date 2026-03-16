@@ -5,6 +5,9 @@ export {
   createSignal, createEffect, createComputed, createMemo, batch,
   untrack, createRoot, onCleanup, on, onError,
   createRef, createReducer, createResource,
+  // Reactive introspection (alien-signals 3.x)
+  isSignal, isComputed, isEffect, isEffectScope,
+  getBatchDepth, trigger,
 } from './reactive';
 
 // DOM

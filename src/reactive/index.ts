@@ -39,3 +39,13 @@ export {
 
 // Dev & observability
 export { onError, __DEV__ } from './dev.js';
+
+// Reactive introspection (alien-signals 3.x type guards)
+export {
+  isSignal,
+  isComputed,
+  isEffect,
+  isEffectScope,
+  getBatchDepth,
+  trigger,
+} from 'alien-signals';

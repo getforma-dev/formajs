@@ -192,6 +192,45 @@ batch(() => {
 });
 ```
 
+#### Custom Equality
+
+Skip updates when the new value is equal to the current value:
+
+```typescript
+const [pos, setPos] = createSignal(
+  { x: 0, y: 0 },
+  { equals: (a, b) => a.x === b.x && a.y === b.y },
+);
+
+setPos({ x: 0, y: 0 }); // skipped — values are equal
+setPos({ x: 1, y: 0 }); // applied — values differ
+```
+
+#### Computed with Previous Value
+
+The computed getter receives the previous value for efficient diffing:
+
+```typescript
+const changes = createComputed((prev) => {
+  const current = items();
+  if (prev) console.log(`${prev.length} → ${current.length} items`);
+  return current;
+});
+```
+
+#### Reactive Introspection
+
+Type guards and utilities from alien-signals 3.x:
+
+```typescript
+import { isSignal, isComputed, getBatchDepth, trigger } from '@getforma/core';
+
+isSignal(count);           // true — is this a signal getter?
+isComputed(doubled);       // true — is this a computed value?
+getBatchDepth();           // 0 outside batch, 1+ inside
+trigger(doubled);          // force recomputation even if deps unchanged
+```
+
 ### Conditional Rendering
 
 ```typescript
@@ -486,7 +525,8 @@ Some features are more battle-tested than others:
 
 | Feature | Status | Notes |
 |---------|--------|-------|
-| Signals (`createSignal`, `createEffect`, `createComputed`, `batch`) | **Stable** | Core primitive, well-tested |
+| Signals (`createSignal`, `createEffect`, `createComputed`, `batch`) | **Stable** | Core primitive, well-tested. Custom `equals` option supported. |
+| Reactive introspection (`isSignal`, `isComputed`, `trigger`, `getBatchDepth`) | **Stable** | alien-signals 3.x type guards |
 | `h()` / JSX rendering | **Stable** | |
 | `mount()`, `createShow`, `createSwitch`, `createList` | **Stable** | |
 | HTML Runtime (`data-*` directives) | **Stable** | Expression parser covers common patterns |
