@@ -169,17 +169,17 @@ mount(() => <Counter />, '#app');
 
 ```html
 <!-- unpkg -->
-<script src="https://unpkg.com/@getforma/core@1.0.0/dist/formajs-runtime.global.js"></script>
+<script src="https://unpkg.com/@getforma/core@1.0.1/dist/formajs-runtime.global.js"></script>
 
 <!-- jsDelivr (faster globally) -->
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.0.0/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.0.1/dist/formajs-runtime.global.js"></script>
 ```
 
 ### ESM import (no bundler, modern browsers)
 
 ```html
 <script type="module">
-  import { createSignal, h, mount } from 'https://cdn.jsdelivr.net/npm/@getforma/core@1.0.0/dist/index.js';
+  import { createSignal, h, mount } from 'https://cdn.jsdelivr.net/npm/@getforma/core@1.0.1/dist/index.js';
 
   const [count, setCount] = createSignal(0);
   mount(() => h('button', { onClick: () => setCount(count() + 1) }, () => `${count()}`), '#app');
@@ -197,7 +197,7 @@ mount(() => <Counter />, '#app');
 
 Available from both `unpkg.com/@getforma/core@VERSION/dist/` and `cdn.jsdelivr.net/npm/@getforma/core@VERSION/dist/`.
 
-For production, always pin the version (e.g., `@1.0.0`). Unversioned URLs resolve to latest.
+For production, always pin the version (e.g., `@1.0.1`). Unversioned URLs resolve to latest.
 
 > The CSP build uses a hand-written expression parser and never calls `new Function`.
 > It supports most common patterns. See [examples/csp](./examples/csp) for a working demo.

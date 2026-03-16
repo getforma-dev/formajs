@@ -37,7 +37,7 @@
  * HTTP/storage/server are at @getforma/core/http, /storage, /server.
  *
  * Usage (CDN):
- *   <script src="https://unpkg.com/@getforma/core@1.0.0/dist/formajs-runtime.global.js"></script>
+ *   <script src="https://unpkg.com/@getforma/core@1.0.1/dist/formajs-runtime.global.js"></script>
  *   <div data-forma-state='{"count": 0}'>
  *     <p data-text="{count}"></p>
  *     <button data-on:click="{count++}">+1</button>
