@@ -12,7 +12,7 @@ export {
 export type { SignalGetter, SignalSetter, SignalOptions, Ref, Dispatch, Resource, ResourceOptions, ErrorHandler } from './reactive';
 
 // DOM
-export { h, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, deactivateIsland, deactivateAllIslands, reconcileList } from './dom';
+export { h, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, deactivateIsland, deactivateAllIslands, reconcileList, template, templateMany } from './dom';
 export type { IslandHydrateFn, ReconcileResult, ListTransitionHooks, CreateListOptions, SwitchCase } from './dom';
 
 // Component
