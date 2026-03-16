@@ -28,11 +28,26 @@ function $FORMA_SWAP(id,html){
 }
 
 /**
+ * Serializes a value to a JSON string that is safe to embed inside a
+ * `<script>` block. Standard `JSON.stringify` does not escape `<` or `>`,
+ * so a payload containing `</script>` would prematurely close the script
+ * tag, enabling an injection attack. We also escape U+2028 and U+2029
+ * which are valid JSON but treated as line terminators in JavaScript source.
+ */
+function safeJsonStringify(val: unknown): string {
+  return JSON.stringify(val)
+    .replace(/</g, '\\u003c')
+    .replace(/>/g, '\\u003e')
+    .replace(/\u2028/g, '\\u2028')
+    .replace(/\u2029/g, '\\u2029');
+}
+
+/**
  * Returns a script tag that swaps a specific Suspense boundary's content.
  * Called when an async resource resolves during streaming.
  */
 export function getSwapTag(id: string, html: string): string {
-  // Use JSON.stringify for both arguments to handle all edge cases:
-  // backslashes, quotes, newlines, null bytes, </script>, unicode escapes
-  return `<script>$FORMA_SWAP(${JSON.stringify(id)},${JSON.stringify(html)})</script>`;
+  // safeJsonStringify escapes <, >, U+2028, and U+2029 so the serialized
+  // content cannot break out of the surrounding <script> block.
+  return `<script>$FORMA_SWAP(${safeJsonStringify(id)},${safeJsonStringify(html)})</script>`;
 }

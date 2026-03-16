@@ -23,8 +23,17 @@ export function escapeHtml(str: string): string {
 
 // Escape attribute values
 export function escapeAttr(str: string): string {
-  return str.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+  return str
+    .replace(/&/g, '&amp;')
+    .replace(/"/g, '&quot;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/'/g, '&#39;');
 }
+
+// Dangerous URI detection for href, src, action, formaction attributes
+export const DANGEROUS_URI_ATTRS = new Set(['href', 'src', 'action', 'formaction']);
+export const DANGEROUS_URI_RE = /^\s*(javascript|vbscript|data\s*:\s*text\/html)/i;
 
 export interface VNode {
   tag: string;
@@ -105,6 +114,9 @@ function renderToBuffer(node: unknown, parts: string[]): void {
         if (resolved === true) {
           parts.push(' ', attrName);
         } else if (resolved !== false && resolved != null) {
+          if (DANGEROUS_URI_ATTRS.has(attrName) && typeof resolved === 'string' && DANGEROUS_URI_RE.test(resolved)) {
+            continue; // skip dangerous URI
+          }
           parts.push(' ', attrName, '="', escapeAttr(String(resolved)), '"');
         }
       }
@@ -245,6 +257,9 @@ function renderToBufferHydrated(node: unknown, parts: string[], ctx: HydrationCo
         if (resolved === true) {
           parts.push(' ', attrName);
         } else if (resolved !== false && resolved != null) {
+          if (DANGEROUS_URI_ATTRS.has(attrName) && typeof resolved === 'string' && DANGEROUS_URI_RE.test(resolved)) {
+            continue; // skip dangerous URI
+          }
           parts.push(' ', attrName, '="', escapeAttr(String(resolved)), '"');
         }
       }

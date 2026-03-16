@@ -166,6 +166,56 @@ describe('activateIslands', () => {
   });
 });
 
+describe('activateIslands prop sanitization', () => {
+  it('strips __proto__ from inline island props', () => {
+    document.body.innerHTML = `
+      <div data-forma-island="0" data-forma-component="Test"
+           data-forma-props='{"__proto__":{"polluted":true},"safe":"ok"}'
+           data-forma-status="pending">
+        <span>Test</span>
+      </div>
+    `;
+    const hydrateFn = vi.fn();
+    activateIslands({ Test: hydrateFn });
+
+    const receivedProps = hydrateFn.mock.calls[0]![1];
+    expect(receivedProps.safe).toBe('ok');
+    expect(receivedProps).not.toHaveProperty('__proto__', { polluted: true });
+    expect(({} as any).polluted).toBeUndefined(); // no global pollution
+  });
+
+  it('strips constructor from inline island props', () => {
+    document.body.innerHTML = `
+      <div data-forma-island="0" data-forma-component="Test"
+           data-forma-props='{"constructor":{"bad":true},"ok":1}'
+           data-forma-status="pending">
+        <span>Test</span>
+      </div>
+    `;
+    const hydrateFn = vi.fn();
+    activateIslands({ Test: hydrateFn });
+
+    const receivedProps = hydrateFn.mock.calls[0]![1];
+    expect(receivedProps.ok).toBe(1);
+    expect(receivedProps).not.toHaveProperty('constructor', { bad: true });
+  });
+
+  it('strips prototype from shared script block props', () => {
+    document.body.innerHTML = `
+      <div data-forma-island="0" data-forma-component="Test" data-forma-status="pending">
+        <span>Test</span>
+      </div>
+      <script id="__forma_islands" type="application/json">{"0":{"prototype":{"x":1},"valid":"yes"}}</script>
+    `;
+    const hydrateFn = vi.fn();
+    activateIslands({ Test: hydrateFn });
+
+    const receivedProps = hydrateFn.mock.calls[0]![1];
+    expect(receivedProps.valid).toBe('yes');
+    expect(receivedProps).not.toHaveProperty('prototype', { x: 1 });
+  });
+});
+
 describe('activateIslands barrel export', () => {
   it('exports activateIslands from dom/index', async () => {
     const domIndex = await import('../index');

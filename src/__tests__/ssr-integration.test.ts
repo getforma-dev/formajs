@@ -98,4 +98,39 @@ describe('ssr integration', () => {
       renderToStringWithHydration(sh('div', { dangerouslySetInnerHTML: { __html: false } }));
     }).toThrow('dangerouslySetInnerHTML must be { __html: string }');
   });
+
+  it('escapeAttr escapes angle brackets and single quotes', () => {
+    const html = renderToString(sh('div', { title: "a < b > c & d 'e'" }));
+    expect(html).toContain('&lt;');
+    expect(html).toContain('&gt;');
+    expect(html).toContain('&#39;');
+    expect(html).not.toContain("title=\"a < b");
+  });
+
+  it('blocks javascript: URI in href', () => {
+    const html = renderToString(sh('a', { href: 'javascript:alert(1)' }, 'click'));
+    expect(html).not.toContain('javascript:');
+    expect(html).toContain('<a');
+    expect(html).toContain('click');
+  });
+
+  it('blocks javascript: URI in src', () => {
+    const html = renderToString(sh('img', { src: 'javascript:alert(1)' }));
+    expect(html).not.toContain('javascript:');
+  });
+
+  it('blocks data:text/html URI in href', () => {
+    const html = renderToString(sh('a', { href: 'data:text/html,<script>alert(1)</script>' }, 'click'));
+    expect(html).not.toContain('data:text/html');
+  });
+
+  it('allows safe URIs', () => {
+    const html = renderToString(sh('a', { href: 'https://example.com' }, 'link'));
+    expect(html).toContain('href="https://example.com"');
+  });
+
+  it('allows data: URIs for images (not text/html)', () => {
+    const html = renderToString(sh('img', { src: 'data:image/png;base64,abc' }));
+    expect(html).toContain('src="data:image/png;base64,abc"');
+  });
 });

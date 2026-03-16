@@ -2,6 +2,14 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.7.0] - 2026-03-15
+
+### Security
+- **`$el` sandbox escape blocked:** `$el` is now wrapped in a safe Proxy that allowlists DOM properties (classList, dataset, style, value, focus, etc.) and blocks access to `ownerDocument`, `parentNode`, `innerHTML`, and any chain that reaches `window`/`document`. Applies to BOTH standard and hardened builds.
+- **SSR swap script injection fixed:** `getSwapTag` now escapes `<` as `\u003c` and `>` as `\u003e` in JSON-serialized content, preventing `</script>` from breaking the inline script block during Suspense streaming.
+- **Island props sanitized:** `loadIslandProps` now strips `__proto__`, `constructor`, and `prototype` keys from JSON-parsed props (inline and shared script block), matching the sanitization already done by `parseState`.
+- **`escapeAttr` strengthened:** Now escapes `<`, `>`, and `'` in addition to `&` and `"`. Blocks `javascript:`, `vbscript:`, and `data:text/html` URIs in `href`, `src`, `action`, and `formaction` attributes across all SSR render paths.
+
 ## [0.6.1] - 2026-03-15
 
 ### Added

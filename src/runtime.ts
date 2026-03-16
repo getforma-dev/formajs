@@ -2138,11 +2138,56 @@ function initScope(stateEl: Element): Scope {
   return { getters, setters };
 }
 
+// ── Safe $el proxy ──
+// Allowlist of properties exposed on the $el magic.  Everything else
+// (ownerDocument, parentNode, innerHTML, …) returns undefined so that
+// attacker-authored expressions cannot escape to window/document.
+
+const SAFE_EL_PROPS = new Set([
+  // Identity & attributes
+  'id', 'className', 'tagName', 'nodeName',
+  'getAttribute', 'setAttribute', 'removeAttribute', 'hasAttribute', 'toggleAttribute',
+  'dataset', 'classList',
+  // Content
+  'textContent', 'innerText',
+  // Form elements
+  'value', 'checked', 'disabled', 'selected', 'type', 'name', 'placeholder',
+  'readOnly', 'required', 'min', 'max', 'step', 'pattern',
+  // Dimensions & position
+  'getBoundingClientRect', 'offsetWidth', 'offsetHeight',
+  'offsetTop', 'offsetLeft', 'clientWidth', 'clientHeight',
+  'scrollWidth', 'scrollHeight', 'scrollTop', 'scrollLeft',
+  // Style
+  'style', 'hidden',
+  // Focus & interaction
+  'focus', 'blur', 'click', 'scrollIntoView', 'scrollTo',
+  // Traversal (safe — returns elements, not window/document)
+  'closest', 'matches', 'querySelector', 'querySelectorAll',
+  'children', 'childElementCount', 'firstElementChild', 'lastElementChild',
+  'nextElementSibling', 'previousElementSibling',
+]);
+
+function createSafeElProxy(el: Element): Element {
+  return new Proxy(el, {
+    get(target, prop) {
+      if (typeof prop === 'symbol') return Reflect.get(target, prop);
+      if (!SAFE_EL_PROPS.has(prop)) return undefined;
+      const val = Reflect.get(target, prop);
+      return typeof val === 'function' ? val.bind(target) : val;
+    },
+    set(target, prop, value) {
+      if (typeof prop === 'symbol') return false;
+      if (!SAFE_EL_PROPS.has(prop)) return false;
+      return Reflect.set(target, prop, value);
+    },
+  });
+}
+
 function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void {
   // Inject per-element magics: $el and $dispatch
   // Each element gets its own child scope so $el resolves to the correct element.
   const elMagics: Record<string, unknown> = {
-    $el: el,
+    $el: createSafeElProxy(el),
     $dispatch: (name: string, detail?: unknown) => {
       el.dispatchEvent(new CustomEvent(name, {
         bubbles: true,

@@ -24,6 +24,15 @@ import { hydrateIsland } from './hydrate.js';
  */
 export type IslandHydrateFn = (el: HTMLElement, props: Record<string, unknown> | null) => unknown;
 
+const FORBIDDEN_PROP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+function sanitizeProps(obj: Record<string, unknown>): Record<string, unknown> {
+  for (const key of FORBIDDEN_PROP_KEYS) {
+    if (key in obj) delete (obj as any)[key];
+  }
+  return obj;
+}
+
 /**
  * Load props for an island from either inline attribute or shared script block.
  */
@@ -35,12 +44,12 @@ function loadIslandProps(
   // Mode 1: Inline (small props, < 1KB)
   const inline = root.getAttribute('data-forma-props');
   if (inline) {
-    return JSON.parse(inline);
+    return sanitizeProps(JSON.parse(inline));
   }
 
   // Mode 2: Script tag (1KB–50KB, pre-parsed)
   if (sharedProps && String(id) in sharedProps) {
-    return (sharedProps as any)[String(id)] as Record<string, unknown>;
+    return sanitizeProps((sharedProps as any)[String(id)] as Record<string, unknown>);
   }
 
   // No props — island creates its own state

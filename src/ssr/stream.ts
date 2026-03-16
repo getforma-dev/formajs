@@ -13,7 +13,7 @@
  */
 
 import { getSwapScript, getSwapTag } from './client-script.js';
-import { escapeHtml, escapeAttr, isVNode, VOID_ELEMENTS, PROP_TO_ATTR, type VNode } from './render.js';
+import { escapeHtml, escapeAttr, isVNode, VOID_ELEMENTS, PROP_TO_ATTR, DANGEROUS_URI_ATTRS, DANGEROUS_URI_RE, type VNode } from './render.js';
 
 // ---------------------------------------------------------------------------
 // Suspense boundary tracking
@@ -54,6 +54,9 @@ function renderSync(node: unknown, parts: string[]): void {
         if (resolved === true) {
           parts.push(' ', attrName);
         } else if (resolved !== false && resolved != null) {
+          if (DANGEROUS_URI_ATTRS.has(attrName) && typeof resolved === 'string' && DANGEROUS_URI_RE.test(resolved)) {
+            continue; // skip dangerous URI
+          }
           parts.push(' ', attrName, '="', escapeAttr(String(resolved)), '"');
         }
       }
@@ -248,6 +251,9 @@ function renderStreamNode(node: unknown, parts: string[], state: StreamState): v
         if (resolved === true) {
           parts.push(' ', attrName);
         } else if (resolved !== false && resolved != null) {
+          if (DANGEROUS_URI_ATTRS.has(attrName) && typeof resolved === 'string' && DANGEROUS_URI_RE.test(resolved)) {
+            continue; // skip dangerous URI
+          }
           parts.push(' ', attrName, '="', escapeAttr(String(resolved)), '"');
         }
       }
