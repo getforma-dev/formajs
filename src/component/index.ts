@@ -11,6 +11,9 @@ export {
   trackDisposer,
   onMount,
   onUnmount,
+  type SetupFn,
+  type ComponentDef,
+  type CleanupFn,
 } from './define.js';
 
 export {

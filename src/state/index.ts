@@ -5,6 +5,6 @@
  * Zero dependencies -- native browser APIs only.
  */
 
-export { createStore } from './store.js';
+export { createStore, type StoreSetter } from './store.js';
 export { createHistory, type HistoryControls } from './history.js';
-export { persist } from './persist.js';
+export { persist, type PersistOptions } from './persist.js';

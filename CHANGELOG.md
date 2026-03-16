@@ -2,6 +2,12 @@
 
 All notable changes to this project will be documented in this file.
 
+## [0.9.1] - 2026-03-15
+
+### Changed
+- **Hardened builds now have zero `new Function` in dist** — added compile-time `__EVAL_CAPABLE__` constant that esbuild constant-folds to `false` in hardened builds, enabling dead code elimination of all `new Function()` paths. Socket.dev/Snyk static analysis will no longer flag eval usage in hardened builds.
+- **Exported 31 missing types** for TypeDoc — all parameter and return types of public functions are now properly exported (SignalGetter, SignalSetter, FetchOptions, SSEConnection, StoreSetter, etc.). `npm run docs` now generates with 0 warnings.
+
 ## [0.9.0] - 2026-03-15
 
 ### Added

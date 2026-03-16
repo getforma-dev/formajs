@@ -12,10 +12,10 @@ import { reportError } from '../reactive/dev.js';
 // Types
 // ---------------------------------------------------------------------------
 
-type CleanupFn = () => void;
-type SetupFn = () => HTMLElement | DocumentFragment;
+export type CleanupFn = () => void;
+export type SetupFn = () => HTMLElement | DocumentFragment;
 
-interface ComponentDef {
+export interface ComponentDef {
   setup: SetupFn;
   name?: string;
 }

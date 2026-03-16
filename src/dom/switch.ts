@@ -15,7 +15,7 @@
 
 import { internalEffect, untrack, createRoot } from 'forma/reactive';
 
-interface SwitchCase<T> {
+export interface SwitchCase<T> {
   match: T;
   render: () => Node;
 }

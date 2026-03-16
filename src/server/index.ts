@@ -15,5 +15,5 @@ export { $$serverFunction } from './rpc-client.js';
 export {
   registerServerFunction, getServerFunction, getRegisteredEndpoints,
   handleRPC, createRPCMiddleware,
-  type RPCRequest, type RPCResponse,
+  type RPCRequest, type RPCResponse, type ServerFunction,
 } from './rpc-handler.js';

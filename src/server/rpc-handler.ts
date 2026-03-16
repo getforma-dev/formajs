@@ -5,7 +5,7 @@
  * Framework-agnostic — works with any Node.js HTTP server, Express, Hono, etc.
  */
 
-type ServerFunction = (...args: unknown[]) => Promise<unknown>;
+export type ServerFunction = (...args: unknown[]) => Promise<unknown>;
 
 /** Registry of server functions by endpoint path. */
 const registry = new Map<string, ServerFunction>();

@@ -38,7 +38,7 @@ export {
 } from './suspense-context.js';
 
 // Dev & observability
-export { onError, __DEV__ } from './dev.js';
+export { onError, __DEV__, type ErrorHandler } from './dev.js';
 
 // Reactive introspection (alien-signals 3.x type guards)
 export {

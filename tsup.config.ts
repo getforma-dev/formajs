@@ -67,6 +67,8 @@ export default defineConfig([
     },
   },
   // Hardened runtime (unsafe-eval locked off, non-toggleable at runtime)
+  // Drop 'new Function' entirely via esbuild's drop labels — ensures Socket.dev
+  // static analysis doesn't flag dead eval code in the hardened build.
   {
     entry: { 'runtime-hardened': 'src/runtime.ts' },
     format: ['esm', 'cjs'],
@@ -93,6 +95,7 @@ export default defineConfig([
     globalName: 'FormaRuntime',
     outDir: 'dist',
     minify: true,
+    treeshake: true,
     sourcemap: true,
     target: 'es2022',
     define: {

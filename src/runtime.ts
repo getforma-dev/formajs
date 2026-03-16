@@ -306,6 +306,17 @@ function reportDiagnostic(
 }
 
 declare const __FORMA_UNSAFE_EVAL_MODE__: string | undefined;
+
+/**
+ * Compile-time flag: true when the build CAN use new Function().
+ * In the hardened build, __FORMA_UNSAFE_EVAL_MODE__ is "locked-off" and
+ * esbuild constant-folds this to `false`, allowing dead code elimination
+ * of all new Function() paths. This ensures Socket.dev/Snyk static analysis
+ * does not flag eval usage in the hardened build.
+ */
+const __EVAL_CAPABLE__ = typeof __FORMA_UNSAFE_EVAL_MODE__ !== 'string'
+  || __FORMA_UNSAFE_EVAL_MODE__ !== 'locked-off';
+
 const buildUnsafeEvalMode = parseUnsafeEvalMode(
   typeof __FORMA_UNSAFE_EVAL_MODE__ === 'string'
     ? __FORMA_UNSAFE_EVAL_MODE__
@@ -1931,7 +1942,10 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
   }
 
   // Fallback to Function constructor (for complex expressions)
-  if (!_allowUnsafeEval) {
+  // __EVAL_CAPABLE__ is a compile-time constant — in the hardened build,
+  // esbuild constant-folds it to false and eliminates this entire block,
+  // ensuring no `new Function` appears in the hardened dist.
+  if (!__EVAL_CAPABLE__ || !_allowUnsafeEval) {
     dbg('buildEvaluator: blocked unsafe eval fallback for expression:', cleaned);
     reportDiagnostic('expression-unsupported', cleaned, cspExpressionHint(cleaned));
     const blocked = () => undefined;
@@ -2110,9 +2124,8 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
   }
 
   // Fallback to Function constructor (for complex expressions)
-  // Use a Proxy with getters and setters so the handler can both read and
-  // mutate state (e.g. "count++", "active = !active").
-  if (!_allowUnsafeEval) {
+  // __EVAL_CAPABLE__ gate ensures hardened build eliminates this entire block.
+  if (!__EVAL_CAPABLE__ || !_allowUnsafeEval) {
     dbg('buildHandler: blocked unsafe eval fallback for expression:', cleaned);
     reportDiagnostic('handler-unsupported', cleaned, cspExpressionHint(cleaned));
     const result: HandlerBuildResult = {

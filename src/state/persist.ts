@@ -12,7 +12,7 @@ import { internalEffect } from 'forma/reactive';
 // Types
 // ---------------------------------------------------------------------------
 
-interface PersistOptions<T> {
+export interface PersistOptions<T> {
   /** Storage backend. Defaults to localStorage. */
   storage?: Storage;
   /** Custom serializer. Defaults to JSON.stringify. */

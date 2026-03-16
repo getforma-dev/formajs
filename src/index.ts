@@ -9,19 +9,23 @@ export {
   isSignal, isComputed, isEffect, isEffectScope,
   getBatchDepth, trigger,
 } from './reactive';
+export type { SignalGetter, SignalSetter, SignalOptions, Ref, Dispatch, Resource, ResourceOptions, ErrorHandler } from './reactive';
 
 // DOM
 export { h, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, deactivateIsland, deactivateAllIslands, reconcileList } from './dom';
-export type { IslandHydrateFn } from './dom';
+export type { IslandHydrateFn, ReconcileResult, ListTransitionHooks, CreateListOptions, SwitchCase } from './dom';
 
 // Component
 export { defineComponent, disposeComponent, trackDisposer, onMount, onUnmount, createContext, provide, inject, unprovide } from './component';
+export type { SetupFn, ComponentDef, CleanupFn, Context } from './component';
 
 // State
 export { createStore, createHistory, persist } from './state';
+export type { StoreSetter, PersistOptions, HistoryControls } from './state';
 
 // Events
 export { createBus, delegate, onKey } from './events';
+export type { EventBus, KeyOptions } from './events';
 
 // DOM Utils
 export { $, $$, addClass, removeClass, toggleClass, setStyle, setAttr, setText, setHTML, setHTMLUnsafe,
@@ -30,9 +34,11 @@ export { $, $$, addClass, removeClass, toggleClass, setStyle, setAttr, setText, 
 
 // Storage
 export { createLocalStorage, createSessionStorage, createIndexedDB } from './storage';
+export type { TypedStorage, StorageOptions, IDBStore } from './storage';
 
 // HTTP
 export { createFetch, fetchJSON, createSSE, createWebSocket } from './http';
+export type { FetchResult, FetchOptions, SSEConnection, SSEOptions, WSConnection, WSOptions, WSStatus } from './http';
 
 // Server
 export {
@@ -49,7 +55,5 @@ export {
   handleRPC,
   createRPCMiddleware,
 } from './server';
-export type { ActionOptions, Action } from './server';
-export type { MutationResponse } from './server';
-export type { RPCRequest, RPCResponse } from './server';
+export type { ActionOptions, Action, MutationResponse, RPCRequest, RPCResponse, ServerFunction } from './server';
 

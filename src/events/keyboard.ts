@@ -2,7 +2,7 @@
 
 type KeyCombo = string; // e.g., 'ctrl+s', 'shift+enter', 'escape', 'ctrl+shift+z'
 
-interface KeyOptions {
+export interface KeyOptions {
   target?: EventTarget;
   preventDefault?: boolean;
 }
