@@ -545,9 +545,26 @@ function appendChild(parent: Node, child: unknown): void {
       (parent as any)[DYNAMIC_CHILD_SYM] = true;
     }
     let currentNode: Node | null = null;
-    // When we use a Fragment container, we track its children so we can
-    // remove them on replacement (Fragments empty on appendChild).
+    // Fragment children are tracked separately because DocumentFragment
+    // empties itself on appendChild — we need to remove children manually.
     let currentFragChildren: Node[] | null = null;
+    let warnedArray = false;
+    const DEBUG = typeof (globalThis as any).__FORMA_DEBUG__ !== 'undefined';
+
+    // Helper: remove all tracked fragment children or the single current node
+    const clearCurrent = () => {
+      if (currentFragChildren) {
+        for (const c of currentFragChildren) {
+          if (c.parentNode === parent) parent.removeChild(c);
+        }
+        currentFragChildren = null;
+      }
+      if (currentNode && currentNode.parentNode === parent) {
+        parent.removeChild(currentNode);
+      }
+      currentNode = null;
+    };
+
     internalEffect(() => {
       const v = (child as () => unknown)();
 
@@ -557,56 +574,40 @@ function appendChild(parent: Node, child: unknown): void {
         const frag = document.createDocumentFragment();
         for (const item of v) {
           if (item instanceof Node) frag.appendChild(item);
-          else if (item != null && item !== false && item !== true) {
+          else if (Array.isArray(item)) {
+            if (DEBUG) console.warn('[forma] Nested arrays in function children are not supported. Flatten the array or use createList().');
+          } else if (item != null && item !== false && item !== true) {
             frag.appendChild(new Text(String(item)));
           }
         }
-        resolved = frag;
+        // Empty array → treat as null (no DOM output)
+        resolved = frag.childNodes.length > 0 ? frag : null;
 
-        if (typeof (globalThis as any).__FORMA_DEV__ !== 'undefined') {
+        if (DEBUG && !warnedArray) {
+          warnedArray = true;
           console.warn('[forma] Function child returned an array — auto-wrapped in DocumentFragment. Consider using createList() or wrapping in a container element for better performance.');
         }
       }
 
       if (resolved instanceof Node) {
-        // Remove previous fragment children if any
-        if (currentFragChildren) {
-          for (const c of currentFragChildren) {
-            if (c.parentNode === parent) parent.removeChild(c);
-          }
-          currentFragChildren = null;
-        }
+        // Clear previous state (fragment children or single node)
+        clearCurrent();
 
         // Track fragment children before appendChild empties the fragment
-        if (resolved instanceof DocumentFragment) {
+        const isNewFrag = resolved instanceof DocumentFragment;
+        if (isNewFrag) {
           currentFragChildren = Array.from(resolved.childNodes);
         }
 
-        // Function returned a DOM element or Fragment — adopt or replace
-        if (currentNode && !currentFragChildren) {
-          parent.replaceChild(resolved, currentNode);
-        } else {
-          if (currentNode && currentNode.parentNode === parent) {
-            parent.replaceChild(resolved, currentNode);
-          } else {
-            parent.appendChild(resolved);
-          }
-        }
-        currentNode = currentFragChildren ? null : (resolved as Node);
+        // Insert the new node/fragment
+        parent.appendChild(resolved);
+        currentNode = isNewFrag ? null : (resolved as Node);
       } else if (resolved == null || resolved === false || resolved === true) {
-        // Null/false/true — remove current node if any
-        if (currentFragChildren) {
-          for (const c of currentFragChildren) {
-            if (c.parentNode === parent) parent.removeChild(c);
-          }
-          currentFragChildren = null;
-        }
-        if (currentNode && currentNode.parentNode === parent) {
-          parent.removeChild(currentNode);
-        }
-        currentNode = null;
+        // Null/false/true/empty array — remove current content
+        clearCurrent();
       } else {
         // Primitive value — bind as text
+        // Clear fragment children if transitioning from array → primitive
         if (currentFragChildren) {
           for (const c of currentFragChildren) {
             if (c.parentNode === parent) parent.removeChild(c);
@@ -618,6 +619,7 @@ function appendChild(parent: Node, child: unknown): void {
           currentNode = new Text(text);
           parent.appendChild(currentNode);
         } else if (currentNode.nodeType === 3) {
+          // In-place text update — avoids DOM removal/insertion
           (currentNode as Text).data = text;
         } else {
           const tn = new Text(text);
