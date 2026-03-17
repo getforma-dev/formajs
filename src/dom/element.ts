@@ -454,7 +454,11 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
   if (value == null || value === false) return;
 
   if (key === 'class' || key === 'className') {
-    (el as HTMLElement).className = value as string;
+    if (el instanceof HTMLElement) {
+      el.className = value as string;
+    } else {
+      el.setAttribute('class', value as string);
+    }
     return;
   }
 
@@ -534,25 +538,82 @@ function appendChild(parent: Node, child: unknown): void {
   // Function child: reactive binding via signal getter.
   // The return value determines the binding type:
   //   - Node (from h() call) → append/replace as element
+  //   - Array (from .map()) → wrap in DocumentFragment, append/replace
   //   - primitive (string/number/null) → bind as text
   if (typeof child === 'function') {
     if (parent instanceof Element) {
       (parent as any)[DYNAMIC_CHILD_SYM] = true;
     }
     let currentNode: Node | null = null;
+    // When we use a Fragment container, we track its children so we can
+    // remove them on replacement (Fragments empty on appendChild).
+    let currentFragChildren: Node[] | null = null;
     internalEffect(() => {
       const v = (child as () => unknown)();
-      if (v instanceof Node) {
-        // Function returned a DOM element — adopt or replace
-        if (currentNode) {
-          parent.replaceChild(v, currentNode);
-        } else {
-          parent.appendChild(v);
+
+      // Array return (e.g. from .map()) → wrap in DocumentFragment
+      let resolved: unknown = v;
+      if (Array.isArray(v)) {
+        const frag = document.createDocumentFragment();
+        for (const item of v) {
+          if (item instanceof Node) frag.appendChild(item);
+          else if (item != null && item !== false && item !== true) {
+            frag.appendChild(new Text(String(item)));
+          }
         }
-        currentNode = v;
+        resolved = frag;
+
+        if (typeof (globalThis as any).__FORMA_DEV__ !== 'undefined') {
+          console.warn('[forma] Function child returned an array — auto-wrapped in DocumentFragment. Consider using createList() or wrapping in a container element for better performance.');
+        }
+      }
+
+      if (resolved instanceof Node) {
+        // Remove previous fragment children if any
+        if (currentFragChildren) {
+          for (const c of currentFragChildren) {
+            if (c.parentNode === parent) parent.removeChild(c);
+          }
+          currentFragChildren = null;
+        }
+
+        // Track fragment children before appendChild empties the fragment
+        if (resolved instanceof DocumentFragment) {
+          currentFragChildren = Array.from(resolved.childNodes);
+        }
+
+        // Function returned a DOM element or Fragment — adopt or replace
+        if (currentNode && !currentFragChildren) {
+          parent.replaceChild(resolved, currentNode);
+        } else {
+          if (currentNode && currentNode.parentNode === parent) {
+            parent.replaceChild(resolved, currentNode);
+          } else {
+            parent.appendChild(resolved);
+          }
+        }
+        currentNode = currentFragChildren ? null : (resolved as Node);
+      } else if (resolved == null || resolved === false || resolved === true) {
+        // Null/false/true — remove current node if any
+        if (currentFragChildren) {
+          for (const c of currentFragChildren) {
+            if (c.parentNode === parent) parent.removeChild(c);
+          }
+          currentFragChildren = null;
+        }
+        if (currentNode && currentNode.parentNode === parent) {
+          parent.removeChild(currentNode);
+        }
+        currentNode = null;
       } else {
         // Primitive value — bind as text
-        const text = typeof v === 'symbol' ? String(v) : String(v ?? '');
+        if (currentFragChildren) {
+          for (const c of currentFragChildren) {
+            if (c.parentNode === parent) parent.removeChild(c);
+          }
+          currentFragChildren = null;
+        }
+        const text = typeof resolved === 'symbol' ? String(resolved) : String(resolved ?? '');
         if (!currentNode) {
           currentNode = new Text(text);
           parent.appendChild(currentNode);
