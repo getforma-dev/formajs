@@ -1,5 +1,11 @@
 /// <reference path="./jsx.d.ts" />
 
+/**
+ * @getforma/core — Reactive DOM library for building web applications.
+ * Signals, JSX via h(), islands architecture, SSR hydration, and more.
+ * @packageDocumentation
+ */
+
 // Reactive core
 export {
   createSignal, createEffect, createComputed, createMemo, batch,
