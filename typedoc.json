@@ -11,6 +11,7 @@
   "theme": "default",
   "customCss": "typedoc-theme.css",
   "hideGenerator": true,
+  "visibilityFilters": {},
   "navigationLinks": {
     "npm": "https://www.npmjs.com/package/@getforma/core",
     "GitHub": "https://github.com/getforma-dev/formajs"
