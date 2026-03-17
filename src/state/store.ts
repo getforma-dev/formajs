@@ -21,6 +21,7 @@ import { createSignal, batch, untrack } from 'forma/reactive';
 
 type SignalPair = [get: () => unknown, set: (v: unknown) => void];
 
+/** Setter for a reactive store — accepts a partial update object or updater function. */
 export type StoreSetter<T extends object> = (
   partial: Partial<T> | ((prev: T) => Partial<T>),
 ) => void;

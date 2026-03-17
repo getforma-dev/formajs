@@ -10,7 +10,9 @@
  * SolidJS equivalent: (none — uses plain variables in setup)
  */
 
+/** A mutable container that does NOT trigger reactivity when written to. */
 export interface Ref<T> {
+  /** The stored value. Mutating this does not notify effects. */
   current: T;
 }
 

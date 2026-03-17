@@ -1,5 +1,6 @@
 // DOM traversal helpers
 
+/** Find the closest ancestor matching a CSS selector. */
 export function closest<T extends HTMLElement = HTMLElement>(
   el: HTMLElement,
   selector: string,
@@ -7,6 +8,7 @@ export function closest<T extends HTMLElement = HTMLElement>(
   return el.closest<T>(selector);
 }
 
+/** Get direct child elements, optionally filtered by a CSS selector. */
 export function children<T extends HTMLElement = HTMLElement>(
   el: HTMLElement,
   selector?: string,
@@ -16,6 +18,7 @@ export function children<T extends HTMLElement = HTMLElement>(
   return all.filter((child) => child.matches(selector)) as T[];
 }
 
+/** Get sibling elements (excluding the element itself), optionally filtered. */
 export function siblings<T extends HTMLElement = HTMLElement>(
   el: HTMLElement,
   selector?: string,
@@ -28,12 +31,14 @@ export function siblings<T extends HTMLElement = HTMLElement>(
   return sibs.filter((child) => child.matches(selector)) as T[];
 }
 
+/** Get the parent element, or `null` if detached. */
 export function parent<T extends HTMLElement = HTMLElement>(
   el: HTMLElement,
 ): T | null {
   return el.parentElement as T | null;
 }
 
+/** Find the next sibling element, optionally matching a CSS selector. */
 export function nextSibling<T extends HTMLElement = HTMLElement>(
   el: HTMLElement,
   selector?: string,
@@ -50,6 +55,7 @@ export function nextSibling<T extends HTMLElement = HTMLElement>(
   return null;
 }
 
+/** Find the previous sibling element, optionally matching a CSS selector. */
 export function prevSibling<T extends HTMLElement = HTMLElement>(
   el: HTMLElement,
   selector?: string,

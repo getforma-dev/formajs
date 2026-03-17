@@ -1,0 +1,254 @@
+/**
+ * FormaJS API Docs — Gruvbox Theme
+ *
+ * Gruvbox dark palette with Forma branding.
+ * Applied via TypeDoc's customCss option.
+ */
+
+/* -------------------------------------------------------------------------
+ * Gruvbox color tokens
+ * ----------------------------------------------------------------------- */
+:root {
+  /* Gruvbox Dark backgrounds */
+  --gruvbox-bg-hard:   #1d2021;
+  --gruvbox-bg:        #282828;
+  --gruvbox-bg-soft:   #32302f;
+  --gruvbox-bg1:       #3c3836;
+  --gruvbox-bg2:       #504945;
+  --gruvbox-bg3:       #665c54;
+  --gruvbox-bg4:       #7c6f64;
+
+  /* Gruvbox Dark foregrounds */
+  --gruvbox-fg:        #ebdbb2;
+  --gruvbox-fg1:       #d5c4a1;
+  --gruvbox-fg2:       #bdae93;
+  --gruvbox-fg3:       #a89984;
+  --gruvbox-fg4:       #928374;
+
+  /* Gruvbox bright accents */
+  --gruvbox-red:       #fb4934;
+  --gruvbox-green:     #b8bb26;
+  --gruvbox-yellow:    #fabd2f;
+  --gruvbox-blue:      #83a598;
+  --gruvbox-purple:    #d3869b;
+  --gruvbox-aqua:      #8ec07c;
+  --gruvbox-orange:    #fe8019;
+
+  /* Gruvbox muted accents */
+  --gruvbox-red-dim:    #cc241d;
+  --gruvbox-green-dim:  #98971a;
+  --gruvbox-yellow-dim: #d79921;
+  --gruvbox-blue-dim:   #458588;
+  --gruvbox-purple-dim: #b16286;
+  --gruvbox-aqua-dim:   #689d6a;
+  --gruvbox-orange-dim: #d65d0e;
+}
+
+/* -------------------------------------------------------------------------
+ * TypeDoc dark mode overrides (forced dark — Gruvbox IS dark)
+ * ----------------------------------------------------------------------- */
+
+/* Force dark mode by default */
+:root {
+  color-scheme: dark;
+}
+
+:root,
+:root[data-theme="dark"],
+:root[data-theme="os"] {
+  /* Page background & text */
+  --color-background:              var(--gruvbox-bg);
+  --color-background-secondary:    var(--gruvbox-bg-soft);
+  --color-background-warning:      var(--gruvbox-bg1);
+
+  /* Text */
+  --color-text:                    var(--gruvbox-fg);
+  --color-text-aside:              var(--gruvbox-fg3);
+  --color-comment-tag-text:        var(--gruvbox-fg1);
+
+  /* Links */
+  --color-link:                    var(--gruvbox-aqua);
+
+  /* TypeDoc navigation */
+  --color-active-menu-item:        var(--gruvbox-bg1);
+
+  /* Accent colors mapped to TypeDoc semantic names */
+  --color-ts-function:             var(--gruvbox-green);
+  --color-ts-method:               var(--gruvbox-green);
+  --color-ts-call-signature:       var(--gruvbox-green);
+  --color-ts-accessor:             var(--gruvbox-green);
+
+  --color-ts-interface:            var(--gruvbox-aqua);
+  --color-ts-type-alias:           var(--gruvbox-aqua);
+
+  --color-ts-class:                var(--gruvbox-yellow);
+  --color-ts-constructor:          var(--gruvbox-yellow);
+  --color-ts-constructor-signature: var(--gruvbox-yellow);
+
+  --color-ts-property:             var(--gruvbox-blue);
+  --color-ts-variable:             var(--gruvbox-blue);
+  --color-ts-get-signature:        var(--gruvbox-blue);
+  --color-ts-set-signature:        var(--gruvbox-blue);
+
+  --color-ts-enum:                 var(--gruvbox-orange);
+  --color-ts-enum-member:          var(--gruvbox-orange);
+
+  --color-ts-namespace:            var(--gruvbox-purple);
+  --color-ts-module:               var(--gruvbox-purple);
+
+  /* Warnings & tags */
+  --color-warning-text:            var(--gruvbox-yellow);
+  --color-deprecated:              var(--gruvbox-red);
+
+  /* Code blocks */
+  --color-code-background:         var(--gruvbox-bg-hard);
+
+  /* Borders & chrome */
+  --color-accent:                  var(--gruvbox-aqua-dim);
+}
+
+/* Light mode — Gruvbox Light (for users who force light) */
+:root[data-theme="light"] {
+  --color-background:              #fbf1c7;
+  --color-background-secondary:    #f2e5bc;
+  --color-text:                    #3c3836;
+  --color-text-aside:              #7c6f64;
+  --color-link:                    var(--gruvbox-blue-dim);
+  --color-ts-function:             var(--gruvbox-green-dim);
+  --color-ts-method:               var(--gruvbox-green-dim);
+  --color-ts-interface:            var(--gruvbox-aqua-dim);
+  --color-ts-type-alias:           var(--gruvbox-aqua-dim);
+  --color-ts-class:                var(--gruvbox-yellow-dim);
+  --color-ts-property:             var(--gruvbox-blue-dim);
+  --color-ts-variable:             var(--gruvbox-blue-dim);
+  --color-ts-enum:                 var(--gruvbox-orange-dim);
+  --color-ts-namespace:            var(--gruvbox-purple-dim);
+  --color-code-background:         #f9f5d7;
+  --color-accent:                  var(--gruvbox-aqua-dim);
+}
+
+/* -------------------------------------------------------------------------
+ * Syntax highlighting — Gruvbox
+ * ----------------------------------------------------------------------- */
+:root,
+:root[data-theme="dark"],
+:root[data-theme="os"] {
+  /* TypeDoc highlight color slots */
+  --light-hl-0:  var(--gruvbox-fg);       /* default text */
+  --light-hl-1:  var(--gruvbox-green);    /* keywords */
+  --light-hl-2:  var(--gruvbox-aqua);     /* types */
+  --light-hl-3:  var(--gruvbox-yellow);   /* strings */
+  --light-hl-4:  var(--gruvbox-purple);   /* numbers */
+  --light-hl-5:  var(--gruvbox-fg4);      /* comments */
+  --light-hl-6:  var(--gruvbox-orange);   /* decorators */
+  --light-hl-7:  var(--gruvbox-red);      /* operators */
+  --light-hl-8:  var(--gruvbox-blue);     /* parameters */
+  --light-hl-9:  var(--gruvbox-fg1);      /* punctuation */
+  --light-hl-10: var(--gruvbox-green);    /* function names */
+
+  --dark-hl-0:   var(--gruvbox-fg);
+  --dark-hl-1:   var(--gruvbox-green);
+  --dark-hl-2:   var(--gruvbox-aqua);
+  --dark-hl-3:   var(--gruvbox-yellow);
+  --dark-hl-4:   var(--gruvbox-purple);
+  --dark-hl-5:   var(--gruvbox-fg4);
+  --dark-hl-6:   var(--gruvbox-orange);
+  --dark-hl-7:   var(--gruvbox-red);
+  --dark-hl-8:   var(--gruvbox-blue);
+  --dark-hl-9:   var(--gruvbox-fg1);
+  --dark-hl-10:  var(--gruvbox-green);
+
+  --light-code-background: var(--gruvbox-bg-hard);
+  --dark-code-background:  var(--gruvbox-bg-hard);
+}
+
+/* -------------------------------------------------------------------------
+ * Layout polish
+ * ----------------------------------------------------------------------- */
+
+/* Sidebar */
+.site-menu {
+  background: var(--gruvbox-bg-soft);
+  border-right: 1px solid var(--gruvbox-bg2);
+}
+
+/* Navigation links (npm, GitHub) */
+.tsd-navigation a.external {
+  color: var(--gruvbox-fg3);
+}
+.tsd-navigation a.external:hover {
+  color: var(--gruvbox-aqua);
+}
+
+/* Code blocks */
+pre {
+  border: 1px solid var(--gruvbox-bg2);
+  border-radius: 6px;
+}
+pre code {
+  font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', monospace;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+/* Signature titles */
+.tsd-signature {
+  font-family: 'JetBrains Mono', 'Fira Code', monospace;
+  font-size: 0.9rem;
+}
+
+/* Tags / badges */
+.tsd-tag {
+  background: var(--gruvbox-bg2);
+  color: var(--gruvbox-fg1);
+  border-radius: 4px;
+  font-size: 0.75rem;
+  padding: 2px 8px;
+}
+
+/* Search bar */
+#tsd-search input {
+  background: var(--gruvbox-bg1);
+  color: var(--gruvbox-fg);
+  border: 1px solid var(--gruvbox-bg3);
+  border-radius: 4px;
+}
+#tsd-search input:focus {
+  border-color: var(--gruvbox-aqua-dim);
+  outline: none;
+}
+
+/* Title area */
+.tsd-page-title h1 {
+  color: var(--gruvbox-fg);
+}
+
+/* Member panels */
+.tsd-panel {
+  border: 1px solid var(--gruvbox-bg2);
+  border-radius: 6px;
+}
+.tsd-panel-group > .tsd-panel {
+  background: var(--gruvbox-bg-soft);
+}
+
+/* Horizontal rules */
+hr {
+  border-color: var(--gruvbox-bg2);
+}
+
+/* Scrollbars (WebKit) */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-track {
+  background: var(--gruvbox-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--gruvbox-bg3);
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--gruvbox-bg4);
+}

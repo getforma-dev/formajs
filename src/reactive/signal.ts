@@ -13,7 +13,9 @@ import { signal as createRawSignal, setActiveSub } from 'alien-signals';
 // Public API
 // ---------------------------------------------------------------------------
 
+/** A function that reads the current value of a signal. */
 export type SignalGetter<T> = () => T;
+/** A function that updates a signal — accepts a value or an updater function. */
 export type SignalSetter<T> = (v: T | ((prev: T) => T)) => void;
 
 export interface SignalOptions<T> {

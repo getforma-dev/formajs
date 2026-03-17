@@ -12,6 +12,7 @@ import { createSignal, internalEffect, batch } from 'forma/reactive';
 // Types
 // ---------------------------------------------------------------------------
 
+/** Undo/redo controls returned by {@link createHistory}. */
 export interface HistoryControls<T> {
   /** Undo the last change, restoring the previous value. */
   undo: () => void;

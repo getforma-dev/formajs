@@ -13,6 +13,7 @@ import { internalEffect } from './effect.js';
 import { untrack } from './untrack.js';
 import { getSuspenseContext } from './suspense-context.js';
 
+/** An async data resource with reactive loading and error state. */
 export interface Resource<T> {
   /** The resolved data (or undefined while loading). */
   (): T | undefined;
@@ -26,6 +27,7 @@ export interface Resource<T> {
   mutate: (value: T | undefined) => void;
 }
 
+/** Options for {@link createResource}. */
 export interface ResourceOptions<T> {
   /** Initial value before first fetch resolves. */
   initialValue?: T;

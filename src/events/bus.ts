@@ -1,13 +1,36 @@
 // Typed event bus — pub/sub pattern
 
+/**
+ * A typed publish/subscribe event bus.
+ *
+ * The type parameter `T` maps event names to their payload types,
+ * ensuring type-safe event emission and subscription.
+ */
 export interface EventBus<T extends Record<string, unknown>> {
+  /** Subscribe to an event. Returns an unsubscribe function. */
   on<K extends keyof T>(event: K, handler: (payload: T[K]) => void): () => void;
+  /** Subscribe to an event, automatically unsubscribing after the first firing. */
   once<K extends keyof T>(event: K, handler: (payload: T[K]) => void): () => void;
+  /** Emit an event to all current subscribers. */
   emit<K extends keyof T>(event: K, payload: T[K]): void;
+  /** Remove a specific handler from an event. */
   off<K extends keyof T>(event: K, handler: (payload: T[K]) => void): void;
+  /** Remove all handlers for all events. */
   clear(): void;
 }
 
+/**
+ * Create a typed event bus for publish/subscribe messaging.
+ *
+ * ```ts
+ * type Events = { save: { id: number }; delete: { id: number } };
+ * const bus = createBus<Events>();
+ *
+ * const unsub = bus.on('save', (payload) => console.log(payload.id));
+ * bus.emit('save', { id: 42 });
+ * unsub();
+ * ```
+ */
 export function createBus<
   T extends Record<string, unknown> = Record<string, unknown>,
 >(): EventBus<T> {

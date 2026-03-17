@@ -11,6 +11,7 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/** A typed dependency injection context created by {@link createContext}. */
 export interface Context<T> {
   /** Unique identifier for this context. */
   readonly id: symbol;

@@ -9,6 +9,7 @@
   "excludeExternals": true,
   "plugin": [],
   "theme": "default",
+  "customCss": "typedoc-theme.css",
   "hideGenerator": true,
   "navigationLinks": {
     "npm": "https://www.npmjs.com/package/@getforma/core",

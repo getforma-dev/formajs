@@ -15,8 +15,11 @@
 
 import { internalEffect, untrack, createRoot } from 'forma/reactive';
 
+/** A single branch for {@link createSwitch}. */
 export interface SwitchCase<T> {
+  /** The value that activates this branch. */
   match: T;
+  /** Factory function that renders this branch's DOM. */
   render: () => Node;
 }
 

@@ -2,8 +2,11 @@
 
 type KeyCombo = string; // e.g., 'ctrl+s', 'shift+enter', 'escape', 'ctrl+shift+z'
 
+/** Options for the {@link onKey} keyboard shortcut handler. */
 export interface KeyOptions {
+  /** Element or document to listen on. Defaults to `document`. */
   target?: EventTarget;
+  /** Whether to call `e.preventDefault()`. Defaults to `true`. */
   preventDefault?: boolean;
 }
 
@@ -58,6 +61,21 @@ function matchesCombo(e: KeyboardEvent, parsed: ParsedCombo): boolean {
   return e.key.toLowerCase() === parsed.key;
 }
 
+/**
+ * Listen for a keyboard shortcut and invoke a handler when it fires.
+ *
+ * Supports modifier keys: `ctrl`, `shift`, `alt`, `meta`/`cmd`.
+ *
+ * ```ts
+ * const unsub = onKey('ctrl+s', (e) => save());
+ * const unsub2 = onKey('escape', () => close(), { target: modal });
+ * ```
+ *
+ * @param combo    Key combination string (e.g. `'ctrl+s'`, `'shift+enter'`).
+ * @param handler  Called when the combo is pressed.
+ * @param options  Optional target element and preventDefault behavior.
+ * @returns An unsubscribe function that removes the listener.
+ */
 export function onKey(
   combo: KeyCombo,
   handler: (e: KeyboardEvent) => void,

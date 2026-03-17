@@ -12,11 +12,16 @@ import { reportError } from '../reactive/dev.js';
 // Types
 // ---------------------------------------------------------------------------
 
+/** A teardown function that disposes effects and cleans up resources. */
 export type CleanupFn = () => void;
+/** A function that runs once to build the component's DOM tree. */
 export type SetupFn = () => HTMLElement | DocumentFragment;
 
+/** Definition object passed to {@link defineComponent}. */
 export interface ComponentDef {
+  /** The setup function that builds the component's DOM and reactive bindings. */
   setup: SetupFn;
+  /** Optional debug name for devtools inspection. */
   name?: string;
 }
 

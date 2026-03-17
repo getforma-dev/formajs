@@ -1,5 +1,10 @@
 // Observer wrappers — clean API for ResizeObserver, IntersectionObserver, MutationObserver
 
+/**
+ * Observe element size changes via `ResizeObserver`.
+ *
+ * @returns A disconnect function that stops observing.
+ */
 export function onResize(
   el: HTMLElement,
   handler: (entry: ResizeObserverEntry) => void,
@@ -15,6 +20,11 @@ export function onResize(
   };
 }
 
+/**
+ * Observe element visibility changes via `IntersectionObserver`.
+ *
+ * @returns A disconnect function that stops observing.
+ */
 export function onIntersect(
   el: HTMLElement,
   handler: (entry: IntersectionObserverEntry) => void,
@@ -31,6 +41,12 @@ export function onIntersect(
   };
 }
 
+/**
+ * Observe DOM mutations (child additions/removals, attribute changes) via
+ * `MutationObserver`. Defaults to `{ childList: true, subtree: true }`.
+ *
+ * @returns A disconnect function that stops observing.
+ */
 export function onMutation(
   el: HTMLElement,
   handler: (mutations: MutationRecord[]) => void,

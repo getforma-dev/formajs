@@ -12,6 +12,7 @@ import { internalEffect } from 'forma/reactive';
 // Types
 // ---------------------------------------------------------------------------
 
+/** Options for {@link persist} — storage backend, serialization, and validation. */
 export interface PersistOptions<T> {
   /** Storage backend. Defaults to localStorage. */
   storage?: Storage;

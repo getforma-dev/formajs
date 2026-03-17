@@ -10,6 +10,7 @@
 
 import { createSignal, type SignalGetter } from './signal.js';
 
+/** A function that dispatches an action to a reducer. */
 export type Dispatch<A> = (action: A) => void;
 
 /**

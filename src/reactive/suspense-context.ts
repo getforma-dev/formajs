@@ -11,6 +11,7 @@
 // Types
 // ---------------------------------------------------------------------------
 
+/** Context object for a Suspense boundary, tracking pending async resources. */
 export interface SuspenseContext {
   /** Increment when a resource starts loading inside this boundary. */
   increment(): void;

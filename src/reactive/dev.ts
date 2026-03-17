@@ -15,6 +15,7 @@ export const __DEV__: boolean = typeof process !== 'undefined'
 // Global error handler
 // ---------------------------------------------------------------------------
 
+/** Callback signature for the global {@link onError} handler. */
 export type ErrorHandler = (error: unknown, info?: { source?: string }) => void;
 
 let _errorHandler: ErrorHandler | null = null;

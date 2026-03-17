@@ -21,13 +21,19 @@ import { hydrating } from './hydrate.js';
 // Types
 // ---------------------------------------------------------------------------
 
+/** Return value from {@link reconcileList} — the new nodes and items arrays. */
 export interface ReconcileResult<T> {
+  /** The DOM nodes currently in the list, in order. */
   nodes: Node[];
+  /** The items array corresponding to the current nodes. */
   items: T[];
 }
 
+/** Animation hooks for list transitions. */
 export interface ListTransitionHooks {
+  /** Called after a new node is inserted into the DOM. */
   onInsert?: (node: Node) => void;
+  /** Called before a node is removed. Call `done()` when the exit animation finishes. */
   onBeforeRemove?: (node: Node, done: () => void) => void;
 }
 
