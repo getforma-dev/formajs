@@ -121,11 +121,11 @@ export function createFetch<T>(
     internalEffect(() => {
       // Read the signal so the effect re-runs when it changes
       url();
-      execute();
+      void execute();
     });
   } else {
     // Kick off the first request immediately
-    execute();
+    void execute();
   }
 
   return {
