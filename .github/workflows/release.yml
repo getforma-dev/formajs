@@ -48,6 +48,7 @@ jobs:
 
       - name: Notify create-forma-app to update dependency
         if: success()
+        continue-on-error: true  # Don't fail the release if dispatch token isn't configured
         uses: peter-evans/repository-dispatch@v3
         with:
           token: ${{ secrets.FORMA_DISPATCH_TOKEN }}
