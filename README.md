@@ -43,7 +43,7 @@ Or use a CDN — no build step, no bundler:
 <script src="https://unpkg.com/@getforma/core/dist/formajs-runtime.global.js"></script>
 ```
 
-> **Production:** Pin the version (e.g., `@getforma/core@1.0.1`) instead of `@latest`.
+> **Production:** Pin the version (e.g., `@getforma/core@1.0.7`) instead of `@latest`.
 
 ---
 
@@ -701,17 +701,17 @@ deactivateIsland(islandElement);
 
 ```html
 <!-- jsDelivr (recommended) -->
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.0.1/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.0.7/dist/formajs-runtime.global.js"></script>
 
 <!-- unpkg -->
-<script src="https://unpkg.com/@getforma/core@1.0.1/dist/formajs-runtime.global.js"></script>
+<script src="https://unpkg.com/@getforma/core@1.0.7/dist/formajs-runtime.global.js"></script>
 ```
 
 ### ESM import (modern browsers, no bundler)
 
 ```html
 <script type="module">
-  import { createSignal, h, mount } from "https://cdn.jsdelivr.net/npm/@getforma/core@1.0.1/dist/index.js";
+  import { createSignal, h, mount } from "https://cdn.jsdelivr.net/npm/@getforma/core@1.0.7/dist/index.js";
 
   const [count, setCount] = createSignal(0);
   mount(() => h("button", { onClick: () => setCount((c) => c + 1) }, () => `${count()}`), "#app");
