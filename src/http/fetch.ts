@@ -53,7 +53,7 @@ export function createFetch<T>(
   /** Resolve the URL string, applying base and params. */
   function resolveURL(): string {
     const raw = typeof url === 'function' ? url() : url;
-    const base = options?.base ?? '';
+    const base = options?.base || (typeof window !== 'undefined' ? window.location.origin : '');
     const fullURL = new URL(raw, base || undefined);
 
     if (options?.params) {
