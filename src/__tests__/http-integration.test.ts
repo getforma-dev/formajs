@@ -33,6 +33,43 @@ describe('http integration', () => {
     expect(req.data()).toEqual({ value: 42 });
   });
 
+  it('handles relative URLs without crashing (uses window.location.origin)', async () => {
+    // Regression test: createFetch('/api/stats') used to throw
+    // "Failed to construct URL: Invalid URL" because new URL('/api/stats', undefined) is invalid.
+    // The fix defaults to window.location.origin as the base.
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      statusText: 'OK',
+      json: async () => ({ count: 1 }),
+    });
+    vi.stubGlobal('fetch', fetchMock as unknown as typeof fetch);
+
+    // Simulate a browser environment with a location
+    const originalLocation = globalThis.window?.location;
+    Object.defineProperty(globalThis, 'window', {
+      value: { location: { origin: 'http://localhost:3000' } },
+      writable: true,
+      configurable: true,
+    });
+
+    const req = createFetch<{ count: number }>('/api/stats');
+    await waitForEffects();
+    await waitForEffects();
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      'http://localhost:3000/api/stats',
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(req.data()).toEqual({ count: 1 });
+    expect(req.error()).toBeNull();
+
+    // Restore
+    if (originalLocation) {
+      Object.defineProperty(globalThis.window, 'location', { value: originalLocation });
+    }
+  });
+
   it('throws on non-2xx in fetchJSON', async () => {
     const fetchMock = vi.fn().mockResolvedValue({
       ok: false,
