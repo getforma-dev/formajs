@@ -35,10 +35,10 @@ import { hydrating, type ShowDescriptor } from './hydrate.js';
 export function createShow(
   when: () => unknown,
   thenFn: () => Node,
-  elseFn?: () => Node,
+  elseFn: () => Node | null = () => null,
 ): DocumentFragment {
   if (hydrating) {
-    const branch = when() ? thenFn() : (elseFn?.() ?? null);
+    const branch = when() ? thenFn() : elseFn();
     return {
       type: 'show',
       condition: when,
