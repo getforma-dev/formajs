@@ -217,7 +217,41 @@ function handleClass(el: Element, _key: string, value: unknown): void {
   }
 }
 
-/** Handle style prop. Reconciles object styles by removing stale keys. */
+/**
+ * Parse a CSS string (e.g. "color: red; font-size: 14px") into a style object.
+ * Uses camelCase keys for CSSOM assignment via Object.assign(el.style, ...).
+ * This avoids el.style.cssText which is blocked by strict CSP style-src policies.
+ */
+function parseCssString(css: string): Record<string, string> {
+  const obj: Record<string, string> = {};
+  for (const decl of css.split(';')) {
+    const colon = decl.indexOf(':');
+    if (colon < 0) continue;
+    const prop = decl.slice(0, colon).trim();
+    const val = decl.slice(colon + 1).trim();
+    if (prop && val) {
+      // kebab-case → camelCase (e.g. "font-size" → "fontSize")
+      const camel = prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());
+      obj[camel] = val;
+    }
+  }
+  return obj;
+}
+
+/** Apply a style object to an element via CSSOM (CSP-safe). */
+function applyStyleObj(el: Element, obj: Record<string, string>, prevKeys: string[]): string[] {
+  const style = (el as HTMLElement | SVGElement).style;
+  const nextKeys = Object.keys(obj);
+  for (const k of prevKeys) {
+    if (!(k in obj)) {
+      style.removeProperty(k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()));
+    }
+  }
+  Object.assign(style, obj);
+  return nextKeys;
+}
+
+/** Handle style prop. Reconciles styles via CSSOM (CSP-safe — never uses cssText). */
 function handleStyle(el: Element, _key: string, value: unknown): void {
   if (typeof value === 'function') {
     let prevKeys: string[] = [];
@@ -227,26 +261,16 @@ function handleStyle(el: Element, _key: string, value: unknown): void {
         const cache = getCache(el);
         if (cache['style'] === v) return;
         cache['style'] = v;
-        prevKeys = [];
-        (el as HTMLElement | SVGElement).style.cssText = v;
+        prevKeys = applyStyleObj(el, parseCssString(v), prevKeys);
       } else if (v && typeof v === 'object') {
-        const style = (el as HTMLElement | SVGElement).style;
-        const nextKeys = Object.keys(v);
-        // Remove keys that were present last time but are absent now
-        for (const k of prevKeys) {
-          if (!(k in (v as Record<string, string>))) {
-            style.removeProperty(k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()));
-          }
-        }
-        Object.assign(style, v);
-        prevKeys = nextKeys;
+        prevKeys = applyStyleObj(el, v as Record<string, string>, prevKeys);
       }
     });
   } else if (typeof value === 'string') {
     const cache = getCache(el);
     if (cache['style'] === value) return;
     cache['style'] = value;
-    (el as HTMLElement | SVGElement).style.cssText = value;
+    applyStyleObj(el, parseCssString(value), []);
   } else if (value && typeof value === 'object') {
     Object.assign((el as HTMLElement | SVGElement).style, value);
   }
@@ -464,7 +488,7 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
 
   if (key === 'style') {
     if (typeof value === 'string') {
-      (el as HTMLElement | SVGElement).style.cssText = value;
+      applyStyleObj(el, parseCssString(value), []);
     } else if (value && typeof value === 'object') {
       Object.assign((el as HTMLElement | SVGElement).style, value);
     }
