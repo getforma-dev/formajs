@@ -13,7 +13,7 @@
  * SolidJS equivalent: <Show when={} fallback={}>
  */
 
-import { internalEffect, untrack, createRoot } from 'forma/reactive';
+import { internalEffect, untrack, createRoot, registerDisposer } from 'forma/reactive';
 import { hydrating, type ShowDescriptor } from './hydrate.js';
 
 /**
@@ -115,6 +115,18 @@ export function createShow(
     if (currentNode) {
       parent.insertBefore(currentNode, endMarker);
     }
+  });
+
+  // Defense-in-depth: when the parent root is disposed, explicitly null
+  // closure references so GC can reclaim them. The branch root is already
+  // auto-registered with the parent (Solid-style ownership), but the closure
+  // variables currentDispose / currentNode still hold stale references.
+  registerDisposer(() => {
+    if (currentDispose) {
+      currentDispose();
+      currentDispose = null;
+    }
+    currentNode = null;
   });
 
   // Attach cleanup so external disposal can clean up the branch and effect.

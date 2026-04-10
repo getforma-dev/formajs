@@ -14,7 +14,7 @@
  * Total module budget: <2KB minified.
  */
 
-import { createSignal, internalEffect, untrack, __DEV__ } from '../reactive';
+import { createSignal, internalEffect, untrack, createRoot, registerDisposer, __DEV__ } from '../reactive';
 import { hydrating } from './hydrate.js';
 
 // ---------------------------------------------------------------------------
@@ -42,6 +42,7 @@ interface CachedItem<T> {
   item: T;
   getIndex: () => number;
   setIndex: (v: number) => void;
+  dispose: () => void;
 }
 
 export interface CreateListOptions {
@@ -587,20 +588,27 @@ export function createList<T>(
         if (cached) cached.item = item;
       };
 
+    const oldCache = cache;
+
     const result = reconcileList<T>(
       parent,
       currentItems,
       cleanItems,
       currentNodes,
       keyFn,
-      // createFn: create element + cache entry
+      // createFn: create element + cache entry.
+      // Each item is rendered inside createRoot + untrack so that inner
+      // effects are owned by the item's root (not the parent), and are
+      // disposed when the item is removed from the list.
       (item) => {
         const key = keyFn(item);
         const [getIndex, setIndex] = createSignal(0);
-        // Prevent child effects created during render from being nested under
-        // the reconciler effect, which can stall their updates on reorders.
-        const element = untrack(() => renderFn(item, getIndex));
-        cache.set(key, { element, item, getIndex, setIndex });
+        let itemDispose!: () => void;
+        const element = createRoot((dispose) => {
+          itemDispose = dispose;
+          return untrack(() => renderFn(item, getIndex));
+        });
+        cache.set(key, { element, item, getIndex, setIndex, dispose: itemDispose });
         return element;
       },
       updateRow,
@@ -613,16 +621,37 @@ export function createList<T>(
     const newCache = new Map<string | number, CachedItem<T>>();
     for (let i = 0; i < cleanItems.length; i++) {
       const key = keyFn(cleanItems[i]!);
-      const cached = cache.get(key);
+      const cached = oldCache.get(key);
       if (cached) {
         cached.setIndex(i);
         newCache.set(key, cached);
       }
     }
+
+    // Dispose removed items' reactive roots
+    for (const [key, cached] of oldCache) {
+      if (!newCache.has(key)) {
+        cached.dispose();
+      }
+    }
+
     cache = newCache;
 
     currentNodes = result.nodes;
     currentItems = result.items;
+  });
+
+  // Defense-in-depth: when the parent root is disposed, explicitly dispose
+  // all cached item roots and clear references. Item roots are already
+  // auto-registered with the parent (Solid-style ownership), but the cache
+  // Map still holds stale references that prevent GC.
+  registerDisposer(() => {
+    for (const cached of cache.values()) {
+      cached.dispose();
+    }
+    cache = new Map();
+    currentNodes = [];
+    currentItems = [];
   });
 
   return fragment;

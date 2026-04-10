@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import { createShow } from '../show';
 import { createSignal } from '../../reactive/signal';
+import { createEffect } from '../../reactive/effect';
 import { createRoot } from '../../reactive/root';
 
 function mountFragment(frag: DocumentFragment): HTMLElement {
@@ -112,5 +113,76 @@ describe('createShow', () => {
       expect(typeof dispose).toBe('function');
       expect(() => dispose()).not.toThrow();
     });
+  });
+
+  it('branch effects are disposed when parent root is disposed (no orphans)', () => {
+    const spy = vi.fn();
+    const [visible, setVisible] = createSignal(true);
+    const [name, setName] = createSignal<string | null>('Alice');
+
+    let disposeRoot!: () => void;
+
+    createRoot((dispose) => {
+      disposeRoot = dispose;
+      const frag = createShow(visible, () => {
+        const textNode = document.createTextNode('');
+        createEffect(() => {
+          spy();
+          textNode.data = name() ?? '';
+        });
+        return textNode;
+      });
+      mountFragment(frag);
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Change signal — branch effect runs
+    setName('Bob');
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    // Dispose the root — branch effect should be stopped
+    disposeRoot();
+
+    // Signal change after disposal should NOT fire the branch effect
+    setName(null);
+    expect(spy).toHaveBeenCalledTimes(2); // not 3 — orphan is gone
+  });
+
+  it('nested createShow branch effects are disposed on outer swap (the gatewasm bug)', () => {
+    const spy = vi.fn();
+    const [outer, setOuter] = createSignal(true);
+    const [name, setName] = createSignal<string | null>('Alice');
+
+    createRoot(() => {
+      const frag = createShow(
+        outer,
+        () => {
+          // Inner createShow — its branch root must die when outer swaps
+          const inner = createShow(
+            () => name() !== null,
+            () => {
+              const textNode = document.createTextNode('');
+              createEffect(() => {
+                spy();
+                textNode.data = name()!.toUpperCase();
+              });
+              return textNode;
+            },
+          );
+          return inner;
+        },
+      );
+      mountFragment(frag);
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+
+    // Outer swaps to false — inner branch root should be disposed
+    setOuter(false);
+
+    // Setting name to null should NOT crash — the orphaned effect is gone
+    expect(() => setName(null)).not.toThrow();
+    expect(spy).toHaveBeenCalledTimes(1); // no re-run after disposal
   });
 });

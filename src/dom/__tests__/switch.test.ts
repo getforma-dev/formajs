@@ -153,4 +153,49 @@ describe('createSwitch', () => {
       expect(() => dispose()).not.toThrow();
     });
   });
+
+  it('all cached branch effects are disposed when parent root is disposed', () => {
+    const spyA = vi.fn();
+    const spyB = vi.fn();
+    const [tab, setTab] = createSignal<string>('a');
+    const [count, setCount] = createSignal(0);
+
+    let disposeRoot!: () => void;
+
+    createRoot((dispose) => {
+      disposeRoot = dispose;
+      const frag = createSwitch(tab, [
+        {
+          match: 'a',
+          render: () => {
+            const node = document.createTextNode('');
+            createEffect(() => { spyA(); node.data = `A:${count()}`; });
+            return node;
+          },
+        },
+        {
+          match: 'b',
+          render: () => {
+            const node = document.createTextNode('');
+            createEffect(() => { spyB(); node.data = `B:${count()}`; });
+            return node;
+          },
+        },
+      ]);
+      mountFragment(frag);
+    });
+
+    expect(spyA).toHaveBeenCalledTimes(1);
+
+    // Render branch B (now both A and B are cached)
+    setTab('b');
+    expect(spyB).toHaveBeenCalledTimes(1);
+
+    // Dispose root — ALL cached branch effects should stop
+    disposeRoot();
+
+    setCount(99);
+    expect(spyA).toHaveBeenCalledTimes(1); // not re-run
+    expect(spyB).toHaveBeenCalledTimes(1); // not re-run
+  });
 });

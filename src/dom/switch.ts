@@ -13,7 +13,7 @@
  * SolidJS equivalent: <Switch><Match when={}>
  */
 
-import { internalEffect, untrack, createRoot } from 'forma/reactive';
+import { internalEffect, untrack, createRoot, registerDisposer } from 'forma/reactive';
 
 /** A single branch for {@link createSwitch}. */
 export interface SwitchCase<T> {
@@ -135,6 +135,18 @@ export function createSwitch<T>(
       parent.insertBefore(currentNode, endMarker);
       if (DEBUG) console.log('[forma:switch] inserted', currentNode.nodeName, 'before end marker');
     }
+  });
+
+  // Defense-in-depth: when the parent root is disposed, explicitly dispose
+  // all cached branches and clear references. The branch roots are already
+  // auto-registered with the parent (Solid-style ownership), but the cache
+  // Map still holds stale references that prevent GC.
+  registerDisposer(() => {
+    for (const entry of cache.values()) {
+      entry.dispose();
+    }
+    cache.clear();
+    currentNode = null;
   });
 
   // Attach a cleanup marker so external disposal (via disposeComponent or

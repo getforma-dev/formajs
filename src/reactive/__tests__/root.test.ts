@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
 import { createSignal } from '../signal';
 import { createEffect } from '../effect';
-import { createRoot } from '../root';
+import { createRoot, createUnownedRoot } from '../root';
 
 describe('createRoot', () => {
   it('provides disposal scope', () => {
@@ -122,12 +122,73 @@ describe('createRoot', () => {
     expect(spies[1]).toHaveBeenCalledTimes(2);
     expect(spies[2]).toHaveBeenCalledTimes(2);
 
-    // Disposing outer root — effects created in the outer root get disposed.
-    // Note: inner roots are independent — they track their own effects.
-    // The outer dispose only disposes the effects registered TO the outer root.
+    // Disposing outer root cascades to all child roots (Solid-style ownership)
     disposeOuter();
     setCount(2);
-    // Outer root's effect is disposed
-    expect(spies[0]).toHaveBeenCalledTimes(2);
+    expect(spies[0]).toHaveBeenCalledTimes(2); // stopped
+    expect(spies[1]).toHaveBeenCalledTimes(2); // stopped
+    expect(spies[2]).toHaveBeenCalledTimes(2); // stopped
+  });
+
+  it('child root dispose is idempotent after parent disposal', () => {
+    const spy = vi.fn();
+    const [count, setCount] = createSignal(0);
+
+    let disposeOuter!: () => void;
+    let disposeInner!: () => void;
+
+    createRoot((dispose) => {
+      disposeOuter = dispose;
+      createRoot((dispose2) => {
+        disposeInner = dispose2;
+        createEffect(() => { count(); spy(); });
+      });
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    setCount(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    // Parent disposes child via cascade
+    disposeOuter();
+    // Manually disposing child again is a safe no-op
+    expect(() => disposeInner()).not.toThrow();
+
+    setCount(2);
+    expect(spy).toHaveBeenCalledTimes(2); // still stopped
+  });
+
+  it('createUnownedRoot does NOT auto-register with parent', () => {
+    const outerSpy = vi.fn();
+    const innerSpy = vi.fn();
+    const [count, setCount] = createSignal(0);
+
+    let disposeOuter!: () => void;
+    let disposeInner!: () => void;
+
+    createRoot((dispose) => {
+      disposeOuter = dispose;
+      createEffect(() => { count(); outerSpy(); });
+
+      createUnownedRoot((dispose2) => {
+        disposeInner = dispose2;
+        createEffect(() => { count(); innerSpy(); });
+      });
+    });
+
+    setCount(1);
+    expect(outerSpy).toHaveBeenCalledTimes(2);
+    expect(innerSpy).toHaveBeenCalledTimes(2);
+
+    // Disposing outer root does NOT cascade to unowned inner root
+    disposeOuter();
+    setCount(2);
+    expect(outerSpy).toHaveBeenCalledTimes(2); // stopped
+    expect(innerSpy).toHaveBeenCalledTimes(3); // still running!
+
+    // Must dispose unowned root manually
+    disposeInner();
+    setCount(3);
+    expect(innerSpy).toHaveBeenCalledTimes(3); // now stopped
   });
 });
