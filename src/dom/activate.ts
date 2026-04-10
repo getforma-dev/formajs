@@ -6,7 +6,7 @@
  * an independent createRoot scope with try/catch error isolation.
  */
 
-import { createRoot, __DEV__ } from 'forma/reactive';
+import { createUnownedRoot, __DEV__ } from 'forma/reactive';
 import { hydrateIsland } from './hydrate.js';
 
 /**
@@ -164,7 +164,7 @@ function hydrateIslandRoot(
     // hydrateIsland may replace the shell element with the component's own
     // root element (CSR fallback for empty islands). Track the active root.
     let activeRoot: Element = root;
-    createRoot((dispose) => {
+    createUnownedRoot((dispose) => {
       activeRoot = hydrateIsland(() => hydrateFn(root, props), root);
       (activeRoot as any).__formaDispose = dispose;
     });

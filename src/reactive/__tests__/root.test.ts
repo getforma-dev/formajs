@@ -191,4 +191,23 @@ describe('createRoot', () => {
     setCount(3);
     expect(innerSpy).toHaveBeenCalledTimes(3); // now stopped
   });
+
+  it('createUnownedRoot works at top level (no parent root)', () => {
+    const spy = vi.fn();
+    const [count, setCount] = createSignal(0);
+
+    let dispose!: () => void;
+    createUnownedRoot((d) => {
+      dispose = d;
+      createEffect(() => { count(); spy(); });
+    });
+
+    expect(spy).toHaveBeenCalledTimes(1);
+    setCount(1);
+    expect(spy).toHaveBeenCalledTimes(2);
+
+    dispose();
+    setCount(2);
+    expect(spy).toHaveBeenCalledTimes(2); // stopped
+  });
 });

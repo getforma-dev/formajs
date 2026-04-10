@@ -8,7 +8,7 @@
  * descriptor-based hydration instead of tearing down and rebuilding the DOM.
  */
 
-import { createRoot } from 'forma/reactive';
+import { createUnownedRoot } from 'forma/reactive';
 import { hydrateIsland } from './hydrate.js';
 
 // ---------------------------------------------------------------------------
@@ -53,13 +53,13 @@ export function mount(
   if (target.hasAttribute('data-forma-ssr')) {
     // SSR content present — hydrate in-place using descriptor-based adoption.
     // The component MUST run inside createRoot so effects are tracked.
-    createRoot((dispose) => {
+    createUnownedRoot((dispose) => {
       disposeRoot = dispose;
       hydrateIsland(component, target);
     });
   } else {
     // Normal mount — clear and append
-    const dom = createRoot((dispose) => {
+    const dom = createUnownedRoot((dispose) => {
       disposeRoot = dispose;
       return component();
     });
