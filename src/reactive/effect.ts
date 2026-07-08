@@ -22,6 +22,21 @@ const pool: (() => void)[][] = [];
 for (let i = 0; i < POOL_SIZE; i++) pool.push([]);
 let poolIdx = POOL_SIZE;
 
+// ---------------------------------------------------------------------------
+// Self-write bridge — alien-signals' propagate() never notifies a subscriber
+// that is currently running, so an effect writing a signal it depends on is
+// left stale. signal.ts calls notifyReactiveWrite() when such a write really
+// changes a value; safeFn's loop then re-runs the effect to observe it.
+// ---------------------------------------------------------------------------
+
+let selfWriteRequested = false;
+let effectRunDepth = 0;
+
+/** @internal — signalled by signal.ts when a running effect writes a changed dep. */
+export function notifyReactiveWrite(): void {
+  if (effectRunDepth > 0) selfWriteRequested = true;
+}
+
 function acquireArray(): (() => void)[] {
   if (poolIdx > 0) {
     const arr = pool[--poolIdx]!;
@@ -120,18 +135,6 @@ export function createEffect(fn: () => void | (() => void)): () => void {
     nextCleanup = cb;
   };
 
-  // "Engine Compression" exploit: most effects never use cleanup (onCleanup()
-  // or return value). After the first clean run, we know this effect is
-  // "cleanup-free" and can skip the entire cleanup infrastructure on re-runs.
-  // This saves 4 function calls per re-run: acquireArray, setCleanupCollector,
-  // releaseArray, and bag inspection. Like the engine compression ratio exploit —
-  // the "rules" say we should always prepare for cleanup, but we measure at
-  // "room temperature" (first run) and exploit the gap.
-  let skipCleanupInfra = false;
-  let firstRun = true;
-  let running = false;
-  let rerunRequested = false;
-
   const runOnce = () => {
     // Run and clear previous cleanups (only if any exist).
     if (cleanup !== undefined) {
@@ -144,78 +147,68 @@ export function createEffect(fn: () => void | (() => void)): () => void {
       cleanupBag = undefined;
     }
 
-    // Ultra-fast path: this effect has proven it doesn't use cleanup.
-    // Skip acquireArray + setCleanupCollector + bag checks + releaseArray.
-    if (skipCleanupInfra) {
-      try { fn(); } catch (e) { reportError(e, 'effect'); }
-      return;
-    }
-
     nextCleanup = undefined;
     nextCleanupBag = undefined;
 
-    // Full path: install collector for onCleanup() calls.
+    // Always install the collector so onCleanup()/returned cleanups are captured
+    // on EVERY run. (The old skipCleanupInfra fast-path latched after a clean
+    // first run and then silently dropped — or cross-registered — cleanups
+    // registered on later runs.) The single-cleanup/pooled-array promotion below
+    // keeps the zero/one-cleanup case allocation-free.
     const prevCollector = setCleanupCollector(addCleanup);
 
     try {
       const result = fn();
-
       if (typeof result === 'function') {
         addCleanup(result as () => void);
       }
-
-      // Hot path: no cleanups registered or returned — enable ultra-fast path.
-      if (nextCleanup === undefined && nextCleanupBag === undefined) {
-        // First clean run → enable ultra-fast path for all subsequent runs
-        if (firstRun) skipCleanupInfra = true;
-        return;
-      }
-
+      // Commit this run's cleanups. When none were registered, both stay
+      // undefined (allocation-free).
       if (nextCleanupBag !== undefined) {
         cleanupBag = nextCleanupBag;
-      } else {
+      } else if (nextCleanup !== undefined) {
         cleanup = nextCleanup;
       }
     } catch (e) {
       reportError(e, 'effect');
-
       if (nextCleanupBag !== undefined) {
         cleanupBag = nextCleanupBag;
-      } else {
+      } else if (nextCleanup !== undefined) {
         cleanup = nextCleanup;
       }
     } finally {
       setCleanupCollector(prevCollector);
-      firstRun = false;
     }
   };
 
   const safeFn = () => {
-    if (running) {
-      rerunRequested = true;
-      return;
-    }
-
-    running = true;
-    try {
-      let reentrantRuns = 0;
-      do {
-        rerunRequested = false;
+    // Self-rerun loop: if the body wrote a dependency of its own (bridged via
+    // notifyReactiveWrite from signal.ts), run again to observe it, bounded so a
+    // genuine unbounded cycle is reported instead of hanging. Save/restore the
+    // outer flag so a nested effect's self-write does not leak into its parent.
+    // Until signal.ts wires notifyReactiveWrite, selfWriteRequested is never set,
+    // so this runs exactly once.
+    const outerSelfWrite = selfWriteRequested;
+    let reentrantRuns = 0;
+    do {
+      selfWriteRequested = false;
+      effectRunDepth++;
+      try {
         runOnce();
-        if (rerunRequested) {
-          reentrantRuns++;
-          if (reentrantRuns >= MAX_REENTRANT_RUNS) {
-            reportError(
-              new Error(`createEffect exceeded ${MAX_REENTRANT_RUNS} re-entrant runs`),
-              'effect',
-            );
-            rerunRequested = false;
-          }
-        }
-      } while (rerunRequested);
-    } finally {
-      running = false;
-    }
+      } finally {
+        effectRunDepth--;
+      }
+      if (!selfWriteRequested) break;
+      if (++reentrantRuns >= MAX_REENTRANT_RUNS) {
+        selfWriteRequested = false;
+        reportError(
+          new Error(`createEffect exceeded ${MAX_REENTRANT_RUNS} self-triggered re-runs (cycle?)`),
+          'effect',
+        );
+        break;
+      }
+    } while (true);
+    selfWriteRequested = outerSelfWrite;
   };
 
   const dispose = rawEffect(safeFn);
