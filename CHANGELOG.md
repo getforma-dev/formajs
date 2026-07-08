@@ -2,6 +2,32 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.5.0] - 2026-07-08
+
+Storage / component / wasm robustness. Stacks on 1.4.0.
+
+### Fixed
+- **IndexedDB durability**: writes now resolve on transaction commit
+  (`tx.oncomplete`), not request success, so a write whose transaction aborts
+  (e.g. `QuotaExceededError` at commit) is reported as a failure, not success.
+- **IndexedDB connections**: wire `onversionchange`/`onclose` (close + evict) so
+  a version bump from another tab/store is not blocked forever; a blocked bump
+  settles instead of leaking; a broken/store-less connection is evicted so the
+  next call reopens. Concurrent creation of multiple object stores on one
+  database is serialized so no store is lost or wedged.
+- **`createLocalStorage`/`createSessionStorage`**: `remove()` degrades gracefully
+  when storage access throws, matching `get`/`set`.
+- **Component disposal**: a component that returns a `DocumentFragment` can now be
+  disposed via any of its (now-detached) child nodes — the dispose handle was
+  previously stranded on the emptied fragment and leaked.
+- **Context**: values provided during a component's setup/mount are auto-removed
+  on that component's dispose (by unique frame, so a sibling's value is never
+  disturbed); a `setup()` that throws after `provide()` no longer leaks; the
+  long-inaccurate "teardown pops automatically" docstring is now true.
+- **WASM loader**: `getIR` checks `response.ok` (no longer caches a 404/500 error
+  page as IR), and the wasm instantiate + IR fetch are memoized as in-flight
+  promises (one per page) with retry-on-failure.
+
 ## [1.0.1] - 2026-03-16
 
 ### Fixed
