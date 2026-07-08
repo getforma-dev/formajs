@@ -420,17 +420,19 @@ function findInsertionPoint(
 // ── Factory ───────────────────────────────────────────────────────────
 
 export function createReconciler(config: ReconcilerConfig) {
-  /** Last HTML string that was successfully reconciled into this container.
-   *  Used to skip reconciliation when the HTML hasn't changed. */
-  let _lastHtml = '';
+  /** Last HTML successfully reconciled into each container, keyed per container.
+   *  A single reconciler instance is shared across all containers, so a shared
+   *  scalar cache made a second container reconciled to the same HTML a no-op.
+   *  The WeakMap lets detached containers be GC'd. */
+  const lastHtmlByContainer = new WeakMap<Element, string>();
 
   return function reconcile(container: Element, html: string): void {
     const trimmed = html.trim();
     if (!trimmed) return;
 
-    // Fast path: skip reconciliation entirely when HTML is identical
-    if (trimmed === _lastHtml && container.hasChildNodes()) return;
-    _lastHtml = trimmed;
+    // Fast path: skip reconciliation when this container's HTML is unchanged.
+    if (lastHtmlByContainer.get(container) === trimmed && container.hasChildNodes()) return;
+    lastHtmlByContainer.set(container, trimmed);
 
     // Disconnect observer to prevent double-mount during patching
     config.disconnectObserver();

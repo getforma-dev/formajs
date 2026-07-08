@@ -342,9 +342,15 @@ export function reconcileList<T>(
   }
 
   // --- Large list path: Map-based approach ---
-  const oldKeyMap = new Map<string | number, number>();
+  // Bucket occurrences per key so DUPLICATE keys are consumed one-per-match
+  // (matching the small-list path). A single index per key collapsed duplicates
+  // to one node, dropping duplicate-keyed rows once a list crossed the threshold.
+  const oldKeyMap = new Map<string | number, number[]>();
   for (let i = 0; i < oldLen; i++) {
-    oldKeyMap.set(keyFn(oldItems[i]!), i);
+    const k = keyFn(oldItems[i]!);
+    const bucket = oldKeyMap.get(k);
+    if (bucket) bucket.push(i);
+    else oldKeyMap.set(k, [i]);
   }
 
   // --- Classify each new item: reuse or create ---
@@ -354,8 +360,9 @@ export function reconcileList<T>(
 
   for (let i = 0; i < newLen; i++) {
     const key = keyFn(newItems[i]!);
-    const oldIdx = oldKeyMap.get(key);
-    if (oldIdx !== undefined) {
+    const bucket = oldKeyMap.get(key);
+    if (bucket && bucket.length > 0) {
+      const oldIdx = bucket.shift()!; // consume next unused occurrence (left-to-right)
       oldIndices[i] = oldIdx;
       oldUsed[oldIdx] = 1;
     } else {
