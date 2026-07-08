@@ -143,6 +143,24 @@ export function createStore<T extends object>(
   const children = new Map<string, Set<string>>();
 
   /**
+   * Per-array-path "version" signals. alien-signals dedupes by identity and a
+   * custom `equals` can only suppress (not force) a notify, so an in-place array
+   * mutation cannot be signalled by re-setting the array reference. A monotonic
+   * counter bumped with a functional updater always notifies, so effects that
+   * read an array itself (iteration/.map/length) re-run on any mutation.
+   */
+  const arrayVersions = new Map<string, SignalPair>();
+  function getArrayVersion(path: string): SignalPair {
+    let p = arrayVersions.get(path);
+    if (!p) { p = createSignal<unknown>(0) as SignalPair; arrayVersions.set(path, p); }
+    return p;
+  }
+  function bumpArrayVersion(path: string): void {
+    const p = arrayVersions.get(path);
+    if (p) p[1]((n: number) => n + 1);
+  }
+
+  /**
    * Register a signal path with its parent in the adjacency map.
    * This allows walking the tree instead of scanning all signals.
    */
@@ -205,6 +223,34 @@ export function createStore<T extends object>(
     childSet.clear();
   }
 
+  function lastSegment(path: string): string {
+    const d = path.lastIndexOf('.');
+    return d === -1 ? path : path.substring(d + 1);
+  }
+
+  /**
+   * NOTIFY (not delete) each existing child signal of `parentPath` with its
+   * re-read value from the mutated raw parent — indices beyond a new length read
+   * back undefined, notifying their effects. Recurses into surviving object
+   * children; children that became primitive/absent have their subtrees deleted.
+   * Walks only children.get(parentPath) (O(k)), never all signals.
+   */
+  function reconcileChildren(parentPath: string, rawParent: unknown): void {
+    const set = children.get(parentPath);
+    if (!set) return;
+    for (const childPath of set) {
+      const key = lastSegment(childPath);
+      const nv = (rawParent as Record<string, unknown>)[key];
+      const pair = signals.get(childPath);
+      if (pair) pair[1](nv);
+      if (nv != null && typeof nv === 'object') {
+        reconcileChildren(childPath, nv);
+      } else {
+        invalidateChildren(childPath);
+      }
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Proxy factory (lazy, recursive)
   // -------------------------------------------------------------------------
@@ -257,16 +303,17 @@ export function createStore<T extends object>(
               );
               result = (target as any)[key].apply(target, rawArgs);
 
-              // Invalidate all child paths so they recreate from the
-              // mutated raw array on next access.
-              invalidateChildren(basePath);
+              // Notify (not delete) every child signal with its re-read value so
+              // index/length/nested effects re-run instead of being orphaned.
+              reconcileChildren(basePath, target);
 
-              // Notify the length signal
-              const [, setLen] = getSignal(
-                basePrefix + 'length',
-                (target as unknown[]).length,
-              );
-              setLen((target as unknown[]).length);
+              // Notify the length signal (plain set — an unchanged length, e.g.
+              // splice 5->5, correctly does not re-fire length-only effects).
+              const lenPair = signals.get(basePrefix + 'length');
+              if (lenPair) lenPair[1]((target as unknown[]).length);
+
+              // Bump the array's own-path version so iteration/.map effects re-run.
+              if (basePath) bumpArrayVersion(basePath);
             });
             return result;
           };
@@ -291,6 +338,12 @@ export function createStore<T extends object>(
         // signal, which split reads and writes across two signal objects).
         const pair = getSignal(childPath, value);
         pair[0](); // subscribe to this path
+
+        // Subscribe array reads to the array's own-path version so any in-place
+        // mutation (push/splice/sort/truncate) re-runs iteration/.map effects.
+        if (Array.isArray(value)) {
+          getArrayVersion(childPath)[0]();
+        }
 
         // Lazily wrap child objects/arrays
         if (shouldWrap(value)) {
@@ -338,6 +391,15 @@ export function createStore<T extends object>(
           if (lenPair) {
             lenPair[1](target.length);
           }
+        }
+
+        // Truncating (or growing) via `arr.length = n`: notify the dropped index
+        // signals (they read back undefined) and the array's own-path version.
+        if (isArr && key === 'length') {
+          batch(() => {
+            reconcileChildren(basePath, target);
+            if (basePath) bumpArrayVersion(basePath);
+          });
         }
 
         // Notify (or create) the signal for this path
@@ -389,6 +451,11 @@ export function createStore<T extends object>(
 
         const oldRaw = Reflect.get(target, prop);
         const result = Reflect.deleteProperty(target, prop);
+
+        // Notify subscribers of state.x and 'x' in state (they share childPath)
+        // BEFORE removing the signal, so the removal is observed.
+        const delPair = signals.get(childPath);
+        if (delPair) delPair[1](undefined);
 
         // Evict the removed value's proxy for this path.
         evictProxy(oldRaw, childPath);

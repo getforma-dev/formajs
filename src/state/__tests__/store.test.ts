@@ -205,17 +205,15 @@ describe('createStore', () => {
     const [state] = createStore({ items: ['a', 'b'] });
     const lengths: number[] = [];
 
-    // After push, invalidateChildren destroys the length signal.
-    // The effect that was tracking the old length signal won't re-fire
-    // because its dependency was deleted. This is a known trade-off of
-    // signal-per-path invalidation. We verify the raw length is correct.
+    // The array mutator now notifies the length signal (via reconcileChildren)
+    // instead of deleting it, so a length-tracking effect re-runs after push.
     internalEffect(() => {
       lengths.push(state.items.length);
     });
 
     expect(lengths).toEqual([2]);
-    // After push, reading .length from the proxy still returns the correct value
     state.items.push('c');
+    expect(lengths).toEqual([2, 3]);
     expect(state.items.length).toBe(3);
   });
 
