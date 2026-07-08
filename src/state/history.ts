@@ -70,13 +70,22 @@ export interface HistoryControls<T> {
  * h.redo();            // count() === 2
  * h.canUndo();         // true (reactive)
  * ```
+ *
+ * **Limitation:** the source must be a signal whose getter returns a stable
+ * value (a primitive or a stable object reference). A `createStore` slice whose
+ * getter returns a *fresh proxy on every read* is not supported: the undo/redo
+ * echo guard compares by identity, so a new proxy each read makes every
+ * undo/redo look like an external change and clears the redo history. Track
+ * store state with `setState`/direct mutation, not `createHistory`.
  */
 export function createHistory<T>(
   source: [get: () => T, set: (v: T) => void],
   options?: { maxLength?: number },
 ): HistoryControls<T> {
   const [sourceGet, sourceSet] = source;
-  const maxLength = options?.maxLength ?? 100;
+  // Clamp to >= 1 so the current entry is always retained (maxLength 0 would
+  // empty the stack and leave the cursor at -1).
+  const maxLength = Math.max(1, options?.maxLength ?? 100);
 
   // ---------- Internal mutable state (not signals) ----------
   // We use plain arrays/numbers to avoid creating signal dependencies

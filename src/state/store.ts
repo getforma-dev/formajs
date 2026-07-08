@@ -13,7 +13,7 @@
  * Backed by alien-signals via forma/reactive.
  */
 
-import { createSignal, batch, untrack } from 'forma/reactive';
+import { createSignal, batch, untrack, value } from 'forma/reactive';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -229,6 +229,16 @@ export function createStore<T extends object>(
   }
 
   /**
+   * Set a path signal to a literal value. The signal setter interprets a
+   * function value as a functional updater, so a stored function (e.g. an array
+   * method like `items.map` read as a child path) must be wrapped with `value()`
+   * or it would be called as `fn(prev)` and throw.
+   */
+  function setLiteral(pair: SignalPair, v: unknown): void {
+    pair[1](typeof v === 'function' ? value(v) : v);
+  }
+
+  /**
    * NOTIFY (not delete) each existing child signal of `parentPath` with its
    * re-read value from the mutated raw parent — indices beyond a new length read
    * back undefined, notifying their effects. Recurses into surviving object
@@ -242,7 +252,7 @@ export function createStore<T extends object>(
       const key = lastSegment(childPath);
       const nv = (rawParent as Record<string, unknown>)[key];
       const pair = signals.get(childPath);
-      if (pair) pair[1](nv);
+      if (pair) setLiteral(pair, nv);
       if (nv != null && typeof nv === 'object') {
         reconcileChildren(childPath, nv);
       } else {
@@ -376,12 +386,13 @@ export function createStore<T extends object>(
         // Write to the underlying object
         Reflect.set(target, prop, rawValue);
 
-        // If we're replacing with an object, invalidate all child signals and
-        // evict the old value's proxy for this path so a re-insertion of the old
-        // object elsewhere gets a correctly path-bound proxy.
-        if (rawValue != null && typeof rawValue === 'object') {
+        // If we're replacing with a DIFFERENT object, invalidate child signals
+        // and evict the old value's proxy for this path. Guard on oldRaw !==
+        // rawValue: re-assigning the identical object (state.x = state.x) must
+        // NOT invalidate descendants, which would orphan their subscribers.
+        if (rawValue != null && typeof rawValue === 'object' && oldRaw !== rawValue) {
           invalidateChildren(childPath);
-          if (oldRaw !== rawValue) evictProxy(oldRaw, childPath);
+          evictProxy(oldRaw, childPath);
         }
 
         // Update the length signal when setting indexed array elements
@@ -453,28 +464,18 @@ export function createStore<T extends object>(
         const result = Reflect.deleteProperty(target, prop);
 
         // Notify subscribers of state.x and 'x' in state (they share childPath)
-        // BEFORE removing the signal, so the removal is observed.
+        // of the removal. KEEP the path's own signal (bound to undefined) — like
+        // object-replace does via invalidateChildren — so re-adding the key
+        // re-uses the same signal and its subscribers are notified. Deleting the
+        // signal would orphan them (a fresh signal would be minted on re-add).
         const delPair = signals.get(childPath);
         if (delPair) delPair[1](undefined);
 
         // Evict the removed value's proxy for this path.
         evictProxy(oldRaw, childPath);
 
-        // Clean up the signal for this path and all children via adjacency map
+        // Remove DESCENDANT signals (childPath's own signal stays bound).
         invalidateChildren(childPath);
-        signals.delete(childPath);
-
-        // Remove from parent's children set in the adjacency map
-        const parentPath = basePath;
-        if (parentPath !== undefined) {
-          const parentSet = children.get(parentPath);
-          if (parentSet) {
-            parentSet.delete(childPath);
-            if (parentSet.size === 0) children.delete(parentPath);
-          }
-        }
-        // Clean up the deleted path's own children entry
-        children.delete(childPath);
 
         return result;
       },
