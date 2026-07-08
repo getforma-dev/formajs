@@ -36,6 +36,8 @@ interface LifecycleContext {
   mountCallbacks: (() => void | CleanupFn)[];
   /** Callbacks registered via onUnmount(). */
   unmountCallbacks: (() => void)[];
+  /** Teardowns for context values provided during setup (auto-unprovide). */
+  contextDisposers: (() => void)[];
 }
 
 let currentLifecycleContext: LifecycleContext | null = null;
@@ -77,6 +79,20 @@ export function onUnmount(fn: () => void): void {
   currentLifecycleContext.unmountCallbacks.push(fn);
 }
 
+/**
+ * @internal — register a teardown for a context value provided during the
+ * current component setup, so it is auto-unprovided on dispose. Returns true if
+ * a live setup captured it (context.ts uses this to keep provide/unprovide
+ * balanced without manual bookkeeping). Returns false outside a setup.
+ */
+export function registerContextDisposer(dispose: () => void): boolean {
+  if (currentLifecycleContext !== null) {
+    currentLifecycleContext.contextDisposers.push(dispose);
+    return true;
+  }
+  return false;
+}
+
 // ---------------------------------------------------------------------------
 // Internal: symbol for attaching dispose to DOM nodes
 // ---------------------------------------------------------------------------
@@ -113,6 +129,7 @@ export function defineComponent(
       disposers: [],
       mountCallbacks: [],
       unmountCallbacks: [],
+      contextDisposers: [],
     };
 
     // Push lifecycle context so onMount/onUnmount calls register here
@@ -125,8 +142,14 @@ export function defineComponent(
       popLifecycleContext();
     }
 
-    // Build the dispose function that tears down the entire component
+    // Build the dispose function that tears down the entire component.
+    // Idempotent: a fragment stamps DISPOSE_KEY on multiple children, all sharing
+    // this one function, so it must run at most once.
+    let disposed = false;
     const dispose = (): void => {
+      if (disposed) return;
+      disposed = true;
+
       // Run onUnmount callbacks
       for (const cb of ctx.unmountCallbacks) {
         try {
@@ -145,14 +168,31 @@ export function defineComponent(
         }
       }
 
+      // Auto-unprovide context values (in reverse / LIFO order).
+      for (let i = ctx.contextDisposers.length - 1; i >= 0; i--) {
+        try {
+          ctx.contextDisposers[i]!();
+        } catch (e) {
+          reportError(e, 'context disposer');
+        }
+      }
+
       // Clean up
       ctx.disposers.length = 0;
       ctx.mountCallbacks.length = 0;
       ctx.unmountCallbacks.length = 0;
+      ctx.contextDisposers.length = 0;
     };
 
-    // Attach dispose to the DOM node so callers can tear it down
+    // Attach dispose to the DOM node so callers can tear it down. A returned
+    // DocumentFragment is emptied when appended, so stamp its children too — a
+    // child is the only reachable handle after `parent.append(fragment)`.
     (dom as unknown as DisposableNode)[DISPOSE_KEY] = dispose;
+    if (dom.nodeType === 11 /* DOCUMENT_FRAGMENT_NODE */) {
+      for (const child of Array.from(dom.childNodes)) {
+        (child as unknown as DisposableNode)[DISPOSE_KEY] = dispose;
+      }
+    }
 
     // Run mount callbacks (synchronously, after setup completes)
     // If a mount callback returns a cleanup, register it as an unmount callback

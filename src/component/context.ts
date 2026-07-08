@@ -3,9 +3,13 @@
  *
  * Dependency injection via stack-based context.
  * Simpler than React's Provider component tree: provide() pushes a value,
- * inject() reads the top, component teardown pops automatically.
+ * inject() reads the top. When provide() is called during a component setup, the
+ * value is auto-unprovided on that component's dispose; outside a component you
+ * must call unprovide() yourself.
  * Zero dependencies -- native browser APIs only.
  */
+
+import { registerContextDisposer } from './define.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -64,6 +68,10 @@ export function provide<T>(ctx: Context<T>, value: T): void {
     contextStacks.set(ctx.id, stack);
   }
   stack.push(value);
+  // When called during a component setup, pop this value on the component's
+  // dispose so provide/unprovide stays balanced without manual bookkeeping and
+  // the value does not leak globally to later inject() calls.
+  registerContextDisposer(() => unprovide(ctx));
 }
 
 /**
