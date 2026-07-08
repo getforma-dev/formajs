@@ -467,9 +467,11 @@ const RE_OR = /^(.+?)\s*\|\|\s*(.+)$/;
  * skipping operators that appear inside string/template literals or nested
  * brackets. This replaces whole-string regexes that mis-split operators inside
  * string literals (e.g. `'a' + '-' + 'b'` split at the '-' inside the literal).
- * Returns the leftmost match to preserve left-associativity; never splits at
- * index 0 (so a leading unary +/- stays part of the operand).
+ * Splits at the RIGHTMOST top-level binary operator so the recursive descent is
+ * left-associative (`a - b - c` => `(a - b) - c`). A `+`/`-` that follows another
+ * operator or an open bracket is treated as unary and never split on.
  */
+const UNARY_PRECEDERS = '+-*/%<>=!&|^~(,[{?:';
 function matchBinaryOp(
   expr: string,
   ops: readonly string[],
@@ -480,27 +482,42 @@ function matchBinaryOp(
   const BS = String.fromCharCode(92); // backslash
   let depth = 0;
   let inSingle = false, inDouble = false, inTemplate = false, escaped = false;
+  let prevSig = ''; // previous significant (non-space) char at depth 0
+  let bestIdx = -1;
+  let bestOp = '';
   for (let i = 0; i < expr.length; i++) {
     const ch = expr[i]!;
     if (escaped) { escaped = false; continue; }
     if (ch === BS && (inSingle || inDouble || inTemplate)) { escaped = true; continue; }
-    if (inSingle) { if (ch === SQ) inSingle = false; continue; }
-    if (inDouble) { if (ch === DQ) inDouble = false; continue; }
-    if (inTemplate) { if (ch === BT) inTemplate = false; continue; }
+    if (inSingle) { if (ch === SQ) { inSingle = false; prevSig = DQ; } continue; }
+    if (inDouble) { if (ch === DQ) { inDouble = false; prevSig = DQ; } continue; }
+    if (inTemplate) { if (ch === BT) { inTemplate = false; prevSig = DQ; } continue; }
     if (ch === SQ) { inSingle = true; continue; }
     if (ch === DQ) { inDouble = true; continue; }
     if (ch === BT) { inTemplate = true; continue; }
-    if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
-    if (ch === ')' || ch === ']' || ch === '}') { if (depth > 0) depth--; continue; }
+    if (ch === '(' || ch === '[' || ch === '{') { depth++; prevSig = ch; continue; }
+    if (ch === ')' || ch === ']' || ch === '}') { if (depth > 0) depth--; prevSig = ch; continue; }
     if (depth !== 0) continue;
-    if (i === 0) continue; // never split at position 0 (leading unary operator)
-    for (const op of ops) {
-      if (expr.startsWith(op, i)) {
-        return { left: expr.slice(0, i).trim(), op, right: expr.slice(i + op.length).trim() };
+    if (ch === ' ' || ch === '\t' || ch === '\n') continue; // whitespace is transparent
+    if (i > 0) {
+      let matchedOp = '';
+      for (const op of ops) {
+        if (expr.startsWith(op, i)) { matchedOp = op; break; }
+      }
+      if (matchedOp) {
+        const isPlusMinus = matchedOp === '+' || matchedOp === '-';
+        const unary = isPlusMinus && (prevSig === '' || UNARY_PRECEDERS.includes(prevSig));
+        // Record the rightmost BINARY operator (skip unary +/-).
+        if (!unary) { bestIdx = i; bestOp = matchedOp; }
+        i += matchedOp.length - 1;
+        prevSig = matchedOp[matchedOp.length - 1]!;
+        continue;
       }
     }
+    prevSig = ch;
   }
-  return null;
+  if (bestIdx === -1) return null;
+  return { left: expr.slice(0, bestIdx).trim(), op: bestOp, right: expr.slice(bestIdx + bestOp.length).trim() };
 }
 const RE_TEMPLATE_LIT = /^`([^`]*)`$/;
 const RE_TEMPLATE_INTERP = /\$\{([^}]+)\}/g;
@@ -2461,8 +2478,23 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   const modelExpr = (!known || known.has('data-model')) ? el.getAttribute('data-model') : null;
   if (modelExpr) {
     const prop = modelExpr.replace(RE_STRIP_BRACES, '').trim();
-    const getter = scope.getters[prop];
-    const setter = scope.setters[prop];
+    let getter = scope.getters[prop];
+    let setter = scope.setters[prop];
+    if ((!getter || !setter) && prop.includes('.')) {
+      // Member path (e.g. {item.name} inside a data-list row): evaluate to read,
+      // and set the last key on the resolved parent object to write. Reactive
+      // when the parent is a store proxy; a plain object still round-trips the
+      // input value.
+      getter = buildEvaluator(prop, scope);
+      const lastDot = prop.lastIndexOf('.');
+      const basePath = prop.slice(0, lastDot);
+      const key = prop.slice(lastDot + 1);
+      const baseGet = buildEvaluator(basePath, scope);
+      setter = (v: unknown) => {
+        const base = baseGet();
+        if (base != null && typeof base === 'object') (base as Record<string, unknown>)[key] = v;
+      };
+    }
     if (getter && setter) {
       const input = el as HTMLInputElement;
       const tag = input.tagName;

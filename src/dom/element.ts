@@ -762,6 +762,10 @@ export function h(
   const svgCtx = currentNamespace === SVG_NS;
   if (svgCtx && (SVG_TAGS.has(tagName) || DUAL_USE_SVG_TAGS.has(tagName))) {
     el = document.createElementNS(SVG_NS, tagName);
+  } else if (!svgCtx && DUAL_USE_SVG_TAGS.has(tagName)) {
+    // Dual-use tags (a, title, script, style, font) default to HTML with no
+    // svg() context, even though they are also in SVG_TAGS.
+    el = getProto(tagName).cloneNode(false) as HTMLElement;
   } else if (ELEMENT_PROTOS && ELEMENT_PROTOS[tagName]) {
     el = ELEMENT_PROTOS[tagName]!.cloneNode(false) as HTMLElement;
   } else if (SVG_TAGS.has(tagName)) {
