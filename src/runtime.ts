@@ -2465,21 +2465,47 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
     const setter = scope.setters[prop];
     if (getter && setter) {
       const input = el as HTMLInputElement;
+      const tag = input.tagName;
       const dispose = internalEffect(() => {
         const val = getter();
-        if (input.type === 'checkbox') {
+        const type = input.type;
+        if (type === 'checkbox') {
           input.checked = !!val;
+          // Optional indeterminate companion attribute (opt-in, non-breaking).
+          const indetExpr = el.getAttribute('data-model-indeterminate');
+          if (indetExpr) {
+            const indetGetter = scope.getters[indetExpr.replace(RE_STRIP_BRACES, '').trim()];
+            if (indetGetter) input.indeterminate = !!indetGetter();
+          }
+        } else if (type === 'radio') {
+          input.checked = String(val) === input.value;
+        } else if (tag === 'SELECT' && (input as unknown as HTMLSelectElement).multiple) {
+          const sel = input as unknown as HTMLSelectElement;
+          const arr = Array.isArray(val) ? val.map(String) : [];
+          for (const opt of Array.from(sel.options)) opt.selected = arr.includes(opt.value);
         } else {
           input.value = String(val ?? '');
         }
       });
       disposers.push(dispose);
-      const event = input.type === 'checkbox' ? 'change' : 'input';
+      const event = (input.type === 'checkbox' || input.type === 'radio' || tag === 'SELECT') ? 'change' : 'input';
       const onModelInput = () => {
-        if (input.type === 'checkbox') {
+        const type = input.type;
+        if (type === 'checkbox') {
           setter(input.checked);
-        } else if (input.type === 'number' || input.type === 'range') {
-          setter(Number(input.value));
+        } else if (type === 'radio') {
+          if (input.checked) setter(input.value);
+        } else if (tag === 'SELECT' && (input as unknown as HTMLSelectElement).multiple) {
+          const sel = input as unknown as HTMLSelectElement;
+          setter(Array.from(sel.selectedOptions).map((o) => o.value));
+        } else if (type === 'number' || type === 'range') {
+          const raw = input.value;
+          if (raw === '') {
+            setter(null); // empty numeric clears rather than writing NaN
+          } else {
+            const n = Number(raw);
+            if (!Number.isNaN(n)) setter(n); // ignore partial input like '-' or '1.'
+          }
         } else {
           setter(input.value);
         }
@@ -2690,65 +2716,37 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         // Snapshot old nodes before reconciliation to detect removals
         const prevNodes = new Set(oldNodes);
 
-        if (keyProp) {
-          // ── Property-based keying ──
-          const result = reconcileList(
-            el,
-            oldItems,
-            rawItems,
-            oldNodes,
-            (item: unknown) => String((item as Record<string, unknown>)?.[keyProp] ?? ''),
-            (item: unknown) => {
-              const idx = rawItems.indexOf(item);
-              return createBoundClone(item, idx);
-            },
-            (node: Node, item: unknown) => {
-              const idx = rawItems.indexOf(item);
-              updateBoundClone(node, item, idx);
-            },
-            undefined, // beforeNode
-            listHooks,
-          );
-          // Dispose bindings on nodes that were removed by reconcileList
-          const nextNodes = new Set(result.nodes);
-          for (const n of prevNodes) {
-            if (!nextNodes.has(n)) {
-              // Skip nodes mid-leave — onBeforeRemove already disposed them
-              if ((n as Element).hasAttribute?.('data-forma-leaving')) continue;
-              disposeCloneBindings(n);
-            }
-          }
-          oldItems = result.items;
-          oldNodes = result.nodes;
-        } else {
-          // ── Index-based keying ──
-          // Wrap items so each carries its index as the key.
-          const wrapped: IndexWrapped[] = rawItems.map((item, i) => ({ __idx: i, __item: item }));
-          const oldWrapped = oldItems as IndexWrapped[];
+        // Wrap items so each carries its TRUE loop index. This replaces
+        // rawItems.indexOf(item) (which returned the first match for duplicate /
+        // primitive items, giving wrong/duplicated {index}, and was O(n^2)).
+        const wrapped: IndexWrapped[] = rawItems.map((item, i) => ({ __idx: i, __item: item }));
+        const oldWrapped = oldItems as IndexWrapped[];
+        const keyFn = keyProp
+          ? (w: IndexWrapped) => String((w.__item as Record<string, unknown>)?.[keyProp] ?? '')
+          : (w: IndexWrapped) => w.__idx;
 
-          const result = reconcileList<IndexWrapped>(
-            el,
-            oldWrapped,
-            wrapped,
-            oldNodes,
-            (w: IndexWrapped) => w.__idx,
-            (w: IndexWrapped) => createBoundClone(w.__item, w.__idx),
-            (node: Node, w: IndexWrapped) => updateBoundClone(node, w.__item, w.__idx),
-            undefined, // beforeNode
-            listHooks,
-          );
-          // Dispose bindings on nodes that were removed by reconcileList
-          const nextNodes = new Set(result.nodes);
-          for (const n of prevNodes) {
-            if (!nextNodes.has(n)) {
-              // Skip nodes mid-leave — onBeforeRemove already disposed them
-              if ((n as Element).hasAttribute?.('data-forma-leaving')) continue;
-              disposeCloneBindings(n);
-            }
+        const result = reconcileList<IndexWrapped>(
+          el,
+          oldWrapped,
+          wrapped,
+          oldNodes,
+          keyFn,
+          (w: IndexWrapped) => createBoundClone(w.__item, w.__idx),
+          (node: Node, w: IndexWrapped) => updateBoundClone(node, w.__item, w.__idx),
+          undefined, // beforeNode
+          listHooks,
+        );
+        // Dispose bindings on nodes that were removed by reconcileList
+        const nextNodes = new Set(result.nodes);
+        for (const n of prevNodes) {
+          if (!nextNodes.has(n)) {
+            // Skip nodes mid-leave — onBeforeRemove already disposed them
+            if ((n as Element).hasAttribute?.('data-forma-leaving')) continue;
+            disposeCloneBindings(n);
           }
-          oldItems = result.items;
-          oldNodes = result.nodes;
         }
+        oldItems = result.items;
+        oldNodes = result.nodes;
       });
       disposers.push(dispose);
     }
