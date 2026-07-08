@@ -7,8 +7,9 @@
  * TC39 Signals equivalent: Signal.State
  */
 
-import { signal as createRawSignal, setActiveSub, trigger } from 'alien-signals';
+import { signal as createRawSignal, setActiveSub, getActiveSub, trigger } from 'alien-signals';
 import { __DEV__ } from './dev.js';
+import { notifyReactiveWrite } from './effect.js';
 
 // Debug names live in a side table rather than on the getter's `.name`, so
 // alien-signals' isSignal() (which keys off the bound function name) still
@@ -82,41 +83,39 @@ function applySignalSet<T>(
   v: T | ((prev: T) => T),
   equals?: (prev: T, next: T) => boolean,
 ): void {
-  if (typeof v !== 'function') {
-    // Fast path: plain value, no equals — no prev read needed.
-    if (!equals) {
-      s(v);
-      return;
-    }
-    // Read current value without tracking
-    const prevSub = setActiveSub(undefined);
-    const prev = s();
-    setActiveSub(prevSub);
-    if (equals(prev, v)) return; // skip — values are equal
+  const isFn = typeof v === 'function';
+  const activeSub = getActiveSub();
+
+  // Fast path: plain value, no equals, and no running sub on the stack — nothing
+  // extra to compute, byte-for-byte the original behavior.
+  if (!isFn && !equals && activeSub === undefined) {
     s(v);
-    forceIfSuppressed(s, prev, v);
     return;
   }
 
-  // Functional update: read prev without tracking
+  // Read the current value without tracking (needed for equals, for a functional
+  // updater, and/or to detect a real self-write while an effect is running).
   const prevSub = setActiveSub(undefined);
   const prev = s();
   setActiveSub(prevSub);
-  const next = (v as (prev: T) => T)(prev);
-  if (equals && equals(prev, next)) return; // skip — values are equal
-  s(next);
-  if (equals) forceIfSuppressed(s, prev, next);
-}
+  const next = isFn ? (v as (prev: T) => T)(prev) : (v as T);
 
-/**
- * When a custom `equals` decided to APPLY (returned false) but the value is the
- * identical reference, alien-signals suppresses propagation (its own guard is
- * `pendingValue !== value`). Force-notify subscribers so `equals: () => false`
- * (Solid's "always notify") works for mutate-in-place patterns.
- */
-function forceIfSuppressed<T>(s: RawSignal<T>, prev: T, next: T): void {
-  if (Object.is(prev, next)) {
+  if (equals && equals(prev, next)) return; // suppressed by custom equality
+
+  s(next);
+
+  const sameRef = Object.is(prev, next);
+  if (equals && sameRef) {
+    // equals decided to APPLY (returned false) but the reference is identical, so
+    // alien-signals suppressed propagation (its guard is pendingValue !== value).
+    // Force-notify subscribers so equals:()=>false ("always notify") works.
     trigger(() => { s(); });
+  }
+  if (activeSub !== undefined && (!sameRef || equals)) {
+    // A running effect just wrote a signal it depends on. alien-signals never
+    // notifies a currently-running subscriber, so bridge it: request a re-run so
+    // the effect observes the value it set.
+    notifyReactiveWrite();
   }
 }
 
