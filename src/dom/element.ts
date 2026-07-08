@@ -28,6 +28,37 @@ export const Fragment: (props: { children?: unknown }) => DocumentFragment =
 const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
+/**
+ * Tags that exist in BOTH HTML and SVG, so their namespace must be resolved by
+ * context (not by name). Without an SVG context these resolve to HTML.
+ */
+const DUAL_USE_SVG_TAGS = new Set(['a', 'title', 'script', 'style', 'font']);
+
+/** The namespace active for the current synchronous `svg()` build, if any. */
+let currentNamespace: string | null = null;
+
+/**
+ * Run `build()` with the SVG namespace active so nested `h()` calls create
+ * SVG-namespaced elements — including dual-use tags like `<a>` that `h()` would
+ * otherwise create as HTML. `h()` resolves tags by this explicit context (there
+ * is no automatic parent-walk); a `foreignObject` creates the SVG element but
+ * does not auto-switch its descendants back to HTML (author those with plain
+ * `h()` outside `svg()`). MathML is not supported.
+ *
+ * ```ts
+ * const icon = svg(() => h('svg', { viewBox: '0 0 10 10' }, h('a', { href: '#' })));
+ * ```
+ */
+export function svg<T extends Node>(build: () => T): T {
+  const prev = currentNamespace;
+  currentNamespace = SVG_NS;
+  try {
+    return build();
+  } finally {
+    currentNamespace = prev;
+  }
+}
+
 /** Known SVG tag names for O(1) lookup. */
 const SVG_TAGS = new Set([
   'svg',
@@ -725,7 +756,13 @@ export function h(
   // that copies the element's internal state without parsing the tag string.
   // Skip the SVG Set lookup entirely when the tag is in the proto cache (hot path).
   let el: Element;
-  if (ELEMENT_PROTOS && ELEMENT_PROTOS[tagName]) {
+  // When an svg() context is active, consult SVG membership BEFORE the proto
+  // cache so dual-use tags (notably <a>) get the SVG namespace instead of
+  // resolving to their cached HTML prototype.
+  const svgCtx = currentNamespace === SVG_NS;
+  if (svgCtx && (SVG_TAGS.has(tagName) || DUAL_USE_SVG_TAGS.has(tagName))) {
+    el = document.createElementNS(SVG_NS, tagName);
+  } else if (ELEMENT_PROTOS && ELEMENT_PROTOS[tagName]) {
     el = ELEMENT_PROTOS[tagName]!.cloneNode(false) as HTMLElement;
   } else if (SVG_TAGS.has(tagName)) {
     el = document.createElementNS(SVG_NS, tagName);

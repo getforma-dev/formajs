@@ -461,9 +461,47 @@ const RE_TERNARY = /^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$/;
 const RE_NULLISH = /^(.+?)\s*\?\?\s*(.+)$/;
 const RE_AND = /^(.+?)\s*&&\s*(.+)$/;
 const RE_OR = /^(.+?)\s*\|\|\s*(.+)$/;
-const RE_COMPARISON = /^(.+?)\s*(===|!==|==|!=|>=|<=|>|<)\s*(.+)$/;
-const RE_MUL = /^(.+?)\s*([*/%])\s*(.+)$/;
-const RE_ADD = /^(.+?)\s*([+-])\s*(.+)$/;
+
+/**
+ * Split an expression at the FIRST top-level occurrence of one of `ops`,
+ * skipping operators that appear inside string/template literals or nested
+ * brackets. This replaces whole-string regexes that mis-split operators inside
+ * string literals (e.g. `'a' + '-' + 'b'` split at the '-' inside the literal).
+ * Returns the leftmost match to preserve left-associativity; never splits at
+ * index 0 (so a leading unary +/- stays part of the operand).
+ */
+function matchBinaryOp(
+  expr: string,
+  ops: readonly string[],
+): { left: string; op: string; right: string } | null {
+  const SQ = String.fromCharCode(39); // '
+  const DQ = String.fromCharCode(34); // "
+  const BT = String.fromCharCode(96); // `
+  const BS = String.fromCharCode(92); // backslash
+  let depth = 0;
+  let inSingle = false, inDouble = false, inTemplate = false, escaped = false;
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]!;
+    if (escaped) { escaped = false; continue; }
+    if (ch === BS && (inSingle || inDouble || inTemplate)) { escaped = true; continue; }
+    if (inSingle) { if (ch === SQ) inSingle = false; continue; }
+    if (inDouble) { if (ch === DQ) inDouble = false; continue; }
+    if (inTemplate) { if (ch === BT) inTemplate = false; continue; }
+    if (ch === SQ) { inSingle = true; continue; }
+    if (ch === DQ) { inDouble = true; continue; }
+    if (ch === BT) { inTemplate = true; continue; }
+    if (ch === '(' || ch === '[' || ch === '{') { depth++; continue; }
+    if (ch === ')' || ch === ']' || ch === '}') { if (depth > 0) depth--; continue; }
+    if (depth !== 0) continue;
+    if (i === 0) continue; // never split at position 0 (leading unary operator)
+    for (const op of ops) {
+      if (expr.startsWith(op, i)) {
+        return { left: expr.slice(0, i).trim(), op, right: expr.slice(i + op.length).trim() };
+      }
+    }
+  }
+  return null;
+}
 const RE_TEMPLATE_LIT = /^`([^`]*)`$/;
 const RE_TEMPLATE_INTERP = /\$\{([^}]+)\}/g;
 const RE_METHOD_CALL = /^(\w+)\.(\w+)\((.*)\)$/;
@@ -1821,13 +1859,13 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
     }
   }
 
-  // Comparison operators: ===, !==, ==, !=, >=, <=, >, <
-  const compMatch = expr.match(RE_COMPARISON);
+  // Comparison operators: ===, !==, ==, !=, >=, <=, >, < (longest-first)
+  const compMatch = matchBinaryOp(expr, ['===', '!==', '==', '!=', '>=', '<=', '>', '<']);
   if (compMatch) {
-    const left = parseExpression(compMatch[1]!.trim(), scope);
-    const right = parseExpression(compMatch[3]!.trim(), scope);
+    const left = parseExpression(compMatch.left, scope);
+    const right = parseExpression(compMatch.right, scope);
     if (left && right) {
-      const op = compMatch[2]!;
+      const op = compMatch.op;
       return () => {
         const l = left(), r = right();
         switch (op) {
@@ -1846,12 +1884,12 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
 
   // Arithmetic: +, -, *, /, %
   // Addition/subtraction first (lower precedence — checked first), then * / %
-  const addMatch = expr.match(RE_ADD);
+  const addMatch = matchBinaryOp(expr, ['+', '-']);
   if (addMatch) {
-    const left = parseExpression(addMatch[1]!.trim(), scope);
-    const right = parseExpression(addMatch[3]!.trim(), scope);
+    const left = parseExpression(addMatch.left, scope);
+    const right = parseExpression(addMatch.right, scope);
     if (left && right) {
-      const op = addMatch[2]!;
+      const op = addMatch.op;
       return () => {
         const l = left(), r = right();
         if (op === '+') return (l as any) + (r as any);
@@ -1861,12 +1899,12 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
   }
 
   // Multiplication / division / modulo (higher precedence — checked after addition)
-  const mulMatch = expr.match(RE_MUL);
+  const mulMatch = matchBinaryOp(expr, ['*', '/', '%']);
   if (mulMatch) {
-    const left = parseExpression(mulMatch[1]!.trim(), scope);
-    const right = parseExpression(mulMatch[3]!.trim(), scope);
+    const left = parseExpression(mulMatch.left, scope);
+    const right = parseExpression(mulMatch.right, scope);
     if (left && right) {
-      const op = mulMatch[2]!;
+      const op = mulMatch.op;
       return () => {
         const l = left() as number, r = right() as number;
         switch (op) {
