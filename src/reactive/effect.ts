@@ -7,7 +7,7 @@
  * TC39 Signals equivalent: Signal.subtle.Watcher (effect is a userland concept)
  */
 
-import { effect as rawEffect } from 'alien-signals';
+import { effect as rawEffect, getActiveSub } from 'alien-signals';
 import {
   hasActiveRoot,
   registerDisposer,
@@ -32,19 +32,21 @@ for (let i = 0; i < POOL_SIZE; i++) pool.push([]);
 let poolIdx = POOL_SIZE;
 
 // ---------------------------------------------------------------------------
-// Self-write bridge — alien-signals' propagate() never notifies a subscriber
-// that is currently running, so an effect writing a signal it depends on is
-// left stale. signal.ts calls notifyReactiveWrite() when such a write really
-// changes a value; safeFn's loop then re-runs the effect to observe it.
+// Self-write detection — alien-signals' propagate() never notifies a subscriber
+// that is currently running, so an effect writing a signal it depends on is left
+// stale. When that happens alien-signals still sets the Pending flag on the
+// running subscriber's node (but skips the re-run). We read that flag on the
+// EFFECT's own node after each run and loop, so a self-dependent effect
+// converges. Reading the effect's own node (not a global) makes this precise:
+// writes to signals the effect does not depend on, writes from a nested computed,
+// and a nested effect's self-write never set THIS node's Pending, so they cause
+// no spurious re-run. It also works through batch() (Pending is set at flush).
 // ---------------------------------------------------------------------------
 
-let selfWriteRequested = false;
-let effectRunDepth = 0;
+// alien-signals ReactiveFlags.Pending (not exported from the package root).
+const PENDING = 32;
 
-/** @internal — signalled by signal.ts when a running effect writes a changed dep. */
-export function notifyReactiveWrite(): void {
-  if (effectRunDepth > 0) selfWriteRequested = true;
-}
+interface SubNode { flags: number; }
 
 function acquireArray(): (() => void)[] {
   if (poolIdx > 0) {
@@ -156,7 +158,15 @@ export function createEffect(fn: () => void | (() => void)): () => void {
   };
 
   const runOnce = () => {
-    // Run and clear previous cleanups (only if any exist).
+    // Dispose the previous generation of nested effects/roots (running their
+    // cleanups) FIRST — children before parents, matching wrappedDispose so the
+    // teardown order is consistent between the re-run and dispose paths and a
+    // nested cleanup never observes parent-owned state already freed. (alien's
+    // raw unwatched teardown of a nested effect bypasses our cleanup, so we own
+    // nested work explicitly.)
+    disposeOwner(childOwner);
+
+    // Run and clear this effect's own previous cleanups.
     if (cleanup !== undefined) {
       runCleanup(cleanup);
       cleanup = undefined;
@@ -166,11 +176,6 @@ export function createEffect(fn: () => void | (() => void)): () => void {
       releaseArray(cleanupBag);
       cleanupBag = undefined;
     }
-
-    // Dispose the previous generation of nested effects/roots (running their
-    // cleanups) before re-running. alien-signals' raw unwatched teardown of a
-    // nested effect bypasses our cleanup, so we own nested work explicitly.
-    disposeOwner(childOwner);
 
     nextCleanup = undefined;
     nextCleanupBag = undefined;
@@ -209,25 +214,19 @@ export function createEffect(fn: () => void | (() => void)): () => void {
   };
 
   const safeFn = () => {
-    // Self-rerun loop: if the body wrote a dependency of its own (bridged via
-    // notifyReactiveWrite from signal.ts), run again to observe it, bounded so a
-    // genuine unbounded cycle is reported instead of hanging. Save/restore the
-    // outer flag so a nested effect's self-write does not leak into its parent.
-    // Until signal.ts wires notifyReactiveWrite, selfWriteRequested is never set,
-    // so this runs exactly once.
-    const outerSelfWrite = selfWriteRequested;
+    // alien-signals sets activeSub to this effect's node for the duration of this
+    // callback, so getActiveSub() is our own node. If the body writes a signal we
+    // depend on, alien-signals marks this node Pending but skips the re-run; we
+    // detect that and run again, bounded so a genuine cycle is reported instead of
+    // hanging.
+    const node = getActiveSub() as SubNode | undefined;
     let reentrantRuns = 0;
     do {
-      selfWriteRequested = false;
-      effectRunDepth++;
-      try {
-        runOnce();
-      } finally {
-        effectRunDepth--;
-      }
-      if (!selfWriteRequested) break;
+      if (node) node.flags &= ~PENDING; // clear before running so we detect a fresh set
+      runOnce();
+      if (node === undefined || (node.flags & PENDING) === 0) break;
       if (++reentrantRuns >= MAX_REENTRANT_RUNS) {
-        selfWriteRequested = false;
+        node.flags &= ~PENDING;
         reportError(
           new Error(`createEffect exceeded ${MAX_REENTRANT_RUNS} self-triggered re-runs (cycle?)`),
           'effect',
@@ -235,7 +234,6 @@ export function createEffect(fn: () => void | (() => void)): () => void {
         break;
       }
     } while (true);
-    selfWriteRequested = outerSelfWrite;
   };
 
   const dispose = rawEffect(safeFn);

@@ -130,25 +130,29 @@ export function createResource<T, S = true>(
     promise
       .then((result) => {
         // Only apply if this is still the latest fetch and wasn't aborted.
+        // Batch data + loading so subscribers see one atomic settled frame.
         if (isLatest() && !controller.signal.aborted) {
-          setData(() => result);
+          batch(() => {
+            setData(() => result);
+            setLoading(false);
+          });
         }
       })
       .catch((err) => {
-        if (isLatest() && !controller.signal.aborted) {
-          // Ignore abort errors
-          if (err?.name !== 'AbortError') {
+        if (isLatest() && !controller.signal.aborted && err?.name !== 'AbortError') {
+          batch(() => {
             setError(err);
-          }
+            setLoading(false);
+          });
         }
       })
       .finally(() => {
         if (suspensePending) suspenseCtx?.decrement();
-        if (isLatest()) {
-          setLoading(false);
-          if (abortController === controller) {
-            abortController = null; // Release controller for GC
-          }
+        // loading is cleared atomically in .then/.catch above; a stale/aborted
+        // settlement leaves it to the newer fetch (or the dispose) and writes no
+        // state here.
+        if (isLatest() && abortController === controller) {
+          abortController = null; // Release controller for GC
         }
       });
   };
@@ -164,6 +168,9 @@ export function createResource<T, S = true>(
   // honor the AbortSignal.
   if (hasActiveRoot()) {
     registerDisposer(() => {
+      // Invalidate any in-flight fetch so its late settlement writes no state
+      // (isLatest() becomes false), then abort it.
+      fetchVersion++;
       if (abortController) {
         abortController.abort();
         abortController = null;
