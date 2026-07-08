@@ -9,6 +9,7 @@
 export {
   createSignal,
   value,
+  getSignalName,
   type SignalGetter,
   type SignalSetter,
   type SignalOptions,

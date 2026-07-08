@@ -28,14 +28,11 @@ export class State<T> {
   private _set: (v: T | ((prev: T) => T)) => void;
 
   constructor(initialValue: T, options?: SignalOptions<T>) {
-    // createSignal now natively supports equals — pass options through
+    // createSignal natively supports equals and the debug name (stored in a side
+    // table so isSignal() keeps recognizing the getter) — pass options through.
     const [getter, setter] = createSignal(initialValue, options);
     this._get = getter;
     this._set = setter;
-
-    if (options?.name) {
-      Object.defineProperty(getter, 'name', { value: options.name });
-    }
   }
 
   get(): T {
