@@ -15,7 +15,9 @@ script-src 'nonce-abc123' 'self';
 
 FormaJS handles this in two ways:
 
-**Scripts:** All `<script>` tags rendered by `forma-server` include a `nonce` attribute. No inline event handlers are used — FormaJS attaches events via `addEventListener`.
+**Scripts:** `<script>` tags rendered by `forma-server`'s page renderer include a `nonce` attribute. No inline event handlers are used — FormaJS attaches events via `addEventListener`.
+
+> **Streaming SSR caveat:** the JS streaming renderer's Suspense swap scripts (`renderToStream` / `getSwapScript` / `getSwapTag`) are currently emitted **without** a `nonce`, so under a strict `script-src 'nonce-…'` policy they are blocked and out-of-order Suspense content will not swap in. Until nonce threading lands (tracked for a follow-up release), either use non-streaming SSR under strict CSP, or allow these scripts explicitly. Do not add `'unsafe-inline'` as a workaround.
 
 **Styles:** The `h()` function applies styles via the CSSOM API (`Object.assign(el.style, ...)`) instead of `el.style.cssText` or `setAttribute('style', ...)`. CSSOM property assignment is not blocked by CSP — only string-based style injection is.
 

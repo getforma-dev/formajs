@@ -133,4 +133,37 @@ describe('ssr integration', () => {
     const html = renderToString(sh('img', { src: 'data:image/png;base64,abc' }));
     expect(html).toContain('src="data:image/png;base64,abc"');
   });
+
+  // Regression: browsers strip control chars from the scheme, so these execute.
+  it('blocks javascript: URIs obfuscated with control characters', () => {
+    const T = String.fromCharCode(0x09);
+    const N = String.fromCharCode(0x0a);
+    const R = String.fromCharCode(0x0d);
+    const C1 = String.fromCharCode(0x01);
+    for (const payload of [
+      'java' + T + 'script:alert(1)',
+      'javas' + N + 'cript:alert(1)',
+      'java' + R + N + 'script:alert(1)',
+      C1 + 'javascript:alert(1)',
+      'javascript:alert(1)',
+    ]) {
+      const html = renderToString(sh('a', { href: payload }, 'x'));
+      expect(html).not.toMatch(/script:/i);
+    }
+  });
+
+  it('blocks control-char-obfuscated URIs in hydration render too', () => {
+    const payload = 'java' + String.fromCharCode(0x09) + 'script:alert(1)';
+    const html = renderToStringWithHydration(sh('a', { href: payload }, 'x'));
+    expect(html).not.toMatch(/script:/i);
+  });
+
+  it('drops event-handler and malformed attribute names (case-insensitive)', () => {
+    const html = renderToString(
+      sh('div', { OnClick: 'alert(1)', 'x onload': 'y', title: 'ok' }),
+    );
+    expect(html.toLowerCase()).not.toContain('onclick');
+    expect(html).not.toContain('onload');
+    expect(html).toContain('title="ok"');
+  });
 });

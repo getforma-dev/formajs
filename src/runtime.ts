@@ -24,8 +24,8 @@
  * │  need. The sections are clearly marked — use the map below.        │
  * │                                                                     │
  * │  Will it be split someday? Maybe. But today it works, it's tested  │
- * │  (811 tests), and it ships at 15KB gzipped. If you're reading this │
- * │  and judging the line count — fair. But read the code first. :)    │
+ * │  and the CDN runtime bundle ships at ~24KB gzipped. If you're       │
+ * │  judging the line count — fair. But read the code first. :)         │
  * └─────────────────────────────────────────────────────────────────────┘
  *
  * This file is the HTML Runtime — a subpath of @getforma/core:
@@ -121,6 +121,18 @@
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
+import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
+
+/**
+ * True if writing `value` to attribute `name` via setAttribute would create an
+ * XSS sink: an `on*` inline event handler, or a URL attribute carrying a
+ * script-executing scheme. Shared by data-bind:* and list-template binding.
+ */
+function isUnsafeAttrBinding(name: string, value: string): boolean {
+  if (isEventHandlerAttr(name)) return true;
+  if (isUrlAttr(name) && isDangerousUrl(value)) return true;
+  return false;
+}
 
 type Getter = () => unknown;
 type Setter = (v: unknown) => void;
@@ -1491,7 +1503,12 @@ function cloneAttributeTemplates(el: Element, item: unknown): void {
       if (attr.value.includes('{item')) {
         const compiled = compileTemplate(attr.value);
         entries.push({ attr: attr.name, compiled });
-        node.setAttribute(attr.name, evaluateCompiledTemplate(compiled, item));
+        const value = evaluateCompiledTemplate(compiled, item);
+        if (isUnsafeAttrBinding(attr.name, value)) {
+          node.removeAttribute(attr.name);
+        } else {
+          node.setAttribute(attr.name, value);
+        }
       }
     }
     if (entries.length > 0) {
@@ -2503,7 +2520,15 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         if (val == null || val === false) {
           el.removeAttribute(attrName);
         } else {
-          el.setAttribute(attrName, String(val));
+          const str = String(val);
+          // Drop event-handler and dangerous-URL bindings — a bound value from
+          // state/data-fetch must not be able to inject javascript: URLs or
+          // inline handlers. Applies to standard and hardened builds alike.
+          if (isUnsafeAttrBinding(attrName, str)) {
+            el.removeAttribute(attrName);
+          } else {
+            el.setAttribute(attrName, str);
+          }
         }
       });
       disposers.push(dispose);

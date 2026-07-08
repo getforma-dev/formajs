@@ -42,9 +42,9 @@ The CDN global builds (`formajs-runtime.global.js`, etc.) ship as readable, unmi
 
 - **`$el` safe proxy**: The `$el` magic in the HTML Runtime is wrapped in a Proxy that allowlists safe DOM properties. Chains like `$el.ownerDocument.defaultView.setTimeout` are blocked.
 - **`findBlockedMethod`**: Static analysis + runtime proxy defense-in-depth blocks `constructor`, `__proto__`, `eval`, `Function` access in expressions — including computed bracket concatenation (`x['constr' + 'uctor']`).
-- **SSR `escapeAttr`**: Escapes `<`, `>`, `'`, `"`, `&`. Blocks `javascript:`, `vbscript:`, and `data:text/html` URIs in `href`/`src`/`action`/`formaction` attributes.
+- **SSR `escapeAttr` + scheme detection**: Escapes `<`, `>`, `'`, `"`, `&`. Dangerous-scheme detection (`isDangerousUrl`) blocks `javascript:`, `vbscript:`, and `data:text/html` URIs in URL-bearing attributes, **normalizing away the whitespace/control characters browsers ignore in a scheme** so obfuscated payloads like `java\tscript:` are also blocked. Attribute names are validated and `on*` handler attributes are dropped (case-insensitive). The same rules apply to the `data-bind:*` and `data-list` runtime sinks, in both the standard and hardened builds.
 - **SSR swap script**: `JSON.stringify` output escapes `<` as `\u003c` to prevent `</script>` injection in Suspense streaming.
-- **Island props sanitized**: `JSON.parse` output stripped of `__proto__`, `constructor`, `prototype` keys.
+- **Island props sanitized**: `JSON.parse` output stripped of `__proto__`, `constructor`, `prototype` keys. **Note:** RPC call arguments are *not yet* stripped equivalently — do not deep-merge untrusted RPC args into existing objects until this lands (tracked for a follow-up release).
 - **CSP parser operator precedence**: Fixed to match JavaScript semantics (addition before comparison, AND before OR).
 
 ## Supported Versions
