@@ -174,10 +174,12 @@ export function createStore<T extends object>(
   // -------------------------------------------------------------------------
 
   /**
-   * WeakMap so proxies for child objects are reused as long as the raw object
-   * is alive. When an object is replaced, the old entry is GC'd naturally.
+   * Proxies keyed by (raw object -> basePath -> proxy). The two-level map is
+   * required because the same raw object can be aliased at multiple paths
+   * (`state.a = state.b = shared`); each path needs its own proxy so writes
+   * notify the correct path signal. Entries are GC'd with the raw object.
    */
-  const proxyCache = new WeakMap<object, object>();
+  const proxyCache = new WeakMap<object, Map<string, object>>();
 
   // -------------------------------------------------------------------------
   // Invalidation
@@ -211,18 +213,16 @@ export function createStore<T extends object>(
     // Primitives / non-wrappable values pass through
     if (!shouldWrap(raw)) return raw;
 
-    // Return cached proxy if we already have one for this raw object
-    const cached = proxyCache.get(raw);
-    if (cached) return cached;
+    // Return the cached proxy for this (raw, basePath) pair if we have one.
+    let byPath = proxyCache.get(raw);
+    if (byPath) {
+      const hit = byPath.get(basePath);
+      if (hit) return hit;
+    }
 
     const isArr = Array.isArray(raw);
     // Pre-compute the path prefix to avoid repeated string concatenation in hot paths
     const basePrefix = basePath ? basePath + '.' : '';
-
-    // Inline cache: skip Map lookup when the same key is accessed repeatedly
-    // (very common in render loops and effects that read the same property)
-    let lastKey: string = '';
-    let lastSignal: SignalPair | undefined;
 
     const proxy: object = new Proxy(raw, {
       // -------------------------------------------------------------------
@@ -286,16 +286,10 @@ export function createStore<T extends object>(
         // ------------------------------------------------------------------
         const value = Reflect.get(target, prop);
 
-        // Inline cache: if same key as last access, skip Map lookup
-        let pair: SignalPair;
-        if (key === lastKey && lastSignal) {
-          pair = lastSignal;
-        } else {
-          pair = getSignal(childPath, value);
-          lastKey = key;
-          lastSignal = pair;
-        }
-
+        // Resolve the live signal for this path (no inline cache — it could not
+        // be invalidated when invalidateChildren/deleteProperty removed the
+        // signal, which split reads and writes across two signal objects).
+        const pair = getSignal(childPath, value);
         pair[0](); // subscribe to this path
 
         // Lazily wrap child objects/arrays
@@ -323,15 +317,18 @@ export function createStore<T extends object>(
             ? (value as any)[RAW]
             : value;
 
+        // Capture the old raw value BEFORE overwriting so we can evict its proxy.
+        const oldRaw = Reflect.get(target, prop);
+
         // Write to the underlying object
         Reflect.set(target, prop, rawValue);
 
-        // If we're replacing with an object, invalidate all child signals
-        // and evict the old proxy so sub-paths are recreated on next access.
+        // If we're replacing with an object, invalidate all child signals and
+        // evict the old value's proxy for this path so a re-insertion of the old
+        // object elsewhere gets a correctly path-bound proxy.
         if (rawValue != null && typeof rawValue === 'object') {
           invalidateChildren(childPath);
-          // Remove cached proxy for the old value so a fresh one is created
-          // on the next access.
+          if (oldRaw !== rawValue) evictProxy(oldRaw, childPath);
         }
 
         // Update the length signal when setting indexed array elements
@@ -390,7 +387,11 @@ export function createStore<T extends object>(
         const key = String(prop);
         const childPath = basePrefix + key;
 
+        const oldRaw = Reflect.get(target, prop);
         const result = Reflect.deleteProperty(target, prop);
+
+        // Evict the removed value's proxy for this path.
+        evictProxy(oldRaw, childPath);
 
         // Clean up the signal for this path and all children via adjacency map
         invalidateChildren(childPath);
@@ -412,8 +413,19 @@ export function createStore<T extends object>(
       },
     });
 
-    proxyCache.set(raw, proxy);
+    if (!byPath) { byPath = new Map(); proxyCache.set(raw, byPath); }
+    byPath.set(basePath, proxy);
     return proxy;
+  }
+
+  /** Evict the cached proxy bound to `path` for a raw object being replaced/removed. */
+  function evictProxy(oldRaw: unknown, path: string): void {
+    if (oldRaw == null || typeof oldRaw !== 'object') return;
+    const om = proxyCache.get(oldRaw as object);
+    if (om) {
+      om.delete(path);
+      if (om.size === 0) proxyCache.delete(oldRaw as object);
+    }
   }
 
   // -------------------------------------------------------------------------
