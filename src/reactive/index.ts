@@ -35,7 +35,12 @@ export { on } from './on.js';
 // Containers & patterns
 export { createRef, type Ref } from './ref.js';
 export { createReducer, type Dispatch } from './reducer.js';
-export { createResource, type Resource, type ResourceOptions } from './resource.js';
+export {
+  createResource,
+  type Resource,
+  type ResourceOptions,
+  type ResourceFetcherInfo,
+} from './resource.js';
 
 // Suspense context (shared between reactive/resource and dom/suspense)
 export {
