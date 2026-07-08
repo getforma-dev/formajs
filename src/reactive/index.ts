@@ -20,7 +20,14 @@ export { batch } from './batch.js';
 
 // Utilities
 export { untrack } from './untrack.js';
-export { createRoot, createUnownedRoot, registerDisposer } from './root.js';
+export {
+  createRoot,
+  createUnownedRoot,
+  registerDisposer,
+  getOwner,
+  runWithOwner,
+  type Owner,
+} from './root.js';
 export { onCleanup } from './cleanup.js';
 export { on } from './on.js';
 
