@@ -73,6 +73,15 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
   const islands = document.querySelectorAll<HTMLElement>('[data-forma-island]');
 
   for (const root of islands) {
+    // Skip islands already processed or with a deferred trigger already
+    // scheduled, so a second activateIslands() (HMR / SPA re-mount) does not
+    // double-hydrate, double-bind handlers, or double-register observers. A
+    // freshly re-rendered island (status reset to 'pending', no scheduled
+    // marker) re-activates.
+    const status = root.getAttribute('data-forma-status');
+    if (status === 'active' || status === 'hydrating' || status === 'disposed' || status === 'error') continue;
+    if ((root as any).__formaScheduled) continue;
+
     const id = parseInt(root.getAttribute('data-forma-island')!, 10);
     const componentName = root.getAttribute('data-forma-component')!;
     const hydrateFn = registry[componentName];
@@ -87,18 +96,24 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
 
     if (trigger === 'visible') {
       // Defer hydration until island enters the viewport
+      (root as any).__formaScheduled = true;
       const observer = new IntersectionObserver(
         (entries) => {
           for (const entry of entries) {
             if (!entry.isIntersecting) continue;
             observer.disconnect();
+            delete (root as any).__formaObserver;
             hydrateIslandRoot(root, id, componentName, hydrateFn, sharedProps);
           }
         },
         { rootMargin: '200px' },
       );
+      // Track the observer so deactivateIsland can disconnect it if the island
+      // is torn down before it ever intersects (otherwise it leaks).
+      (root as any).__formaObserver = observer;
       observer.observe(root);
     } else if (trigger === 'idle') {
+      (root as any).__formaScheduled = true;
       const hydrate = () => hydrateIslandRoot(root, id, componentName, hydrateFn, sharedProps);
       if (typeof requestIdleCallback === 'function') {
         requestIdleCallback(hydrate);
@@ -106,6 +121,7 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
         setTimeout(hydrate, 200);
       }
     } else if (trigger === 'interaction') {
+      (root as any).__formaScheduled = true;
       const hydrate = () => {
         root.removeEventListener('pointerdown', hydrate, true);
         root.removeEventListener('focusin', hydrate, true);
@@ -127,6 +143,16 @@ export function activateIslands(registry: Record<string, IslandHydrateFn>): void
  * `"disposed"` so the island can be distinguished from active/error states.
  */
 export function deactivateIsland(el: HTMLElement): void {
+  // Disconnect a still-pending visible-trigger observer so it does not leak when
+  // the island is torn down before it ever intersected. Do this regardless of
+  // hydration state, but do not force a status change for a never-hydrated island.
+  const observer = (el as any).__formaObserver as { disconnect: () => void } | undefined;
+  if (observer) {
+    observer.disconnect();
+    delete (el as any).__formaObserver;
+  }
+  delete (el as any).__formaScheduled;
+
   const dispose = (el as any).__formaDispose;
   if (typeof dispose === 'function') {
     dispose();
@@ -158,6 +184,9 @@ function hydrateIslandRoot(
   sharedProps: Record<string, unknown> | null,
 ): void {
   try {
+    // Clear the deferred-trigger marker now that hydration is happening; the
+    // 'hydrating'/'active' status guards prevent re-runs from here on.
+    delete (root as any).__formaScheduled;
     const props = loadIslandProps(root, id, sharedProps);
     root.setAttribute('data-forma-status', 'hydrating');
 
