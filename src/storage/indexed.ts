@@ -21,12 +21,21 @@ const dbCache = new Map<string, Promise<IDBDatabase>>();
  * Open (or retrieve a cached) IndexedDB database, ensuring the
  * requested object store exists.
  */
-function openDB(dbName: string, storeName: string): Promise<IDBDatabase> {
+function openDB(dbName: string, storeName: string, retried = false): Promise<IDBDatabase> {
   const cacheKey = `${dbName}::${storeName}`;
   const cached = dbCache.get(cacheKey);
   if (cached) return cached;
 
   const promise = new Promise<IDBDatabase>((resolve, reject) => {
+    // Wire a resolved connection so it closes + evicts on a version change
+    // (another tab/store bumping the version) or a forced close. Without this a
+    // later bump blocks forever and a stale connection is never dropped.
+    const wire = (db: IDBDatabase) => {
+      db.onversionchange = () => { db.close(); dbCache.delete(cacheKey); };
+      db.onclose = () => { dbCache.delete(cacheKey); };
+      resolve(db);
+    };
+
     // First, try opening at the current (or default) version.
     const probe = indexedDB.open(dbName);
 
@@ -35,7 +44,7 @@ function openDB(dbName: string, storeName: string): Promise<IDBDatabase> {
     probe.onsuccess = () => {
       const db = probe.result;
       if (db.objectStoreNames.contains(storeName)) {
-        resolve(db);
+        wire(db);
         return;
       }
       // Store doesn't exist yet — close and reopen with a version bump.
@@ -44,13 +53,28 @@ function openDB(dbName: string, storeName: string): Promise<IDBDatabase> {
 
       const upgrade = indexedDB.open(dbName, nextVersion);
       upgrade.onerror = () => reject(upgrade.error);
+      // Backstop: if another connection blocks the bump, settle (reject) so the
+      // promise does not leak; the next call retries.
+      upgrade.onblocked = () =>
+        reject(upgrade.error ?? new DOMException('Upgrade blocked: another connection is open', 'AbortError'));
       upgrade.onupgradeneeded = () => {
         const upgradedDB = upgrade.result;
         if (!upgradedDB.objectStoreNames.contains(storeName)) {
           upgradedDB.createObjectStore(storeName);
         }
       };
-      upgrade.onsuccess = () => resolve(upgrade.result);
+      upgrade.onsuccess = () => {
+        const upgradedDB = upgrade.result;
+        // Defensive: a racing bump can resolve WITHOUT firing onupgradeneeded,
+        // leaving the store still absent. Evict and retry once.
+        if (!upgradedDB.objectStoreNames.contains(storeName) && !retried) {
+          upgradedDB.close();
+          dbCache.delete(cacheKey);
+          resolve(openDB(dbName, storeName, true));
+          return;
+        }
+        wire(upgradedDB);
+      };
     };
 
     probe.onupgradeneeded = () => {
@@ -84,6 +108,8 @@ export function createIndexedDB<T>(
   dbName: string,
   storeName: string = 'default',
 ): IDBStore<T> {
+  const cacheKey = `${dbName}::${storeName}`;
+
   /** Helper: run a single read/write transaction and return the request result. */
   function withStore<R>(
     mode: IDBTransactionMode,
@@ -92,13 +118,37 @@ export function createIndexedDB<T>(
     return openDB(dbName, storeName).then(
       (db) =>
         new Promise<R>((resolve, reject) => {
-          const tx = db.transaction(storeName, mode);
-          const store = tx.objectStore(storeName);
-          const request = fn(store);
-          request.onsuccess = () => resolve(request.result);
-          request.onerror = () => reject(request.error);
+          let request: IDBRequest<R>;
+          let tx: IDBTransaction;
+          try {
+            tx = db.transaction(storeName, mode);
+            request = fn(tx.objectStore(storeName));
+          } catch (err) {
+            // A transaction on a closing connection throws synchronously.
+            reject(err);
+            return;
+          }
+          let result: R;
+          request.onsuccess = () => {
+            result = request.result;
+            // Reads are durable at request success; writes only at commit.
+            if (mode === 'readonly') resolve(result);
+          };
+          // A readwrite value is only durable once the transaction COMMITS —
+          // resolving on request.onsuccess would falsely report success for a
+          // write that later aborts (e.g. QuotaExceededError at commit).
+          tx.oncomplete = () => resolve(result);
+          tx.onerror = () => reject(tx.error ?? request.error);
+          tx.onabort = () => reject(tx.error ?? request.error ?? new DOMException('Transaction aborted', 'AbortError'));
         }),
-    );
+    ).catch((err: unknown) => {
+      // Evict a broken/closing connection so the next call reopens cleanly.
+      const name = (err as { name?: string } | null)?.name;
+      if (name === 'InvalidStateError' || name === 'AbortError') {
+        dbCache.delete(cacheKey);
+      }
+      throw err;
+    });
   }
 
   return {
