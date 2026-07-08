@@ -47,6 +47,14 @@ The CDN global builds (`formajs-runtime.global.js`, etc.) ship as readable, unmi
 - **Island props sanitized**: `JSON.parse` output stripped of `__proto__`, `constructor`, `prototype` keys.
 - **CSP parser operator precedence**: Fixed to match JavaScript semantics (addition before comparison, AND before OR).
 
+## RPC / server functions (`@getforma/core/server`)
+
+`handleRPC` executes registered `"use server"` functions. Its protections and their limits:
+
+- **Argument sanitization**: RPC arguments are recursively stripped of `__proto__`, `constructor`, and `prototype` keys before the function is invoked, so a malicious payload cannot pollute `Object.prototype` even if the server function deep-merges its input.
+- **CSRF mitigation (`createRPCMiddleware`)**: requires the `X-Forma-RPC: 1` custom header (which forces a CORS preflight and cannot be attached by a cross-site HTML form) and a `application/json` content type. Requests missing either are rejected (403 / 415) before any function runs.
+- **Authorization is the deployment's responsibility.** `handleRPC` performs **no authentication or authorization by itself.** Install a guard — globally via `setRPCGuard((endpoint, args, ctx) => …)` or per call/middleware via the `authorize` option — to authenticate the caller and authorize the endpoint. Without a guard, any client that can reach the endpoint can invoke any registered function.
+
 ## Supported Versions
 
 | Version | Supported |

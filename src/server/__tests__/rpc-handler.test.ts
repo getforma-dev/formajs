@@ -250,7 +250,7 @@ describe('createRPCMiddleware', () => {
     const res = createMockRes();
 
     await middleware(
-      { url: '/rpc/test', method: 'POST', body: undefined },
+      { url: '/rpc/test', method: 'POST', body: undefined, headers: { 'x-forma-rpc': '1', 'content-type': 'application/json' }, },
       res,
     );
 
@@ -265,7 +265,7 @@ describe('createRPCMiddleware', () => {
     const res = createMockRes();
 
     await middleware(
-      { url: '/rpc/test', method: 'POST', body: { args: 'not-an-array' } },
+      { url: '/rpc/test', method: 'POST', body: { args: 'not-an-array' }, headers: { 'x-forma-rpc': '1', 'content-type': 'application/json' }, },
       res,
     );
 
@@ -284,7 +284,7 @@ describe('createRPCMiddleware', () => {
     const res = createMockRes();
 
     await middleware(
-      { url: '/rpc/mw_fail', method: 'POST', body: { args: [] } },
+      { url: '/rpc/mw_fail', method: 'POST', body: { args: [] }, headers: { 'x-forma-rpc': '1', 'content-type': 'application/json' }, },
       res,
     );
 
@@ -301,7 +301,7 @@ describe('createRPCMiddleware', () => {
     const res = createMockRes();
 
     await middleware(
-      { url: '/rpc/mw_ok', method: 'POST', body: { args: [21] } },
+      { url: '/rpc/mw_ok', method: 'POST', body: { args: [21] }, headers: { 'x-forma-rpc': '1', 'content-type': 'application/json' }, },
       res,
     );
 
