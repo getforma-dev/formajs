@@ -2,6 +2,44 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.3.0] - 2026-07-08
+
+DOM correctness. Stacks on 1.2.0. Adds the `svg()` helper and completes
+`data-model`.
+
+### Fixed
+- **Reconciler cache is per-container.** A single reconciler instance shared one
+  last-HTML cache, so reconciling a second container to the same HTML as the
+  first was a no-op. Keyed per container.
+- **Keyed lists no longer drop duplicate-keyed rows past 32 items.** The
+  large-list diff path collapsed duplicate keys; it now consumes occurrences
+  one-per-match like the small path.
+- **`data-list {index}`** is the true loop index (was `indexOf`, wrong for
+  duplicate/primitive items and O(n^2)).
+- **Islands**: `activateIslands()` re-run no longer double-hydrates/double-binds;
+  visible-trigger observers, idle timers, and interaction listeners are torn down
+  by `deactivateIsland`/`deactivateAllIslands` (previously leaked and could
+  zombie-hydrate); a disposed island cannot be resurrected by a stray callback.
+- **Suspense** whose resolved content is a `DocumentFragment` no longer
+  duplicates or loses content across re-suspend/re-resolve.
+- **CSP expression parser** no longer mis-splits operators inside string literals
+  (`{'a' + '-' + 'b'}`), and arithmetic/comparison are correctly left-associative
+  (`10 - 3 - 2 === 5`, `12 % 5 % 3 === 2`).
+
+### Added
+- **`svg(build)`** context helper so nested `h()` calls create SVG-namespaced
+  elements, including dual-use tags like `<a>`. Without it, dual-use tags default
+  to HTML.
+- **`data-model`** now supports radio groups, `<select multiple>`, an opt-in
+  `data-model-indeterminate` companion, member-path targets (`{item.name}`), and
+  guards numeric input against writing `NaN` (empty clears to `null`).
+
+### Known limitations
+- `svg()` resolves tags by explicit context (no parent-walk); `foreignObject`
+  descendants stay SVG; MathML is unsupported.
+- The reconciler/`parseHTML` `innerHTML` paths are a trust boundary — do not feed
+  them attacker-controlled markup.
+
 ## [1.0.1] - 2026-03-16
 
 ### Fixed
