@@ -98,19 +98,43 @@ function createRootImpl<T>(fn: (dispose: () => void) => T, owned: boolean): T {
   currentOwner = scope;
 
   let disposed = false;
-  const dispose = () => {
-    if (disposed) return; // idempotent — safe to call after parent already disposed this
-    disposed = true;
+  let setupComplete = false;
+  let disposeRequestedDuringSetup = false;
+
+  const runDisposers = () => {
+    // Run userland disposers (includes child root disposes), guarded so one
+    // throw does not abort the rest. Draining means a later runTeardown only
+    // sees disposers registered since this drain.
+    for (const d of scope.disposers) {
+      try { d(); } catch { /* ensure all disposers run */ }
+    }
+    scope.disposers.length = 0;
+  };
+
+  const runTeardown = () => {
     // Dispose alien-signals effect scope first (reactive graph cleanup)
     if (scope.scopeDispose) {
       try { scope.scopeDispose(); } catch { /* ensure userland disposers still run */ }
       scope.scopeDispose = null;
     }
-    // Then run userland disposers (includes child root disposes)
-    for (const d of scope.disposers) {
-      try { d(); } catch { /* ensure all disposers run */ }
+    runDisposers();
+  };
+
+  const dispose = () => {
+    if (disposed) return; // idempotent — safe to call after parent already disposed this
+    disposed = true;
+    // dispose() called synchronously DURING setup: scope.scopeDispose is not yet
+    // assigned and anything created AFTER this call has not registered. Eagerly
+    // run the disposers already registered (so cleanup for work created BEFORE
+    // this call is synchronous, Solid-style), and defer the rest — the alien
+    // scope dispose plus any after-created disposers — until setup finishes.
+    // Without the deferral, everything created afterward would leak.
+    if (!setupComplete) {
+      disposeRequestedDuringSetup = true;
+      runDisposers();
+      return;
     }
-    scope.disposers.length = 0;
+    runTeardown();
   };
 
   // Auto-register with parent root so child dies when parent dies (Solid-style)
@@ -136,6 +160,13 @@ function createRootImpl<T>(fn: (dispose: () => void) => T, owned: boolean): T {
       } finally {
         setActiveSub(prevSub);
       }
+    }
+    // Setup finished: scope.scopeDispose is assigned and all in-setup effects /
+    // child-roots have registered. If dispose() was requested during setup, run
+    // the deferred teardown now so everything created in the callback is torn down.
+    setupComplete = true;
+    if (disposeRequestedDuringSetup) {
+      runTeardown();
     }
   } finally {
     currentRoot = rootStack.pop() ?? null;
