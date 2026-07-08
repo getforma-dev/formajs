@@ -253,11 +253,13 @@ function renderStreamNode(node: unknown, parts: string[], state: StreamState): v
     renderSync(fallback, parts);
     parts.push('</div>');
 
-    // Queue the async resolution. Render resolved content through the
-    // Suspense-aware path so a NESTED forma-suspense inside it is detected and
-    // queued onto the shared state (drained out-of-order by the while-loop),
-    // rather than emitted as a literal <forma-suspense> element.
-    const promise = asyncFn().then((resolved: unknown) => {
+    // Queue the async resolution. Invoke asyncFn via Promise.resolve().then so a
+    // SYNCHRONOUS throw becomes a rejection routed through allSettled (fallback
+    // stays) instead of aborting the whole generator before the shell is flushed.
+    // Render resolved content through the Suspense-aware path so a NESTED
+    // forma-suspense inside it is detected and queued onto the shared state
+    // (drained out-of-order), rather than emitted as a literal element.
+    const promise = Promise.resolve().then(asyncFn).then((resolved: unknown) => {
       const resolvedParts: string[] = [];
       renderStreamNode(resolved, resolvedParts, state);
       return resolvedParts.join('');

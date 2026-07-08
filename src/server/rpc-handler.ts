@@ -83,7 +83,11 @@ function deepStripForbidden<T>(value: T): T {
   }
   if (value && typeof value === 'object') {
     for (const key of FORBIDDEN_ARG_KEYS) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) delete (value as Record<string, unknown>)[key];
+      if (Object.prototype.hasOwnProperty.call(value, key)) {
+        // Guard the delete: it throws on a frozen/sealed (non-configurable) prop.
+        const desc = Object.getOwnPropertyDescriptor(value, key);
+        if (desc?.configurable) delete (value as Record<string, unknown>)[key];
+      }
     }
     for (const k of Object.keys(value as Record<string, unknown>)) {
       deepStripForbidden((value as Record<string, unknown>)[k]);
@@ -148,9 +152,16 @@ export async function handleRPC(
   const args = deepStripForbidden([...body.args]);
 
   // Authorization is the deployment's responsibility — run any installed guard.
+  // A guard that throws or rejects is treated as a denial (fail-closed): return
+  // 403 without leaking the guard's error to the client.
   const guard = options?.authorize ?? globalGuard;
   if (guard) {
-    const ok = await guard(endpoint, args, options?.context ?? {});
+    let ok: boolean;
+    try {
+      ok = !!(await guard(endpoint, args, options?.context ?? {}));
+    } catch {
+      return { error: 'Forbidden', status: 403 };
+    }
     if (!ok) return { error: 'Forbidden', status: 403 };
   }
 
