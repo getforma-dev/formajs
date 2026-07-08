@@ -9,6 +9,27 @@
 import { createSignal, internalEffect, batch } from 'forma/reactive';
 
 // ---------------------------------------------------------------------------
+// Snapshot helper — clone plain values so a later in-place mutation of a value
+// stored in (or restored from) the history stack cannot corrupt other entries.
+// Non-plain objects (Date/RegExp/Map/Set/class instances) pass by reference.
+// ---------------------------------------------------------------------------
+
+function cloneEntry<V>(v: V, seen?: WeakSet<object>): V {
+  if (v === null || typeof v !== 'object') return v;
+  const proto = Object.getPrototypeOf(v);
+  if (!Array.isArray(v) && proto !== Object.prototype && proto !== null) return v;
+  if (!seen) seen = new WeakSet();
+  if (seen.has(v as unknown as object)) return v; // circular — return as-is
+  seen.add(v as unknown as object);
+  if (Array.isArray(v)) return (v.map((i) => cloneEntry(i, seen)) as unknown) as V;
+  const out: Record<string, unknown> = {};
+  for (const k of Object.keys(v as Record<string, unknown>)) {
+    out[k] = cloneEntry((v as Record<string, unknown>)[k], seen);
+  }
+  return out as unknown as V;
+}
+
+// ---------------------------------------------------------------------------
 // Types
 // ---------------------------------------------------------------------------
 
@@ -28,6 +49,8 @@ export interface HistoryControls<T> {
   cursor: () => number;
   /** Clear all history, keeping only the current value. */
   clear: () => void;
+  /** Stop tracking the source signal and release the history stack. */
+  destroy: () => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -58,7 +81,7 @@ export function createHistory<T>(
   // ---------- Internal mutable state (not signals) ----------
   // We use plain arrays/numbers to avoid creating signal dependencies
   // inside the source-tracking effect, which would cause re-entrance issues.
-  let _stack: T[] = [sourceGet()];
+  let _stack: T[] = [cloneEntry(sourceGet())];
   let _cursor = 0;
 
   // ---------- Reactive output signals ----------
@@ -79,13 +102,16 @@ export function createHistory<T>(
     });
   }
 
-  // Track whether the next source change should be ignored
-  // (because it was caused by undo/redo, not an external set).
-  let ignoreNext = false;
+  // Distinguish our own undo/redo echo from a genuine external set. A bare
+  // boolean assumed 1 set -> 1 effect run, which breaks under batch() (multiple
+  // sets collapse to one flush) and under a custom `equals` that suppresses the
+  // echo. Instead capture the exact value we restored and match it by identity.
+  const NONE = Symbol('none');
+  let _expected: T | typeof NONE = NONE;
   let isFirstRun = true;
 
   // Watch the source signal for external changes
-  internalEffect(() => {
+  const disposeEffect = internalEffect(() => {
     const value = sourceGet();
 
     // Skip the initial effect run -- the initial value is already in the stack
@@ -94,15 +120,18 @@ export function createHistory<T>(
       return;
     }
 
-    if (ignoreNext) {
-      ignoreNext = false;
+    // Our own undo/redo echo — consume the guard and record nothing.
+    if (_expected !== NONE && Object.is(value, _expected)) {
+      _expected = NONE;
       return;
     }
+    // Any other value is a real external change; clear a stale guard (so a
+    // custom-equals-suppressed echo cannot eat this set) and record it.
+    _expected = NONE;
 
-    // New value from an external set: push onto history
     // Discard any "future" entries after the current cursor (redo is cleared)
     _stack = _stack.slice(0, _cursor + 1);
-    _stack.push(value);
+    _stack.push(cloneEntry(value));
 
     // Enforce maxLength
     if (_stack.length > maxLength) {
@@ -113,6 +142,8 @@ export function createHistory<T>(
     syncSignals();
   });
 
+  const destroy = (): void => { disposeEffect(); };
+
   // Reactive derived getters
   const canUndo = (): boolean => cursorSignal() > 0;
   const canRedo = (): boolean => cursorSignal() < stackLenSignal() - 1;
@@ -121,8 +152,11 @@ export function createHistory<T>(
     if (_cursor <= 0) return;
 
     _cursor--;
-    ignoreNext = true;
-    sourceSet(_stack[_cursor] as T);
+    // Restore a clone and expect exactly that reference back, so a consumer
+    // mutating the restored value cannot corrupt the stack entry.
+    const restored = cloneEntry(_stack[_cursor] as T);
+    _expected = restored;
+    sourceSet(restored);
     syncSignals();
   };
 
@@ -130,14 +164,15 @@ export function createHistory<T>(
     if (_cursor >= _stack.length - 1) return;
 
     _cursor++;
-    ignoreNext = true;
-    sourceSet(_stack[_cursor] as T);
+    const restored = cloneEntry(_stack[_cursor] as T);
+    _expected = restored;
+    sourceSet(restored);
     syncSignals();
   };
 
   const clear = (): void => {
     const currentValue = sourceGet();
-    _stack = [currentValue];
+    _stack = [cloneEntry(currentValue)];
     _cursor = 0;
     syncSignals();
   };
@@ -150,5 +185,6 @@ export function createHistory<T>(
     history: () => stackSignal(),
     cursor: () => cursorSignal(),
     clear,
+    destroy,
   };
 }
