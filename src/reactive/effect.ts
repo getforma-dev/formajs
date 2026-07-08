@@ -8,7 +8,16 @@
  */
 
 import { effect as rawEffect } from 'alien-signals';
-import { hasActiveRoot, registerDisposer } from './root.js';
+import {
+  hasActiveRoot,
+  registerDisposer,
+  getOwner,
+  runWithOwner,
+  registerOwnerDisposer,
+  createChildOwner,
+  disposeOwner,
+  type Owner,
+} from './root.js';
 import { setCleanupCollector } from './cleanup.js';
 import { reportError } from './dev.js';
 
@@ -111,7 +120,18 @@ export function internalEffect(fn: () => void): () => void {
 }
 
 export function createEffect(fn: () => void | (() => void)): () => void {
-  const shouldRegister = hasActiveRoot();
+  // Capture the owner active at creation time so this effect's disposer is owned
+  // by whatever created it — a root, or (for a nested effect) the parent effect's
+  // current child-owner. This replaces a hasActiveRoot() snapshot so nested
+  // effects created during a parent re-run (when no root is lexically active) are
+  // still owned and disposed.
+  const ownerAtCreate = getOwner();
+
+  // This effect owns its nested effects/roots via a reusable child-owner: it is
+  // disposed (nested cleanups run) at the top of each run and on disposal, then
+  // reused for the next generation. One small allocation per createEffect; the
+  // hot DOM path uses internalEffect, which has no child-owner.
+  const childOwner: Owner = createChildOwner();
 
   // Most effects have zero or one cleanup. Track the single-cleanup case
   // without array allocation; only promote to pooled array when needed.
@@ -147,6 +167,11 @@ export function createEffect(fn: () => void | (() => void)): () => void {
       cleanupBag = undefined;
     }
 
+    // Dispose the previous generation of nested effects/roots (running their
+    // cleanups) before re-running. alien-signals' raw unwatched teardown of a
+    // nested effect bypasses our cleanup, so we own nested work explicitly.
+    disposeOwner(childOwner);
+
     nextCleanup = undefined;
     nextCleanupBag = undefined;
 
@@ -158,7 +183,9 @@ export function createEffect(fn: () => void | (() => void)): () => void {
     const prevCollector = setCleanupCollector(addCleanup);
 
     try {
-      const result = fn();
+      // Run the body with this effect's child-owner installed so any nested
+      // effects/roots it creates are owned by this generation.
+      const result = runWithOwner(childOwner, fn);
       if (typeof result === 'function') {
         addCleanup(result as () => void);
       }
@@ -219,6 +246,8 @@ export function createEffect(fn: () => void | (() => void)): () => void {
     if (disposed) return;
     disposed = true;
     dispose();
+    // Dispose nested effects/roots this effect owns, then run its own cleanups.
+    disposeOwner(childOwner);
     if (cleanup !== undefined) {
       runCleanup(cleanup);
       cleanup = undefined;
@@ -230,9 +259,10 @@ export function createEffect(fn: () => void | (() => void)): () => void {
     }
   };
 
-  // Register in current root scope (if any)
-  if (shouldRegister) {
-    registerDisposer(wrappedDispose);
+  // Register this effect's disposer with the owner active at creation (a root, or
+  // a parent effect's child-owner).
+  if (ownerAtCreate) {
+    registerOwnerDisposer(ownerAtCreate, wrappedDispose);
   }
 
   return wrappedDispose;
