@@ -18,15 +18,41 @@ export interface IDBStore<T> {
 const dbCache = new Map<string, Promise<IDBDatabase>>();
 
 /**
+ * Per-database open serialization. Concurrent createIndexedDB(db, storeA/B/...)
+ * calls each bump db.version+1; without serialization they compute the version
+ * from a stale probe and race, so some stores are never created and their
+ * connections are permanently wedged. Chaining opens for the same db name makes
+ * each see the previous open's committed version.
+ */
+const openLocks = new Map<string, Promise<unknown>>();
+
+/**
  * Open (or retrieve a cached) IndexedDB database, ensuring the
  * requested object store exists.
  */
-function openDB(dbName: string, storeName: string, retried = false): Promise<IDBDatabase> {
+function openDB(dbName: string, storeName: string): Promise<IDBDatabase> {
   const cacheKey = `${dbName}::${storeName}`;
   const cached = dbCache.get(cacheKey);
   if (cached) return cached;
 
-  const promise = new Promise<IDBDatabase>((resolve, reject) => {
+  // Serialize this open behind any in-flight open for the same db name.
+  const prevLock = openLocks.get(dbName) ?? Promise.resolve();
+  const promise = prevLock.then(() => doOpen(dbName, storeName, cacheKey), () => doOpen(dbName, storeName, cacheKey));
+
+  dbCache.set(cacheKey, promise);
+  // Advance the lock (never rejects, so the chain keeps flowing).
+  openLocks.set(dbName, promise.then(() => undefined, () => undefined));
+
+  // If the open fails, remove from cache so the next call retries.
+  promise.catch(() => {
+    dbCache.delete(cacheKey);
+  });
+
+  return promise;
+}
+
+function doOpen(dbName: string, storeName: string, cacheKey: string): Promise<IDBDatabase> {
+  return new Promise<IDBDatabase>((resolve, reject) => {
     // Wire a resolved connection so it closes + evicts on a version change
     // (another tab/store bumping the version) or a forced close. Without this a
     // later bump blocks forever and a stale connection is never dropped.
@@ -47,7 +73,8 @@ function openDB(dbName: string, storeName: string, retried = false): Promise<IDB
         wire(db);
         return;
       }
-      // Store doesn't exist yet — close and reopen with a version bump.
+      // Store doesn't exist yet — close and reopen with a version bump. Opens
+      // are serialized per db, so this version is current, not stale.
       const nextVersion = db.version + 1;
       db.close();
 
@@ -65,12 +92,11 @@ function openDB(dbName: string, storeName: string, retried = false): Promise<IDB
       };
       upgrade.onsuccess = () => {
         const upgradedDB = upgrade.result;
-        // Defensive: a racing bump can resolve WITHOUT firing onupgradeneeded,
-        // leaving the store still absent. Evict and retry once.
-        if (!upgradedDB.objectStoreNames.contains(storeName) && !retried) {
+        if (!upgradedDB.objectStoreNames.contains(storeName)) {
+          // Should not happen with serialized opens; reject (do not cache a
+          // store-less connection) so the next call retries cleanly.
           upgradedDB.close();
-          dbCache.delete(cacheKey);
-          resolve(openDB(dbName, storeName, true));
+          reject(new DOMException(`Object store "${storeName}" was not created`, 'NotFoundError'));
           return;
         }
         wire(upgradedDB);
@@ -84,15 +110,6 @@ function openDB(dbName: string, storeName: string, retried = false): Promise<IDB
       }
     };
   });
-
-  dbCache.set(cacheKey, promise);
-
-  // If the open fails, remove from cache so the next call retries.
-  promise.catch(() => {
-    dbCache.delete(cacheKey);
-  });
-
-  return promise;
 }
 
 /**
@@ -142,9 +159,10 @@ export function createIndexedDB<T>(
           tx.onabort = () => reject(tx.error ?? request.error ?? new DOMException('Transaction aborted', 'AbortError'));
         }),
     ).catch((err: unknown) => {
-      // Evict a broken/closing connection so the next call reopens cleanly.
+      // Evict a broken/closing/store-less connection so the next call reopens
+      // cleanly (NotFoundError = the cached connection lacks the store).
       const name = (err as { name?: string } | null)?.name;
-      if (name === 'InvalidStateError' || name === 'AbortError') {
+      if (name === 'InvalidStateError' || name === 'AbortError' || name === 'NotFoundError') {
         dbCache.delete(cacheKey);
       }
       throw err;

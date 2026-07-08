@@ -138,6 +138,14 @@ export function defineComponent(
     let dom: HTMLElement | DocumentFragment;
     try {
       dom = setup();
+    } catch (e) {
+      // setup threw after possibly provide()-ing a context — unwind the frames
+      // it pushed (LIFO) so they do not leak globally with no dispose handle.
+      for (let i = ctx.contextDisposers.length - 1; i >= 0; i--) {
+        try { ctx.contextDisposers[i]!(); } catch { /* ignore */ }
+      }
+      ctx.contextDisposers.length = 0;
+      throw e;
     } finally {
       popLifecycleContext();
     }
@@ -194,17 +202,25 @@ export function defineComponent(
       }
     }
 
-    // Run mount callbacks (synchronously, after setup completes)
-    // If a mount callback returns a cleanup, register it as an unmount callback
-    for (const cb of ctx.mountCallbacks) {
-      try {
-        const cleanup = cb();
-        if (typeof cleanup === 'function') {
-          ctx.unmountCallbacks.push(cleanup);
+    // Run mount callbacks (synchronously, after setup completes). Re-install the
+    // lifecycle context so provide()/trackDisposer()/onUnmount() called inside a
+    // mount callback register with this component (and are balanced on dispose)
+    // instead of silently leaking. If a callback returns a cleanup, register it
+    // as an unmount callback.
+    pushLifecycleContext(ctx);
+    try {
+      for (const cb of ctx.mountCallbacks) {
+        try {
+          const cleanup = cb();
+          if (typeof cleanup === 'function') {
+            ctx.unmountCallbacks.push(cleanup);
+          }
+        } catch (e) {
+          reportError(e, 'onMount');
         }
-      } catch (e) {
-        reportError(e, 'onMount');
       }
+    } finally {
+      popLifecycleContext();
     }
 
     return dom;
