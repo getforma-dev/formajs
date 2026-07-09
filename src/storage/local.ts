@@ -48,7 +48,9 @@ export function createLocalStorage<T>(
     },
 
     remove(): void {
-      localStorage.removeItem(key);
+      try {
+        localStorage.removeItem(key);
+      } catch { /* storage disabled — silently ignore, matching get/set */ }
     },
   };
 }

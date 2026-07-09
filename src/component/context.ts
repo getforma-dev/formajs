@@ -3,9 +3,13 @@
  *
  * Dependency injection via stack-based context.
  * Simpler than React's Provider component tree: provide() pushes a value,
- * inject() reads the top, component teardown pops automatically.
+ * inject() reads the top. When provide() is called during a component setup, the
+ * value is auto-unprovided on that component's dispose; outside a component you
+ * must call unprovide() yourself.
  * Zero dependencies -- native browser APIs only.
  */
+
+import { registerContextDisposer } from './define.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -24,11 +28,32 @@ export interface Context<T> {
 // ---------------------------------------------------------------------------
 
 /**
- * Per-context value stacks.
- * Each context id maps to a stack of provided values.
- * The top of the stack is the "current" value.
+ * A single provided value plus a unique token identifying which provide() pushed
+ * it, so auto-teardown can remove exactly that frame (not whatever is on top).
  */
-const contextStacks = new Map<symbol, unknown[]>();
+interface ContextFrame {
+  token: symbol;
+  value: unknown;
+}
+
+/**
+ * Per-context frame stacks. Each context id maps to a stack of frames; the top
+ * frame's value is the "current" value.
+ */
+const contextStacks = new Map<symbol, ContextFrame[]>();
+
+/** Remove a specific frame by token (splicing if it is no longer the top). */
+function removeFrame(id: symbol, token: symbol): void {
+  const stack = contextStacks.get(id);
+  if (!stack) return;
+  for (let i = stack.length - 1; i >= 0; i--) {
+    if (stack[i]!.token === token) {
+      stack.splice(i, 1);
+      break;
+    }
+  }
+  if (stack.length === 0) contextStacks.delete(id);
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -63,7 +88,14 @@ export function provide<T>(ctx: Context<T>, value: T): void {
     stack = [];
     contextStacks.set(ctx.id, stack);
   }
-  stack.push(value);
+  const token = Symbol('forma:context-frame');
+  stack.push({ token, value });
+  // When called during a component setup/mount, remove THIS frame on the
+  // component's dispose so provide/unprovide stays balanced without manual
+  // bookkeeping and the value does not leak globally to later inject() calls.
+  // Removing by token (not popping the top) keeps a still-mounted sibling that
+  // provided the same context intact.
+  registerContextDisposer(() => removeFrame(ctx.id, token));
 }
 
 /**
@@ -79,7 +111,7 @@ export function inject<T>(ctx: Context<T>): T {
   if (stack === undefined || stack.length === 0) {
     return ctx.defaultValue;
   }
-  return stack[stack.length - 1] as T;
+  return stack[stack.length - 1]!.value as T;
 }
 
 /**

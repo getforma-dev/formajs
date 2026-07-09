@@ -48,7 +48,9 @@ export function createSessionStorage<T>(
     },
 
     remove(): void {
-      sessionStorage.removeItem(key);
+      try {
+        sessionStorage.removeItem(key);
+      } catch { /* storage disabled — silently ignore, matching get/set */ }
     },
   };
 }

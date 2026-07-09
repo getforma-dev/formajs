@@ -17,33 +17,47 @@ interface WasmExports {
   render_island(ir_bytes: Uint8Array, slots_json: string, island_id: number): string;
 }
 
-let wasmModule: WasmExports | null = null;
-let irCache: Map<string, Uint8Array> = new Map();
+// Memoize the IN-FLIGHT promises (not the resolved values) so concurrent
+// callers share one instantiation / fetch; the promise is cleared on failure so
+// a later call retries instead of being stuck with a cached error.
+let wasmPromise: Promise<WasmExports> | null = null;
+const irPromises: Map<string, Promise<Uint8Array>> = new Map();
 
-async function ensureWasm(): Promise<WasmExports> {
-  if (wasmModule) return wasmModule;
+function ensureWasm(): Promise<WasmExports> {
+  if (wasmPromise) return wasmPromise;
 
   const config = window.__FORMA_WASM__;
-  if (!config) throw new Error('No __FORMA_WASM__ config');
+  if (!config) throw new Error('No __FORMA_WASM__ config'); // sync — not memoized
 
-  // Dynamic import of wasm-pack generated loader
-  const mod = await import(/* @vite-ignore */ config.loader);
-  await mod.default(config.binary);
-  wasmModule = mod as unknown as WasmExports;
-  return wasmModule;
+  wasmPromise = (async () => {
+    // Dynamic import of wasm-pack generated loader
+    const mod = await import(/* @vite-ignore */ config.loader);
+    await mod.default(config.binary);
+    return mod as unknown as WasmExports;
+  })();
+  wasmPromise.catch(() => { wasmPromise = null; }); // evict on failure so next call retries
+  return wasmPromise;
 }
 
-async function getIR(): Promise<Uint8Array> {
+function getIR(): Promise<Uint8Array> {
   const config = window.__FORMA_WASM__;
-  if (!config) throw new Error('No __FORMA_WASM__ config');
+  if (!config) throw new Error('No __FORMA_WASM__ config'); // sync — not memoized
 
-  const cached = irCache.get(config.ir);
-  if (cached) return cached;
+  const key = config.ir;
+  const existing = irPromises.get(key);
+  if (existing) return existing;
 
-  const response = await fetch(config.ir);
-  const bytes = new Uint8Array(await response.arrayBuffer());
-  irCache.set(config.ir, bytes);
-  return bytes;
+  const p = (async () => {
+    const response = await fetch(key);
+    if (!response.ok) {
+      // Do NOT cache a 404/500 error page as IR bytes.
+      throw new Error(`Failed to fetch IR: ${response.status} ${response.statusText}`);
+    }
+    return new Uint8Array(await response.arrayBuffer());
+  })();
+  irPromises.set(key, p);
+  p.catch(() => { irPromises.delete(key); }); // evict on failure so next call retries
+  return p;
 }
 
 /** Full page render via WASM. */
