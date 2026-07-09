@@ -13,7 +13,7 @@
  */
 
 import { getSwapScript, getSwapTag } from './client-script.js';
-import { escapeHtml, escapeAttr, isVNode, VOID_ELEMENTS, PROP_TO_ATTR, renderAttr, type VNode } from './render.js';
+import { escapeHtml, isVNode, VOID_ELEMENTS, renderAttr, type VNode } from './render.js';
 
 // ---------------------------------------------------------------------------
 // Suspense boundary tracking
