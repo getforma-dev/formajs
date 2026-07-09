@@ -8,14 +8,14 @@
 
 // Reactive core
 export {
-  createSignal, createEffect, createComputed, createMemo, batch,
-  untrack, createRoot, createUnownedRoot, onCleanup, on, onError,
+  createSignal, value, getSignalName, createEffect, createComputed, createMemo, batch,
+  untrack, createRoot, createUnownedRoot, getOwner, runWithOwner, onCleanup, on, onError,
   createRef, createReducer, createResource,
   // Reactive introspection (alien-signals 3.x)
   isSignal, isComputed, isEffect, isEffectScope,
   getBatchDepth, trigger,
 } from './reactive';
-export type { SignalGetter, SignalSetter, SignalOptions, Ref, Dispatch, Resource, ResourceOptions, ErrorHandler } from './reactive';
+export type { SignalGetter, SignalSetter, SignalOptions, Owner, Ref, Dispatch, Resource, ResourceOptions, ResourceFetcherInfo, ErrorHandler } from './reactive';
 
 // DOM
 export { h, svg, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, deactivateIsland, deactivateAllIslands, reconcileList, template, templateMany } from './dom';
