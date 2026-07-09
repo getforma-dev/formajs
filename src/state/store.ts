@@ -13,7 +13,7 @@
  * Backed by alien-signals via forma/reactive.
  */
 
-import { createSignal, batch, untrack } from 'forma/reactive';
+import { createSignal, batch, untrack, value } from 'forma/reactive';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -143,6 +143,24 @@ export function createStore<T extends object>(
   const children = new Map<string, Set<string>>();
 
   /**
+   * Per-array-path "version" signals. alien-signals dedupes by identity and a
+   * custom `equals` can only suppress (not force) a notify, so an in-place array
+   * mutation cannot be signalled by re-setting the array reference. A monotonic
+   * counter bumped with a functional updater always notifies, so effects that
+   * read an array itself (iteration/.map/length) re-run on any mutation.
+   */
+  const arrayVersions = new Map<string, SignalPair>();
+  function getArrayVersion(path: string): SignalPair {
+    let p = arrayVersions.get(path);
+    if (!p) { p = createSignal<unknown>(0) as SignalPair; arrayVersions.set(path, p); }
+    return p;
+  }
+  function bumpArrayVersion(path: string): void {
+    const p = arrayVersions.get(path);
+    if (p) p[1]((n: number) => n + 1);
+  }
+
+  /**
    * Register a signal path with its parent in the adjacency map.
    * This allows walking the tree instead of scanning all signals.
    */
@@ -174,10 +192,12 @@ export function createStore<T extends object>(
   // -------------------------------------------------------------------------
 
   /**
-   * WeakMap so proxies for child objects are reused as long as the raw object
-   * is alive. When an object is replaced, the old entry is GC'd naturally.
+   * Proxies keyed by (raw object -> basePath -> proxy). The two-level map is
+   * required because the same raw object can be aliased at multiple paths
+   * (`state.a = state.b = shared`); each path needs its own proxy so writes
+   * notify the correct path signal. Entries are GC'd with the raw object.
    */
-  const proxyCache = new WeakMap<object, object>();
+  const proxyCache = new WeakMap<object, Map<string, object>>();
 
   // -------------------------------------------------------------------------
   // Invalidation
@@ -203,6 +223,44 @@ export function createStore<T extends object>(
     childSet.clear();
   }
 
+  function lastSegment(path: string): string {
+    const d = path.lastIndexOf('.');
+    return d === -1 ? path : path.substring(d + 1);
+  }
+
+  /**
+   * Set a path signal to a literal value. The signal setter interprets a
+   * function value as a functional updater, so a stored function (e.g. an array
+   * method like `items.map` read as a child path) must be wrapped with `value()`
+   * or it would be called as `fn(prev)` and throw.
+   */
+  function setLiteral(pair: SignalPair, v: unknown): void {
+    pair[1](typeof v === 'function' ? value(v) : v);
+  }
+
+  /**
+   * NOTIFY (not delete) each existing child signal of `parentPath` with its
+   * re-read value from the mutated raw parent — indices beyond a new length read
+   * back undefined, notifying their effects. Recurses into surviving object
+   * children; children that became primitive/absent have their subtrees deleted.
+   * Walks only children.get(parentPath) (O(k)), never all signals.
+   */
+  function reconcileChildren(parentPath: string, rawParent: unknown): void {
+    const set = children.get(parentPath);
+    if (!set) return;
+    for (const childPath of set) {
+      const key = lastSegment(childPath);
+      const nv = (rawParent as Record<string, unknown>)[key];
+      const pair = signals.get(childPath);
+      if (pair) setLiteral(pair, nv);
+      if (nv != null && typeof nv === 'object') {
+        reconcileChildren(childPath, nv);
+      } else {
+        invalidateChildren(childPath);
+      }
+    }
+  }
+
   // -------------------------------------------------------------------------
   // Proxy factory (lazy, recursive)
   // -------------------------------------------------------------------------
@@ -211,18 +269,16 @@ export function createStore<T extends object>(
     // Primitives / non-wrappable values pass through
     if (!shouldWrap(raw)) return raw;
 
-    // Return cached proxy if we already have one for this raw object
-    const cached = proxyCache.get(raw);
-    if (cached) return cached;
+    // Return the cached proxy for this (raw, basePath) pair if we have one.
+    let byPath = proxyCache.get(raw);
+    if (byPath) {
+      const hit = byPath.get(basePath);
+      if (hit) return hit;
+    }
 
     const isArr = Array.isArray(raw);
     // Pre-compute the path prefix to avoid repeated string concatenation in hot paths
     const basePrefix = basePath ? basePath + '.' : '';
-
-    // Inline cache: skip Map lookup when the same key is accessed repeatedly
-    // (very common in render loops and effects that read the same property)
-    let lastKey: string = '';
-    let lastSignal: SignalPair | undefined;
 
     const proxy: object = new Proxy(raw, {
       // -------------------------------------------------------------------
@@ -257,16 +313,17 @@ export function createStore<T extends object>(
               );
               result = (target as any)[key].apply(target, rawArgs);
 
-              // Invalidate all child paths so they recreate from the
-              // mutated raw array on next access.
-              invalidateChildren(basePath);
+              // Notify (not delete) every child signal with its re-read value so
+              // index/length/nested effects re-run instead of being orphaned.
+              reconcileChildren(basePath, target);
 
-              // Notify the length signal
-              const [, setLen] = getSignal(
-                basePrefix + 'length',
-                (target as unknown[]).length,
-              );
-              setLen((target as unknown[]).length);
+              // Notify the length signal (plain set — an unchanged length, e.g.
+              // splice 5->5, correctly does not re-fire length-only effects).
+              const lenPair = signals.get(basePrefix + 'length');
+              if (lenPair) lenPair[1]((target as unknown[]).length);
+
+              // Bump the array's own-path version so iteration/.map effects re-run.
+              if (basePath) bumpArrayVersion(basePath);
             });
             return result;
           };
@@ -286,17 +343,17 @@ export function createStore<T extends object>(
         // ------------------------------------------------------------------
         const value = Reflect.get(target, prop);
 
-        // Inline cache: if same key as last access, skip Map lookup
-        let pair: SignalPair;
-        if (key === lastKey && lastSignal) {
-          pair = lastSignal;
-        } else {
-          pair = getSignal(childPath, value);
-          lastKey = key;
-          lastSignal = pair;
-        }
-
+        // Resolve the live signal for this path (no inline cache — it could not
+        // be invalidated when invalidateChildren/deleteProperty removed the
+        // signal, which split reads and writes across two signal objects).
+        const pair = getSignal(childPath, value);
         pair[0](); // subscribe to this path
+
+        // Subscribe array reads to the array's own-path version so any in-place
+        // mutation (push/splice/sort/truncate) re-runs iteration/.map effects.
+        if (Array.isArray(value)) {
+          getArrayVersion(childPath)[0]();
+        }
 
         // Lazily wrap child objects/arrays
         if (shouldWrap(value)) {
@@ -323,15 +380,19 @@ export function createStore<T extends object>(
             ? (value as any)[RAW]
             : value;
 
+        // Capture the old raw value BEFORE overwriting so we can evict its proxy.
+        const oldRaw = Reflect.get(target, prop);
+
         // Write to the underlying object
         Reflect.set(target, prop, rawValue);
 
-        // If we're replacing with an object, invalidate all child signals
-        // and evict the old proxy so sub-paths are recreated on next access.
-        if (rawValue != null && typeof rawValue === 'object') {
+        // If we're replacing with a DIFFERENT object, invalidate child signals
+        // and evict the old value's proxy for this path. Guard on oldRaw !==
+        // rawValue: re-assigning the identical object (state.x = state.x) must
+        // NOT invalidate descendants, which would orphan their subscribers.
+        if (rawValue != null && typeof rawValue === 'object' && oldRaw !== rawValue) {
           invalidateChildren(childPath);
-          // Remove cached proxy for the old value so a fresh one is created
-          // on the next access.
+          evictProxy(oldRaw, childPath);
         }
 
         // Update the length signal when setting indexed array elements
@@ -341,6 +402,15 @@ export function createStore<T extends object>(
           if (lenPair) {
             lenPair[1](target.length);
           }
+        }
+
+        // Truncating (or growing) via `arr.length = n`: notify the dropped index
+        // signals (they read back undefined) and the array's own-path version.
+        if (isArr && key === 'length') {
+          batch(() => {
+            reconcileChildren(basePath, target);
+            if (basePath) bumpArrayVersion(basePath);
+          });
         }
 
         // Notify (or create) the signal for this path
@@ -390,30 +460,40 @@ export function createStore<T extends object>(
         const key = String(prop);
         const childPath = basePrefix + key;
 
+        const oldRaw = Reflect.get(target, prop);
         const result = Reflect.deleteProperty(target, prop);
 
-        // Clean up the signal for this path and all children via adjacency map
-        invalidateChildren(childPath);
-        signals.delete(childPath);
+        // Notify subscribers of state.x and 'x' in state (they share childPath)
+        // of the removal. KEEP the path's own signal (bound to undefined) — like
+        // object-replace does via invalidateChildren — so re-adding the key
+        // re-uses the same signal and its subscribers are notified. Deleting the
+        // signal would orphan them (a fresh signal would be minted on re-add).
+        const delPair = signals.get(childPath);
+        if (delPair) delPair[1](undefined);
 
-        // Remove from parent's children set in the adjacency map
-        const parentPath = basePath;
-        if (parentPath !== undefined) {
-          const parentSet = children.get(parentPath);
-          if (parentSet) {
-            parentSet.delete(childPath);
-            if (parentSet.size === 0) children.delete(parentPath);
-          }
-        }
-        // Clean up the deleted path's own children entry
-        children.delete(childPath);
+        // Evict the removed value's proxy for this path.
+        evictProxy(oldRaw, childPath);
+
+        // Remove DESCENDANT signals (childPath's own signal stays bound).
+        invalidateChildren(childPath);
 
         return result;
       },
     });
 
-    proxyCache.set(raw, proxy);
+    if (!byPath) { byPath = new Map(); proxyCache.set(raw, byPath); }
+    byPath.set(basePath, proxy);
     return proxy;
+  }
+
+  /** Evict the cached proxy bound to `path` for a raw object being replaced/removed. */
+  function evictProxy(oldRaw: unknown, path: string): void {
+    if (oldRaw == null || typeof oldRaw !== 'object') return;
+    const om = proxyCache.get(oldRaw as object);
+    if (om) {
+      om.delete(path);
+      if (om.size === 0) proxyCache.delete(oldRaw as object);
+    }
   }
 
   // -------------------------------------------------------------------------

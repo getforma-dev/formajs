@@ -2,6 +2,37 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.2.0] - 2026-07-08
+
+State layer correctness. Stacks on 1.1.0. Several fixes change observable
+behavior (they correct bugs), hence a minor bump.
+
+### Fixed
+- **Store array mutations are now reactive.** `push`/`pop`/`shift`/`unshift`/
+  `splice`/`sort`/`reverse`/`fill`/`copyWithin`, `delete state.x`, and
+  `arr.length = n` now notify subscribed effects (they previously deleted the
+  path signals, orphaning subscribers). Effects reading an array itself, its
+  `length`, or an index re-run correctly.
+- **Store proxy identity**: an object aliased at two paths now gets a
+  path-bound proxy (writes notify the correct path); the orphaning inline
+  signal cache was removed; stale proxies are evicted on replace/delete.
+- **Store**: re-assigning the identical object no longer orphans descendant
+  subscribers; a stored function value (e.g. an array method read as a path) is
+  no longer misread as a functional updater.
+- **History** snapshots entries (in-place mutation can't corrupt past states),
+  is batch-safe (an external set batched with `undo()` is recorded; a custom
+  `equals` no longer leaks the ignore flag), clamps `maxLength >= 1`, and adds
+  `destroy()`.
+- **Persist**: cross-tab sync, versioned migration, an `onError` hook, and a
+  disposer; JSON parsing stays prototype-pollution-safe.
+
+### Known limitations
+- Coarse array own-path reactivity: reading an array subscribes to its mutations
+  (SolidJS-style), so unchanged-length mutations still re-run array-level effects
+  (values are always correct).
+- `createHistory` requires a signal with a stable value; a store-proxy slice that
+  returns a fresh proxy per read is not supported.
+- `Map`/`Set`/`Date` values and `Object.keys`/`for...in` remain non-reactive.
 ## [1.1.0] - 2026-07-08
 
 Reactive-core correctness. Several fixes change observable behavior (they correct
