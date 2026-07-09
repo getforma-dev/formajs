@@ -27,7 +27,7 @@ export type { SetupFn, ComponentDef, CleanupFn, Context } from './component';
 
 // State
 export { createStore, createHistory, persist } from './state';
-export type { StoreSetter, PersistOptions, HistoryControls } from './state';
+export type { StoreSetter, PersistOptions, PersistErrorPhase, HistoryControls } from './state';
 
 // Events
 export { createBus, delegate, onKey } from './events';
