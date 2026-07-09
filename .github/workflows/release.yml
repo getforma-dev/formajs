@@ -7,12 +7,16 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      # Cross-repo dispatch PAT (optional). Surfaced as env so the notify step
+      # can skip cleanly when it isn't configured, rather than erroring.
+      FORMA_DISPATCH_TOKEN: ${{ secrets.FORMA_DISPATCH_TOKEN }}
     permissions:
       contents: read
       id-token: write  # Required for npm trusted publishing (OIDC)
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
         with:
           node-version: 24
           cache: npm
@@ -55,11 +59,14 @@ jobs:
       - run: npm publish --access public
 
       - name: Notify create-forma-app to update dependency
-        if: success()
-        continue-on-error: true  # Don't fail the release if dispatch token isn't configured
-        uses: peter-evans/repository-dispatch@v3
+        # Skip silently when no dispatch PAT is configured (OIDC covers npm
+        # publish but not cross-repo dispatch). continue-on-error is a
+        # belt-and-suspenders for an expired/invalid token.
+        if: success() && env.FORMA_DISPATCH_TOKEN != ''
+        continue-on-error: true
+        uses: peter-evans/repository-dispatch@v4
         with:
-          token: ${{ secrets.FORMA_DISPATCH_TOKEN }}
+          token: ${{ env.FORMA_DISPATCH_TOKEN }}
           repository: getforma-dev/create-forma-app
           event-type: core-release
           client-payload: '{"version": "${{ github.ref_name }}"}'
