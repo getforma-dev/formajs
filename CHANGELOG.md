@@ -2,6 +2,30 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.4.0] - 2026-07-08
+
+Server / SSR robustness. Stacks on 1.3.0. Adds an RPC authorization hook.
+
+### Added
+- **RPC authorization guard** (`@getforma/core/server`): `setRPCGuard(fn)`
+  (global) or the `authorize` option on `handleRPC`/`createRPCMiddleware`.
+  `handleRPC` still performs no authentication by itself — this is the injection
+  point. A guard that throws or rejects fails closed (403, no error leak).
+- **`StreamOptions.suspenseTimeout`**: cap how long streaming SSR waits for each
+  Suspense boundary; on timeout the fallback stays and the stream terminates
+  instead of holding the connection open forever.
+
+### Fixed
+- **RPC arguments are sanitized**: deep-stripped of `__proto__`/`constructor`/
+  `prototype` before the server function runs, so a deep-merging function cannot
+  pollute `Object.prototype`. Safe on frozen/sealed arguments.
+- **`createRPCMiddleware`** now enforces the `X-Forma-RPC: 1` header and a JSON
+  content type (CSRF mitigation), resolves the endpoint path without the query
+  string (a `?query` used to 404), and returns accurate status codes
+  (400/403/404/415/500) instead of 500 for everything.
+- **Streaming SSR** resolves a nested Suspense inside resolved content via its
+  own swap (was emitted literally); a synchronous throw in a Suspense resolver no
+  longer aborts the whole stream (the shell/fallback are preserved).
 ## [1.3.0] - 2026-07-08
 
 DOM correctness. Stacks on 1.2.0. Adds the `svg()` helper and completes

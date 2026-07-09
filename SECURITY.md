@@ -44,8 +44,16 @@ The CDN global builds (`formajs-runtime.global.js`, etc.) ship as readable, unmi
 - **`findBlockedMethod`**: Static analysis + runtime proxy defense-in-depth blocks `constructor`, `__proto__`, `eval`, `Function` access in expressions — including computed bracket concatenation (`x['constr' + 'uctor']`).
 - **SSR `escapeAttr` + scheme detection**: Escapes `<`, `>`, `'`, `"`, `&`. Dangerous-scheme detection (`isDangerousUrl`) blocks `javascript:`, `vbscript:`, and `data:text/html` URIs in URL-bearing attributes, **normalizing away the whitespace/control characters browsers ignore in a scheme** so obfuscated payloads like `java\tscript:` are also blocked. Attribute names are validated and `on*` handler attributes are dropped (case-insensitive). The same rules apply to the `data-bind:*` and `data-list` runtime sinks, in both the standard and hardened builds.
 - **SSR swap script**: `JSON.stringify` output escapes `<` as `\u003c` to prevent `</script>` injection in Suspense streaming.
-- **Island props sanitized**: `JSON.parse` output stripped of `__proto__`, `constructor`, `prototype` keys. **Note:** RPC call arguments are *not yet* stripped equivalently — do not deep-merge untrusted RPC args into existing objects until this lands (tracked for a follow-up release).
+- **Island props sanitized**: `JSON.parse` output stripped of `__proto__`, `constructor`, `prototype` keys. RPC call arguments are stripped equivalently — see the RPC / server functions section below.
 - **CSP parser operator precedence**: Fixed to match JavaScript semantics (addition before comparison, AND before OR).
+
+## RPC / server functions (`@getforma/core/server`)
+
+`handleRPC` executes registered `"use server"` functions. Its protections and their limits:
+
+- **Argument sanitization**: RPC arguments are recursively stripped of `__proto__`, `constructor`, and `prototype` keys before the function is invoked, so a malicious payload cannot pollute `Object.prototype` even if the server function deep-merges its input.
+- **CSRF mitigation (`createRPCMiddleware`)**: requires the `X-Forma-RPC: 1` custom header (which forces a CORS preflight and cannot be attached by a cross-site HTML form) and a `application/json` content type. Requests missing either are rejected (403 / 415) before any function runs.
+- **Authorization is the deployment's responsibility.** `handleRPC` performs **no authentication or authorization by itself.** Install a guard — globally via `setRPCGuard((endpoint, args, ctx) => …)` or per call/middleware via the `authorize` option — to authenticate the caller and authorize the endpoint. Without a guard, any client that can reach the endpoint can invoke any registered function.
 
 ## Supported Versions
 

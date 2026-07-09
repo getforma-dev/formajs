@@ -22,7 +22,7 @@ describe('server integration', () => {
 
   it('blocks forbidden endpoint names', async () => {
     const result = await handleRPC('/rpc/__proto__', { args: [] });
-    expect(result).toEqual({ error: 'Forbidden endpoint name' });
+    expect(result).toMatchObject({ error: 'Forbidden endpoint name', status: 403 });
   });
 
   it('dispatches revalidation event from $$serverFunction payload', async () => {
@@ -72,8 +72,11 @@ describe('server integration', () => {
     statusJson.mockClear();
     json.mockClear();
 
+    // With the CSRF header + JSON content-type present, a missing args array is
+    // a 400 (the header/content-type checks run first and would 403/415).
     await middleware(
-      { method: 'POST', url: '/rpc/x', body: {} },
+      { method: 'POST', url: '/rpc/x', path: '/rpc/x', body: {},
+        headers: { 'x-forma-rpc': '1', 'content-type': 'application/json' } },
       { json, status },
     );
     expect(status).toHaveBeenCalledWith(400);

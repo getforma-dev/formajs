@@ -112,6 +112,28 @@ export interface StreamOptions {
   bootstrapScript?: string;
   /** Whether to inject the $FORMA_SWAP client script (default: true) */
   injectSwapScript?: boolean;
+  /**
+   * Max ms to wait for each Suspense boundary before giving up (its fallback
+   * stays visible and no swap is emitted). Omit or `<= 0` to wait forever — a
+   * never-settling resource would otherwise hang the stream and the HTTP
+   * connection indefinitely.
+   */
+  suspenseTimeout?: number;
+}
+
+/** A Suspense boundary that did not settle within suspenseTimeout. */
+const TIMED_OUT = Symbol('forma-suspense-timeout');
+
+/** Resolve to TIMED_OUT if `p` does not settle within `ms` (no timeout if ms is unset/<=0). */
+function raceTimeout<T>(p: Promise<T>, ms: number | undefined): Promise<T | typeof TIMED_OUT> {
+  if (ms == null || ms <= 0) return p;
+  return new Promise((resolve, reject) => {
+    const t = setTimeout(() => resolve(TIMED_OUT), ms);
+    p.then(
+      (v) => { clearTimeout(t); resolve(v); },
+      (e) => { clearTimeout(t); reject(e); },
+    );
+  });
 }
 
 /**
@@ -175,23 +197,26 @@ export async function* renderToStreamNew(
 
   // Wait for and yield all pending Suspense boundaries
   // Each resolves independently (out-of-order)
+  const suspenseTimeout = options?.suspenseTimeout;
   while (state.pendingBoundaries.length > 0) {
     const pending = [...state.pendingBoundaries];
     state.pendingBoundaries = [];
 
-    // Race all pending boundaries — yield each as it resolves
+    // Race all pending boundaries against the optional timeout — yield each as
+    // it resolves. A timed-out boundary resolves to TIMED_OUT (no swap), so the
+    // loop drains and the generator returns instead of hanging.
     const results = await Promise.allSettled(
       pending.map(async (boundary) => {
-        const html = await boundary.promise;
+        const html = await raceTimeout(boundary.promise, suspenseTimeout);
         return { id: boundary.id, html };
       }),
     );
 
     for (const result of results) {
-      if (result.status === 'fulfilled') {
-        yield getSwapTag(result.value.id, result.value.html);
+      if (result.status === 'fulfilled' && result.value.html !== TIMED_OUT) {
+        yield getSwapTag(result.value.id, result.value.html as string);
       }
-      // On rejection, the fallback stays visible (no swap)
+      // On timeout or rejection, the fallback stays visible (no swap).
     }
   }
 }
@@ -221,10 +246,15 @@ function renderStreamNode(node: unknown, parts: string[], state: StreamState): v
     renderSync(fallback, parts);
     parts.push('</div>');
 
-    // Queue the async resolution
-    const promise = asyncFn().then((resolved: unknown) => {
+    // Queue the async resolution. Invoke asyncFn via Promise.resolve().then so a
+    // SYNCHRONOUS throw becomes a rejection routed through allSettled (fallback
+    // stays) instead of aborting the whole generator before the shell is flushed.
+    // Render resolved content through the Suspense-aware path so a NESTED
+    // forma-suspense inside it is detected and queued onto the shared state
+    // (drained out-of-order), rather than emitted as a literal element.
+    const promise = Promise.resolve().then(asyncFn).then((resolved: unknown) => {
       const resolvedParts: string[] = [];
-      renderSync(resolved, resolvedParts);
+      renderStreamNode(resolved, resolvedParts, state);
       return resolvedParts.join('');
     });
     state.pendingBoundaries.push({ id, promise });
