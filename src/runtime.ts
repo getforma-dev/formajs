@@ -473,9 +473,64 @@ const RE_TERNARY = /^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$/;
 const RE_NULLISH = /^(.+?)\s*\?\?\s*(.+)$/;
 const RE_AND = /^(.+?)\s*&&\s*(.+)$/;
 const RE_OR = /^(.+?)\s*\|\|\s*(.+)$/;
-const RE_COMPARISON = /^(.+?)\s*(===|!==|==|!=|>=|<=|>|<)\s*(.+)$/;
-const RE_MUL = /^(.+?)\s*([*/%])\s*(.+)$/;
-const RE_ADD = /^(.+?)\s*([+-])\s*(.+)$/;
+
+/**
+ * Split an expression at the FIRST top-level occurrence of one of `ops`,
+ * skipping operators that appear inside string/template literals or nested
+ * brackets. This replaces whole-string regexes that mis-split operators inside
+ * string literals (e.g. `'a' + '-' + 'b'` split at the '-' inside the literal).
+ * Splits at the RIGHTMOST top-level binary operator so the recursive descent is
+ * left-associative (`a - b - c` => `(a - b) - c`). A `+`/`-` that follows another
+ * operator or an open bracket is treated as unary and never split on.
+ */
+const UNARY_PRECEDERS = '+-*/%<>=!&|^~(,[{?:';
+function matchBinaryOp(
+  expr: string,
+  ops: readonly string[],
+): { left: string; op: string; right: string } | null {
+  const SQ = String.fromCharCode(39); // '
+  const DQ = String.fromCharCode(34); // "
+  const BT = String.fromCharCode(96); // `
+  const BS = String.fromCharCode(92); // backslash
+  let depth = 0;
+  let inSingle = false, inDouble = false, inTemplate = false, escaped = false;
+  let prevSig = ''; // previous significant (non-space) char at depth 0
+  let bestIdx = -1;
+  let bestOp = '';
+  for (let i = 0; i < expr.length; i++) {
+    const ch = expr[i]!;
+    if (escaped) { escaped = false; continue; }
+    if (ch === BS && (inSingle || inDouble || inTemplate)) { escaped = true; continue; }
+    if (inSingle) { if (ch === SQ) { inSingle = false; prevSig = DQ; } continue; }
+    if (inDouble) { if (ch === DQ) { inDouble = false; prevSig = DQ; } continue; }
+    if (inTemplate) { if (ch === BT) { inTemplate = false; prevSig = DQ; } continue; }
+    if (ch === SQ) { inSingle = true; continue; }
+    if (ch === DQ) { inDouble = true; continue; }
+    if (ch === BT) { inTemplate = true; continue; }
+    if (ch === '(' || ch === '[' || ch === '{') { depth++; prevSig = ch; continue; }
+    if (ch === ')' || ch === ']' || ch === '}') { if (depth > 0) depth--; prevSig = ch; continue; }
+    if (depth !== 0) continue;
+    if (ch === ' ' || ch === '\t' || ch === '\n') continue; // whitespace is transparent
+    if (i > 0) {
+      let matchedOp = '';
+      for (const op of ops) {
+        if (expr.startsWith(op, i)) { matchedOp = op; break; }
+      }
+      if (matchedOp) {
+        const isPlusMinus = matchedOp === '+' || matchedOp === '-';
+        const unary = isPlusMinus && (prevSig === '' || UNARY_PRECEDERS.includes(prevSig));
+        // Record the rightmost BINARY operator (skip unary +/-).
+        if (!unary) { bestIdx = i; bestOp = matchedOp; }
+        i += matchedOp.length - 1;
+        prevSig = matchedOp[matchedOp.length - 1]!;
+        continue;
+      }
+    }
+    prevSig = ch;
+  }
+  if (bestIdx === -1) return null;
+  return { left: expr.slice(0, bestIdx).trim(), op: bestOp, right: expr.slice(bestIdx + bestOp.length).trim() };
+}
 const RE_TEMPLATE_LIT = /^`([^`]*)`$/;
 const RE_TEMPLATE_INTERP = /\$\{([^}]+)\}/g;
 const RE_METHOD_CALL = /^(\w+)\.(\w+)\((.*)\)$/;
@@ -1838,13 +1893,13 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
     }
   }
 
-  // Comparison operators: ===, !==, ==, !=, >=, <=, >, <
-  const compMatch = expr.match(RE_COMPARISON);
+  // Comparison operators: ===, !==, ==, !=, >=, <=, >, < (longest-first)
+  const compMatch = matchBinaryOp(expr, ['===', '!==', '==', '!=', '>=', '<=', '>', '<']);
   if (compMatch) {
-    const left = parseExpression(compMatch[1]!.trim(), scope);
-    const right = parseExpression(compMatch[3]!.trim(), scope);
+    const left = parseExpression(compMatch.left, scope);
+    const right = parseExpression(compMatch.right, scope);
     if (left && right) {
-      const op = compMatch[2]!;
+      const op = compMatch.op;
       return () => {
         const l = left(), r = right();
         switch (op) {
@@ -1863,12 +1918,12 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
 
   // Arithmetic: +, -, *, /, %
   // Addition/subtraction first (lower precedence — checked first), then * / %
-  const addMatch = expr.match(RE_ADD);
+  const addMatch = matchBinaryOp(expr, ['+', '-']);
   if (addMatch) {
-    const left = parseExpression(addMatch[1]!.trim(), scope);
-    const right = parseExpression(addMatch[3]!.trim(), scope);
+    const left = parseExpression(addMatch.left, scope);
+    const right = parseExpression(addMatch.right, scope);
     if (left && right) {
-      const op = addMatch[2]!;
+      const op = addMatch.op;
       return () => {
         const l = left(), r = right();
         if (op === '+') return (l as any) + (r as any);
@@ -1878,12 +1933,12 @@ function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | 
   }
 
   // Multiplication / division / modulo (higher precedence — checked after addition)
-  const mulMatch = expr.match(RE_MUL);
+  const mulMatch = matchBinaryOp(expr, ['*', '/', '%']);
   if (mulMatch) {
-    const left = parseExpression(mulMatch[1]!.trim(), scope);
-    const right = parseExpression(mulMatch[3]!.trim(), scope);
+    const left = parseExpression(mulMatch.left, scope);
+    const right = parseExpression(mulMatch.right, scope);
     if (left && right) {
-      const op = mulMatch[2]!;
+      const op = mulMatch.op;
       return () => {
         const l = left() as number, r = right() as number;
         switch (op) {
@@ -2440,25 +2495,66 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   const modelExpr = (!known || known.has('data-model')) ? el.getAttribute('data-model') : null;
   if (modelExpr) {
     const prop = modelExpr.replace(RE_STRIP_BRACES, '').trim();
-    const getter = scope.getters[prop];
-    const setter = scope.setters[prop];
+    let getter = scope.getters[prop];
+    let setter = scope.setters[prop];
+    if ((!getter || !setter) && prop.includes('.')) {
+      // Member path (e.g. {item.name} inside a data-list row): evaluate to read,
+      // and set the last key on the resolved parent object to write. Reactive
+      // when the parent is a store proxy; a plain object still round-trips the
+      // input value.
+      getter = buildEvaluator(prop, scope);
+      const lastDot = prop.lastIndexOf('.');
+      const basePath = prop.slice(0, lastDot);
+      const key = prop.slice(lastDot + 1);
+      const baseGet = buildEvaluator(basePath, scope);
+      setter = (v: unknown) => {
+        const base = baseGet();
+        if (base != null && typeof base === 'object') (base as Record<string, unknown>)[key] = v;
+      };
+    }
     if (getter && setter) {
       const input = el as HTMLInputElement;
+      const tag = input.tagName;
       const dispose = internalEffect(() => {
         const val = getter();
-        if (input.type === 'checkbox') {
+        const type = input.type;
+        if (type === 'checkbox') {
           input.checked = !!val;
+          // Optional indeterminate companion attribute (opt-in, non-breaking).
+          const indetExpr = el.getAttribute('data-model-indeterminate');
+          if (indetExpr) {
+            const indetGetter = scope.getters[indetExpr.replace(RE_STRIP_BRACES, '').trim()];
+            if (indetGetter) input.indeterminate = !!indetGetter();
+          }
+        } else if (type === 'radio') {
+          input.checked = String(val) === input.value;
+        } else if (tag === 'SELECT' && (input as unknown as HTMLSelectElement).multiple) {
+          const sel = input as unknown as HTMLSelectElement;
+          const arr = Array.isArray(val) ? val.map(String) : [];
+          for (const opt of Array.from(sel.options)) opt.selected = arr.includes(opt.value);
         } else {
           input.value = String(val ?? '');
         }
       });
       disposers.push(dispose);
-      const event = input.type === 'checkbox' ? 'change' : 'input';
+      const event = (input.type === 'checkbox' || input.type === 'radio' || tag === 'SELECT') ? 'change' : 'input';
       const onModelInput = () => {
-        if (input.type === 'checkbox') {
+        const type = input.type;
+        if (type === 'checkbox') {
           setter(input.checked);
-        } else if (input.type === 'number' || input.type === 'range') {
-          setter(Number(input.value));
+        } else if (type === 'radio') {
+          if (input.checked) setter(input.value);
+        } else if (tag === 'SELECT' && (input as unknown as HTMLSelectElement).multiple) {
+          const sel = input as unknown as HTMLSelectElement;
+          setter(Array.from(sel.selectedOptions).map((o) => o.value));
+        } else if (type === 'number' || type === 'range') {
+          const raw = input.value;
+          if (raw === '') {
+            setter(null); // empty numeric clears rather than writing NaN
+          } else {
+            const n = Number(raw);
+            if (!Number.isNaN(n)) setter(n); // ignore partial input like '-' or '1.'
+          }
         } else {
           setter(input.value);
         }
@@ -2677,65 +2773,37 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         // Snapshot old nodes before reconciliation to detect removals
         const prevNodes = new Set(oldNodes);
 
-        if (keyProp) {
-          // ── Property-based keying ──
-          const result = reconcileList(
-            el,
-            oldItems,
-            rawItems,
-            oldNodes,
-            (item: unknown) => String((item as Record<string, unknown>)?.[keyProp] ?? ''),
-            (item: unknown) => {
-              const idx = rawItems.indexOf(item);
-              return createBoundClone(item, idx);
-            },
-            (node: Node, item: unknown) => {
-              const idx = rawItems.indexOf(item);
-              updateBoundClone(node, item, idx);
-            },
-            undefined, // beforeNode
-            listHooks,
-          );
-          // Dispose bindings on nodes that were removed by reconcileList
-          const nextNodes = new Set(result.nodes);
-          for (const n of prevNodes) {
-            if (!nextNodes.has(n)) {
-              // Skip nodes mid-leave — onBeforeRemove already disposed them
-              if ((n as Element).hasAttribute?.('data-forma-leaving')) continue;
-              disposeCloneBindings(n);
-            }
-          }
-          oldItems = result.items;
-          oldNodes = result.nodes;
-        } else {
-          // ── Index-based keying ──
-          // Wrap items so each carries its index as the key.
-          const wrapped: IndexWrapped[] = rawItems.map((item, i) => ({ __idx: i, __item: item }));
-          const oldWrapped = oldItems as IndexWrapped[];
+        // Wrap items so each carries its TRUE loop index. This replaces
+        // rawItems.indexOf(item) (which returned the first match for duplicate /
+        // primitive items, giving wrong/duplicated {index}, and was O(n^2)).
+        const wrapped: IndexWrapped[] = rawItems.map((item, i) => ({ __idx: i, __item: item }));
+        const oldWrapped = oldItems as IndexWrapped[];
+        const keyFn = keyProp
+          ? (w: IndexWrapped) => String((w.__item as Record<string, unknown>)?.[keyProp] ?? '')
+          : (w: IndexWrapped) => w.__idx;
 
-          const result = reconcileList<IndexWrapped>(
-            el,
-            oldWrapped,
-            wrapped,
-            oldNodes,
-            (w: IndexWrapped) => w.__idx,
-            (w: IndexWrapped) => createBoundClone(w.__item, w.__idx),
-            (node: Node, w: IndexWrapped) => updateBoundClone(node, w.__item, w.__idx),
-            undefined, // beforeNode
-            listHooks,
-          );
-          // Dispose bindings on nodes that were removed by reconcileList
-          const nextNodes = new Set(result.nodes);
-          for (const n of prevNodes) {
-            if (!nextNodes.has(n)) {
-              // Skip nodes mid-leave — onBeforeRemove already disposed them
-              if ((n as Element).hasAttribute?.('data-forma-leaving')) continue;
-              disposeCloneBindings(n);
-            }
+        const result = reconcileList<IndexWrapped>(
+          el,
+          oldWrapped,
+          wrapped,
+          oldNodes,
+          keyFn,
+          (w: IndexWrapped) => createBoundClone(w.__item, w.__idx),
+          (node: Node, w: IndexWrapped) => updateBoundClone(node, w.__item, w.__idx),
+          undefined, // beforeNode
+          listHooks,
+        );
+        // Dispose bindings on nodes that were removed by reconcileList
+        const nextNodes = new Set(result.nodes);
+        for (const n of prevNodes) {
+          if (!nextNodes.has(n)) {
+            // Skip nodes mid-leave — onBeforeRemove already disposed them
+            if ((n as Element).hasAttribute?.('data-forma-leaving')) continue;
+            disposeCloneBindings(n);
           }
-          oldItems = result.items;
-          oldNodes = result.nodes;
         }
+        oldItems = result.items;
+        oldNodes = result.nodes;
       });
       disposers.push(dispose);
     }

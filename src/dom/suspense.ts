@@ -87,9 +87,18 @@ export function createSuspense(
 
     if (newNode === currentNode) return;
 
-    // Remove current node
-    if (currentNode && currentNode.parentNode === parent) {
-      parent.removeChild(currentNode);
+    // Remove current node. If it was a DocumentFragment, its children were
+    // transferred into the DOM on insertion (the fragment is now empty and
+    // detached), so scoop them back between the markers — otherwise the resolved
+    // content stays in the DOM alongside the fallback and is lost on re-resolve.
+    if (currentNode) {
+      if (currentNode.parentNode === parent) {
+        parent.removeChild(currentNode);
+      } else if (currentNode.nodeType === 11 /* DOCUMENT_FRAGMENT_NODE */) {
+        while (startMarker.nextSibling && startMarker.nextSibling !== endMarker) {
+          currentNode.appendChild(startMarker.nextSibling);
+        }
+      }
     }
 
     // Insert new node
