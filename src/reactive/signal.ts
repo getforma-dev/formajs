@@ -7,7 +7,18 @@
  * TC39 Signals equivalent: Signal.State
  */
 
-import { signal as createRawSignal, setActiveSub } from 'alien-signals';
+import { signal as createRawSignal, setActiveSub, trigger } from 'alien-signals';
+import { __DEV__ } from './dev.js';
+
+// Debug names live in a side table rather than on the getter's `.name`, so
+// alien-signals' isSignal() (which keys off the bound function name) still
+// recognizes named signals.
+const signalNames = new WeakMap<object, string>();
+
+/** Debug name of a signal getter, if one was provided (dev-only). */
+export function getSignalName(fn: unknown): string | undefined {
+  return typeof fn === 'function' ? signalNames.get(fn as object) : undefined;
+}
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -71,25 +82,41 @@ function applySignalSet<T>(
   v: T | ((prev: T) => T),
   equals?: (prev: T, next: T) => boolean,
 ): void {
+  // Fast path: plain value, no equals — no prev read needed. (A running effect
+  // writing its own dependency is detected at the effect level via the Pending
+  // flag, so signal.ts does not need to do anything special here.)
   if (typeof v !== 'function') {
-    if (equals) {
-      // Read current value without tracking
-      const prevSub = setActiveSub(undefined);
-      const prev = s();
-      setActiveSub(prevSub);
-      if (equals(prev, v)) return; // skip — values are equal
+    if (!equals) {
+      s(v);
+      return;
     }
+    const prevSub = setActiveSub(undefined);
+    const prev = s();
+    setActiveSub(prevSub);
+    if (equals(prev, v)) return; // suppressed by custom equality
     s(v);
+    if (Object.is(prev, v)) forceNotify(s);
     return;
   }
 
-  // Functional update: read prev without tracking
+  // Functional update: read prev without tracking.
   const prevSub = setActiveSub(undefined);
   const prev = s();
   setActiveSub(prevSub);
   const next = (v as (prev: T) => T)(prev);
-  if (equals && equals(prev, next)) return; // skip — values are equal
+  if (equals && equals(prev, next)) return; // suppressed by custom equality
   s(next);
+  if (equals && Object.is(prev, next)) forceNotify(s);
+}
+
+/**
+ * When a custom `equals` decided to APPLY (returned false) but the value is the
+ * identical reference, alien-signals suppresses propagation (its guard is
+ * `pendingValue !== value`). Force-notify subscribers so `equals: () => false`
+ * ("always notify") works for mutate-in-place patterns.
+ */
+function forceNotify<T>(s: RawSignal<T>): void {
+  trigger(() => { s(); });
 }
 
 /**
@@ -114,6 +141,9 @@ function applySignalSet<T>(
 export function createSignal<T>(initialValue: T, options?: SignalOptions<T>): [get: SignalGetter<T>, set: SignalSetter<T>] {
   const s = createRawSignal<T>(initialValue) as RawSignal<T>;
   const getter = s as unknown as SignalGetter<T>;
+  if (__DEV__ && options?.name) {
+    signalNames.set(getter as object, options.name);
+  }
   const eq = options?.equals;
   const setter: SignalSetter<T> = (v: T | ((prev: T) => T)) => applySignalSet(s, v, eq);
 

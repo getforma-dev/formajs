@@ -2,6 +2,41 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.1.0] - 2026-07-08
+
+Reactive-core correctness. Several fixes change observable behavior (they correct
+long-standing bugs), hence a minor bump. Stacks on the 1.0.10 security release.
+
+### Fixed
+- **Effect cleanups are no longer dropped.** The `skipCleanupInfra` fast-path
+  latched after a clean first run and then silently discarded — or cross-registered
+  onto a sibling — any `onCleanup()`/returned cleanup registered on a later run.
+- **An effect that writes a signal it depends on now re-runs** to observe the value
+  (alien-signals swallowed the self-notify). Detection is precise: writes to signals
+  the effect does not depend on do not cause a spurious re-run; genuine cycles are
+  bounded and reported.
+- **Nested effects are owned by their parent generation**, so their cleanups run when
+  the parent re-runs and on disposal (previously leaked via alien's raw teardown).
+  Teardown order is children-before-parents on both the re-run and dispose paths.
+- **`createRoot` dispose() during setup** now defers teardown so work created after
+  the call is also disposed (was a permanent leak).
+- **Computed getters cache and rethrow errors** until a dependency changes (TC39/Solid),
+  instead of returning a stale value; errors route through `onError`.
+- **`createResource`**: a synchronously-thrown fetcher is captured (loading cleared,
+  Suspense balanced); the `AbortSignal` is passed to the fetcher and aborted on
+  refetch and on dispose; loading/error transitions are batched (no glitch frame).
+- **`equals: () => false`** now force-notifies for identical references ("always
+  notify"), not only suppresses.
+- **`SignalOptions.name`** no longer breaks `isSignal()` (stored in a side table).
+
+### Added
+- `getOwner()` / `runWithOwner()` for owning work created outside the synchronous
+  root scope; `getSignalName()`; `ResourceFetcherInfo`.
+- `onError()` supports multiple handlers and returns an unsubscribe function.
+
+### Changed
+- `__DEV__` defaults to production-safe (false) when the environment is
+  indeterminate; opt into dev via a global `__FORMA_DEV__`.
 ## [1.0.10] - 2026-07-08
 
 ### Security

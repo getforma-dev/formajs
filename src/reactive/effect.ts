@@ -7,8 +7,17 @@
  * TC39 Signals equivalent: Signal.subtle.Watcher (effect is a userland concept)
  */
 
-import { effect as rawEffect } from 'alien-signals';
-import { hasActiveRoot, registerDisposer } from './root.js';
+import { effect as rawEffect, getActiveSub } from 'alien-signals';
+import {
+  hasActiveRoot,
+  registerDisposer,
+  getOwner,
+  runWithOwner,
+  registerOwnerDisposer,
+  createChildOwner,
+  disposeOwner,
+  type Owner,
+} from './root.js';
 import { setCleanupCollector } from './cleanup.js';
 import { reportError } from './dev.js';
 
@@ -21,6 +30,23 @@ const MAX_REENTRANT_RUNS = 100;
 const pool: (() => void)[][] = [];
 for (let i = 0; i < POOL_SIZE; i++) pool.push([]);
 let poolIdx = POOL_SIZE;
+
+// ---------------------------------------------------------------------------
+// Self-write detection — alien-signals' propagate() never notifies a subscriber
+// that is currently running, so an effect writing a signal it depends on is left
+// stale. When that happens alien-signals still sets the Pending flag on the
+// running subscriber's node (but skips the re-run). We read that flag on the
+// EFFECT's own node after each run and loop, so a self-dependent effect
+// converges. Reading the effect's own node (not a global) makes this precise:
+// writes to signals the effect does not depend on, writes from a nested computed,
+// and a nested effect's self-write never set THIS node's Pending, so they cause
+// no spurious re-run. It also works through batch() (Pending is set at flush).
+// ---------------------------------------------------------------------------
+
+// alien-signals ReactiveFlags.Pending (not exported from the package root).
+const PENDING = 32;
+
+interface SubNode { flags: number; }
 
 function acquireArray(): (() => void)[] {
   if (poolIdx > 0) {
@@ -96,7 +122,18 @@ export function internalEffect(fn: () => void): () => void {
 }
 
 export function createEffect(fn: () => void | (() => void)): () => void {
-  const shouldRegister = hasActiveRoot();
+  // Capture the owner active at creation time so this effect's disposer is owned
+  // by whatever created it — a root, or (for a nested effect) the parent effect's
+  // current child-owner. This replaces a hasActiveRoot() snapshot so nested
+  // effects created during a parent re-run (when no root is lexically active) are
+  // still owned and disposed.
+  const ownerAtCreate = getOwner();
+
+  // This effect owns its nested effects/roots via a reusable child-owner: it is
+  // disposed (nested cleanups run) at the top of each run and on disposal, then
+  // reused for the next generation. One small allocation per createEffect; the
+  // hot DOM path uses internalEffect, which has no child-owner.
+  const childOwner: Owner = createChildOwner();
 
   // Most effects have zero or one cleanup. Track the single-cleanup case
   // without array allocation; only promote to pooled array when needed.
@@ -120,20 +157,16 @@ export function createEffect(fn: () => void | (() => void)): () => void {
     nextCleanup = cb;
   };
 
-  // "Engine Compression" exploit: most effects never use cleanup (onCleanup()
-  // or return value). After the first clean run, we know this effect is
-  // "cleanup-free" and can skip the entire cleanup infrastructure on re-runs.
-  // This saves 4 function calls per re-run: acquireArray, setCleanupCollector,
-  // releaseArray, and bag inspection. Like the engine compression ratio exploit —
-  // the "rules" say we should always prepare for cleanup, but we measure at
-  // "room temperature" (first run) and exploit the gap.
-  let skipCleanupInfra = false;
-  let firstRun = true;
-  let running = false;
-  let rerunRequested = false;
-
   const runOnce = () => {
-    // Run and clear previous cleanups (only if any exist).
+    // Dispose the previous generation of nested effects/roots (running their
+    // cleanups) FIRST — children before parents, matching wrappedDispose so the
+    // teardown order is consistent between the re-run and dispose paths and a
+    // nested cleanup never observes parent-owned state already freed. (alien's
+    // raw unwatched teardown of a nested effect bypasses our cleanup, so we own
+    // nested work explicitly.)
+    disposeOwner(childOwner);
+
+    // Run and clear this effect's own previous cleanups.
     if (cleanup !== undefined) {
       runCleanup(cleanup);
       cleanup = undefined;
@@ -144,78 +177,63 @@ export function createEffect(fn: () => void | (() => void)): () => void {
       cleanupBag = undefined;
     }
 
-    // Ultra-fast path: this effect has proven it doesn't use cleanup.
-    // Skip acquireArray + setCleanupCollector + bag checks + releaseArray.
-    if (skipCleanupInfra) {
-      try { fn(); } catch (e) { reportError(e, 'effect'); }
-      return;
-    }
-
     nextCleanup = undefined;
     nextCleanupBag = undefined;
 
-    // Full path: install collector for onCleanup() calls.
+    // Always install the collector so onCleanup()/returned cleanups are captured
+    // on EVERY run. (The old skipCleanupInfra fast-path latched after a clean
+    // first run and then silently dropped — or cross-registered — cleanups
+    // registered on later runs.) The single-cleanup/pooled-array promotion below
+    // keeps the zero/one-cleanup case allocation-free.
     const prevCollector = setCleanupCollector(addCleanup);
 
     try {
-      const result = fn();
-
+      // Run the body with this effect's child-owner installed so any nested
+      // effects/roots it creates are owned by this generation.
+      const result = runWithOwner(childOwner, fn);
       if (typeof result === 'function') {
         addCleanup(result as () => void);
       }
-
-      // Hot path: no cleanups registered or returned — enable ultra-fast path.
-      if (nextCleanup === undefined && nextCleanupBag === undefined) {
-        // First clean run → enable ultra-fast path for all subsequent runs
-        if (firstRun) skipCleanupInfra = true;
-        return;
-      }
-
+      // Commit this run's cleanups. When none were registered, both stay
+      // undefined (allocation-free).
       if (nextCleanupBag !== undefined) {
         cleanupBag = nextCleanupBag;
-      } else {
+      } else if (nextCleanup !== undefined) {
         cleanup = nextCleanup;
       }
     } catch (e) {
       reportError(e, 'effect');
-
       if (nextCleanupBag !== undefined) {
         cleanupBag = nextCleanupBag;
-      } else {
+      } else if (nextCleanup !== undefined) {
         cleanup = nextCleanup;
       }
     } finally {
       setCleanupCollector(prevCollector);
-      firstRun = false;
     }
   };
 
   const safeFn = () => {
-    if (running) {
-      rerunRequested = true;
-      return;
-    }
-
-    running = true;
-    try {
-      let reentrantRuns = 0;
-      do {
-        rerunRequested = false;
-        runOnce();
-        if (rerunRequested) {
-          reentrantRuns++;
-          if (reentrantRuns >= MAX_REENTRANT_RUNS) {
-            reportError(
-              new Error(`createEffect exceeded ${MAX_REENTRANT_RUNS} re-entrant runs`),
-              'effect',
-            );
-            rerunRequested = false;
-          }
-        }
-      } while (rerunRequested);
-    } finally {
-      running = false;
-    }
+    // alien-signals sets activeSub to this effect's node for the duration of this
+    // callback, so getActiveSub() is our own node. If the body writes a signal we
+    // depend on, alien-signals marks this node Pending but skips the re-run; we
+    // detect that and run again, bounded so a genuine cycle is reported instead of
+    // hanging.
+    const node = getActiveSub() as SubNode | undefined;
+    let reentrantRuns = 0;
+    do {
+      if (node) node.flags &= ~PENDING; // clear before running so we detect a fresh set
+      runOnce();
+      if (node === undefined || (node.flags & PENDING) === 0) break;
+      if (++reentrantRuns >= MAX_REENTRANT_RUNS) {
+        node.flags &= ~PENDING;
+        reportError(
+          new Error(`createEffect exceeded ${MAX_REENTRANT_RUNS} self-triggered re-runs (cycle?)`),
+          'effect',
+        );
+        break;
+      }
+    } while (true);
   };
 
   const dispose = rawEffect(safeFn);
@@ -226,6 +244,8 @@ export function createEffect(fn: () => void | (() => void)): () => void {
     if (disposed) return;
     disposed = true;
     dispose();
+    // Dispose nested effects/roots this effect owns, then run its own cleanups.
+    disposeOwner(childOwner);
     if (cleanup !== undefined) {
       runCleanup(cleanup);
       cleanup = undefined;
@@ -237,9 +257,10 @@ export function createEffect(fn: () => void | (() => void)): () => void {
     }
   };
 
-  // Register in current root scope (if any)
-  if (shouldRegister) {
-    registerDisposer(wrappedDispose);
+  // Register this effect's disposer with the owner active at creation (a root, or
+  // a parent effect's child-owner).
+  if (ownerAtCreate) {
+    registerOwnerDisposer(ownerAtCreate, wrappedDispose);
   }
 
   return wrappedDispose;

@@ -23,11 +23,65 @@ import { effectScope as rawEffectScope, setActiveSub } from 'alien-signals';
 let currentRoot: RootScope | null = null;
 const rootStack: (RootScope | null)[] = [];
 
-interface RootScope {
-  /** Userland disposers (event listeners, DOM refs, timers, etc.) */
+/**
+ * The minimal ownership unit: something that holds disposers. A {@link RootScope}
+ * is an Owner with an extra alien-signals scope dispose. Effects use lightweight
+ * child owners (no scopeDispose) to own their nested effects generation-by-generation.
+ */
+export interface Owner {
+  /** Disposers to run when this owner is torn down. */
   disposers: (() => void)[];
+}
+
+interface RootScope extends Owner {
   /** alien-signals effect scope dispose — tears down all reactive effects */
   scopeDispose: (() => void) | null;
+}
+
+/**
+ * The owner that new disposers register with. Inside a root this equals the
+ * current {@link RootScope}; {@link runWithOwner} can temporarily point it at any
+ * owner so work created outside the original synchronous scope is still owned.
+ */
+let currentOwner: Owner | null = null;
+
+/** @internal — the owner disposers currently register with (or null). */
+export function getOwner(): Owner | null {
+  return currentOwner;
+}
+
+/**
+ * Run `fn` with `owner` installed as the current owner, restoring the previous
+ * owner afterwards. Lets effects/roots created asynchronously (after the
+ * original root callback returned) still be owned and disposed.
+ */
+export function runWithOwner<T>(owner: Owner | null, fn: () => T): T {
+  const prev = currentOwner;
+  currentOwner = owner;
+  try {
+    return fn();
+  } finally {
+    currentOwner = prev;
+  }
+}
+
+/** @internal — register a disposer directly with a specific owner. */
+export function registerOwnerDisposer(owner: Owner, dispose: () => void): void {
+  owner.disposers.push(dispose);
+}
+
+/** @internal — a fresh lightweight owner (no alien scope). Used per effect run. */
+export function createChildOwner(): Owner {
+  return { disposers: [] };
+}
+
+/** @internal — run and clear an owner's disposers (guarded so one throw doesn't abort the rest). */
+export function disposeOwner(owner: Owner): void {
+  const ds = owner.disposers;
+  for (const d of ds) {
+    try { d(); } catch { /* ensure all disposers run */ }
+  }
+  ds.length = 0;
 }
 
 // ---------------------------------------------------------------------------
@@ -40,21 +94,47 @@ function createRootImpl<T>(fn: (dispose: () => void) => T, owned: boolean): T {
 
   rootStack.push(currentRoot);
   currentRoot = scope;
+  const prevOwner = currentOwner;
+  currentOwner = scope;
 
   let disposed = false;
-  const dispose = () => {
-    if (disposed) return; // idempotent — safe to call after parent already disposed this
-    disposed = true;
+  let setupComplete = false;
+  let disposeRequestedDuringSetup = false;
+
+  const runDisposers = () => {
+    // Run userland disposers (includes child root disposes), guarded so one
+    // throw does not abort the rest. Draining means a later runTeardown only
+    // sees disposers registered since this drain.
+    for (const d of scope.disposers) {
+      try { d(); } catch { /* ensure all disposers run */ }
+    }
+    scope.disposers.length = 0;
+  };
+
+  const runTeardown = () => {
     // Dispose alien-signals effect scope first (reactive graph cleanup)
     if (scope.scopeDispose) {
       try { scope.scopeDispose(); } catch { /* ensure userland disposers still run */ }
       scope.scopeDispose = null;
     }
-    // Then run userland disposers (includes child root disposes)
-    for (const d of scope.disposers) {
-      try { d(); } catch { /* ensure all disposers run */ }
+    runDisposers();
+  };
+
+  const dispose = () => {
+    if (disposed) return; // idempotent — safe to call after parent already disposed this
+    disposed = true;
+    // dispose() called synchronously DURING setup: scope.scopeDispose is not yet
+    // assigned and anything created AFTER this call has not registered. Eagerly
+    // run the disposers already registered (so cleanup for work created BEFORE
+    // this call is synchronous, Solid-style), and defer the rest — the alien
+    // scope dispose plus any after-created disposers — until setup finishes.
+    // Without the deferral, everything created afterward would leak.
+    if (!setupComplete) {
+      disposeRequestedDuringSetup = true;
+      runDisposers();
+      return;
     }
-    scope.disposers.length = 0;
+    runTeardown();
   };
 
   // Auto-register with parent root so child dies when parent dies (Solid-style)
@@ -81,8 +161,16 @@ function createRootImpl<T>(fn: (dispose: () => void) => T, owned: boolean): T {
         setActiveSub(prevSub);
       }
     }
+    // Setup finished: scope.scopeDispose is assigned and all in-setup effects /
+    // child-roots have registered. If dispose() was requested during setup, run
+    // the deferred teardown now so everything created in the callback is torn down.
+    setupComplete = true;
+    if (disposeRequestedDuringSetup) {
+      runTeardown();
+    }
   } finally {
     currentRoot = rootStack.pop() ?? null;
+    currentOwner = prevOwner;
   }
 
   return result!;
@@ -136,17 +224,17 @@ export function createUnownedRoot<T>(fn: (dispose: () => void) => T): T {
 
 /**
  * @internal — called by createEffect and DOM primitives to register disposers
- * in the current root.
+ * with the current owner (a root scope, or an owner installed via runWithOwner).
  */
 export function registerDisposer(dispose: () => void): void {
-  if (currentRoot) {
-    currentRoot.disposers.push(dispose);
+  if (currentOwner) {
+    currentOwner.disposers.push(dispose);
   }
 }
 
 /**
- * @internal — check if we're inside a root scope.
+ * @internal — check if we're inside an owner scope (root or runWithOwner).
  */
 export function hasActiveRoot(): boolean {
-  return currentRoot !== null;
+  return currentOwner !== null;
 }

@@ -9,6 +9,7 @@
 export {
   createSignal,
   value,
+  getSignalName,
   type SignalGetter,
   type SignalSetter,
   type SignalOptions,
@@ -20,14 +21,26 @@ export { batch } from './batch.js';
 
 // Utilities
 export { untrack } from './untrack.js';
-export { createRoot, createUnownedRoot, registerDisposer } from './root.js';
+export {
+  createRoot,
+  createUnownedRoot,
+  registerDisposer,
+  getOwner,
+  runWithOwner,
+  type Owner,
+} from './root.js';
 export { onCleanup } from './cleanup.js';
 export { on } from './on.js';
 
 // Containers & patterns
 export { createRef, type Ref } from './ref.js';
 export { createReducer, type Dispatch } from './reducer.js';
-export { createResource, type Resource, type ResourceOptions } from './resource.js';
+export {
+  createResource,
+  type Resource,
+  type ResourceOptions,
+  type ResourceFetcherInfo,
+} from './resource.js';
 
 // Suspense context (shared between reactive/resource and dom/suspense)
 export {

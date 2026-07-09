@@ -11,7 +11,15 @@
 import { createSignal, type SignalGetter } from './signal.js';
 import { internalEffect } from './effect.js';
 import { untrack } from './untrack.js';
+import { batch } from './batch.js';
+import { hasActiveRoot, registerDisposer } from './root.js';
 import { getSuspenseContext } from './suspense-context.js';
+
+/** Info passed to a resource fetcher — carries the AbortSignal for this fetch. */
+export interface ResourceFetcherInfo {
+  /** Aborted when the source changes / the resource refetches or is disposed. */
+  signal: AbortSignal;
+}
 
 /** An async data resource with reactive loading and error state. */
 export interface Resource<T> {
@@ -66,7 +74,7 @@ export interface ResourceOptions<T> {
  */
 export function createResource<T, S = true>(
   source: SignalGetter<S>,
-  fetcher: (source: S) => Promise<T>,
+  fetcher: (source: S, info: ResourceFetcherInfo) => Promise<T>,
   options?: ResourceOptions<T>,
 ): Resource<T> {
   const [data, setData] = createSignal<T | undefined>(options?.initialValue);
@@ -102,31 +110,49 @@ export function createResource<T, S = true>(
       suspensePending = true;
     }
 
-    setLoading(true);
-    setError(undefined);
+    // Batch the paired start writes so subscribers never see a glitch frame
+    // (loading=true with a stale error from the previous fetch).
+    batch(() => {
+      setLoading(true);
+      setError(undefined);
+    });
 
-    Promise.resolve(fetcher(sourceValue))
+    // Route a synchronously-thrown fetcher through the same rejection path so the
+    // .catch/.finally below run — otherwise loading stays true forever and the
+    // Suspense increment is never matched by a decrement.
+    let promise: Promise<T>;
+    try {
+      promise = Promise.resolve(fetcher(sourceValue, { signal: controller.signal }));
+    } catch (err) {
+      promise = Promise.reject(err);
+    }
+
+    promise
       .then((result) => {
         // Only apply if this is still the latest fetch and wasn't aborted.
+        // Batch data + loading so subscribers see one atomic settled frame.
         if (isLatest() && !controller.signal.aborted) {
-          setData(() => result);
+          batch(() => {
+            setData(() => result);
+            setLoading(false);
+          });
         }
       })
       .catch((err) => {
-        if (isLatest() && !controller.signal.aborted) {
-          // Ignore abort errors
-          if (err?.name !== 'AbortError') {
+        if (isLatest() && !controller.signal.aborted && err?.name !== 'AbortError') {
+          batch(() => {
             setError(err);
-          }
+            setLoading(false);
+          });
         }
       })
       .finally(() => {
         if (suspensePending) suspenseCtx?.decrement();
-        if (isLatest()) {
-          setLoading(false);
-          if (abortController === controller) {
-            abortController = null; // Release controller for GC
-          }
+        // loading is cleared atomically in .then/.catch above; a stale/aborted
+        // settlement leaves it to the newer fetch (or the dispose) and writes no
+        // state here.
+        if (isLatest() && abortController === controller) {
+          abortController = null; // Release controller for GC
         }
       });
   };
@@ -136,6 +162,21 @@ export function createResource<T, S = true>(
     source(); // track the source signal
     doFetch();
   });
+
+  // Abort any in-flight fetch when the owning root is disposed. The fetchVersion
+  // guard already neutralizes late settlements; this also cancels fetchers that
+  // honor the AbortSignal.
+  if (hasActiveRoot()) {
+    registerDisposer(() => {
+      // Invalidate any in-flight fetch so its late settlement writes no state
+      // (isLatest() becomes false), then abort it.
+      fetchVersion++;
+      if (abortController) {
+        abortController.abort();
+        abortController = null;
+      }
+    });
+  }
 
   // Build the resource object
   const resource = (() => data()) as Resource<T>;
