@@ -2,6 +2,60 @@
 
 All notable changes to this project will be documented in this file.
 
+## [1.0.10] - 2026-07-08
+
+### Security
+- **SSR `javascript:`/`vbscript:` URI filter no longer bypassable with control characters.** Browsers strip tabs/newlines/control chars from a URL scheme before interpreting it, so payloads like `java\tscript:alert(1)` executed despite the old contiguous-string check. Scheme detection now normalizes the value the same way the browser does before testing (`src/security/url-safety.ts`, used by `src/ssr/render.ts` and `src/ssr/stream.ts`).
+- **`data-bind:*` and `data-list` row templates can no longer inject `javascript:` URLs or inline event handlers.** The `setAttribute` sinks now reject `on*` attribute names and dangerous URL schemes, in **both** the standard and hardened/CSP runtime builds (the sinks were identical in both; hardening previously only blocked `eval`).
+- **SSR attribute-name handling hardened.** Event-handler filtering is now case-insensitive (`OnClick` was previously emitted), and malformed prop keys (e.g. containing whitespace/`=`) can no longer inject additional attributes. Renderer and streaming paths share one `renderAttr` helper so the rules cannot drift.
+
+### Docs
+- Corrected the inaccurate "~15 KB gzipped" size claim across `package.json`, `README.md`, and the runtime header: the core entry is ~8 KB gzipped and the full CDN runtime bundle is ~24 KB gzipped.
+- `SECURITY.md` / `CSP.md` updated to match actual behavior.
+
+### CI
+- Bundle-size gate now enforces a limit on the CDN runtime bundle too (previously only `index.js` was gated; the larger runtime bundle was printed but never enforced). Limits: index ≤ 12 KB, runtime ≤ 28 KB gzipped.
+
+### Chore
+- Backfilled changelog entries for 1.0.2–1.0.9 (below).
+
+## [1.0.9] - 2026-04-10
+
+### Fixed
+- Use `createUnownedRoot` in `mount`/`activateIslands`; auto-register `createRoot` with its parent plus disposal cleanup in primitives.
+
+## [1.0.6] - 2026-03-31
+
+### Fixed
+- **CSP-safe style handling** — replaced `cssText` assignment with CSSOM parsing so inline styles work under a strict Content-Security-Policy.
+
+### Docs
+- Added the CSP guide (`CSP.md`) covering strict-CSP handling, common issues, and version history.
+
+## [1.0.8] - 2026-03-27
+
+### Fixed
+- Default `elseFn` in `createShow` to prevent a crash when called with two arguments.
+
+## [1.0.7] - 2026-03-17
+
+### Fixed
+- `createFetch` fire-and-forget `execute()` now `void`-prefixed.
+- SVG `className` crash and array return from function children.
+- `createFetch` uses `window.location.origin` as the default base URL.
+
+### Changed
+- CI Node matrix updated 18 → 20/22/24.
+
+## [1.0.5] - 2026-03-16
+
+### Fixed
+- Export `template` and `templateMany` from the main barrel.
+- SVG `className` crash and array return from function children; `createFetch` default base URL.
+
+### Notes
+- 1.0.2–1.0.4 were docs/packaging/CI iterations (npm keywords, issue templates, TypeDoc GitHub Pages deploy, trusted publishing (OIDC) migration) with no runtime code changes.
+
 ## [1.0.1] - 2026-03-16
 
 ### Fixed

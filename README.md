@@ -5,7 +5,7 @@
 [![Socket Badge](https://socket.dev/api/badge/npm/package/@getforma/core)](https://socket.dev/npm/package/@getforma/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Reactive DOM library with fine-grained signals. No virtual DOM — signals update only the DOM nodes that changed. Components run once. ~15 KB gzipped.
+Reactive DOM library with fine-grained signals. No virtual DOM — signals update only the DOM nodes that changed. Components run once. The core entry (`@getforma/core`) is ~8 KB gzipped; the full HTML runtime bundle (`formajs-runtime.global.js`) is ~24 KB gzipped.
 
 ```tsx
 import { createSignal, h, mount } from "@getforma/core";

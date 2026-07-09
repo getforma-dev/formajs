@@ -31,9 +31,33 @@ export function escapeAttr(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
-// Dangerous URI detection for href, src, action, formaction attributes
+import { isDangerousUrl, isUrlAttr, isEventHandlerAttr, isSafeAttrName } from '../security/url-safety.js';
+
+// Dangerous URI detection for href, src, action, formaction attributes.
+// Retained for backwards compatibility with external importers; the actual
+// scheme check now goes through `isDangerousUrl`, which additionally strips the
+// control characters browsers ignore in a URL scheme (see security/url-safety).
 export const DANGEROUS_URI_ATTRS = new Set(['href', 'src', 'action', 'formaction']);
 export const DANGEROUS_URI_RE = /^\s*(javascript|vbscript|data\s*:\s*text\/html)/i;
+
+/**
+ * Decide whether a resolved prop should be emitted as an attribute, and return
+ * the escaped `name="value"` fragment (or `name` for boolean `true`). Returns
+ * null when the attribute must be dropped for safety. Shared by the plain and
+ * hydration-aware renderers so the security rules cannot drift apart.
+ */
+export function renderAttr(key: string, resolved: unknown): string | null {
+  const attrName = PROP_TO_ATTR[key] ?? key;
+  // Never emit event-handler or malformed attribute names — an attacker who
+  // controls a prop key could otherwise inject `onload=…` or break out of the
+  // attribute entirely with whitespace/quotes.
+  if (isEventHandlerAttr(attrName) || !isSafeAttrName(attrName)) return null;
+  if (resolved === true) return ' ' + attrName;
+  if (resolved === false || resolved == null) return null;
+  const str = String(resolved);
+  if (isUrlAttr(attrName) && isDangerousUrl(str)) return null;
+  return ' ' + attrName + '="' + escapeAttr(str) + '"';
+}
 
 export interface VNode {
   tag: string;
@@ -103,22 +127,15 @@ function renderToBuffer(node: unknown, parts: string[]): void {
     // Render props as attributes
     if (props) {
       for (const [key, value] of Object.entries(props)) {
-        // Skip event handlers, refs, and internal props
-        if (key.startsWith('on') || key === 'ref' || key === 'dangerouslySetInnerHTML') continue;
-
-        const attrName = PROP_TO_ATTR[key] ?? key;
+        // Skip refs and internal props; event handlers and unsafe attribute
+        // names are dropped inside renderAttr.
+        if (key === 'ref' || key === 'dangerouslySetInnerHTML') continue;
 
         // Resolve reactive values
         const resolved = typeof value === 'function' ? value() : value;
 
-        if (resolved === true) {
-          parts.push(' ', attrName);
-        } else if (resolved !== false && resolved != null) {
-          if (DANGEROUS_URI_ATTRS.has(attrName) && typeof resolved === 'string' && DANGEROUS_URI_RE.test(resolved)) {
-            continue; // skip dangerous URI
-          }
-          parts.push(' ', attrName, '="', escapeAttr(String(resolved)), '"');
-        }
+        const frag = renderAttr(key, resolved);
+        if (frag !== null) parts.push(frag);
       }
     }
 
@@ -246,22 +263,15 @@ function renderToBufferHydrated(node: unknown, parts: string[], ctx: HydrationCo
     // Render props as attributes
     if (props) {
       for (const [key, value] of Object.entries(props)) {
-        // Skip event handlers, refs, and internal props
-        if (key.startsWith('on') || key === 'ref' || key === 'dangerouslySetInnerHTML') continue;
-
-        const attrName = PROP_TO_ATTR[key] ?? key;
+        // Skip refs and internal props; event handlers and unsafe attribute
+        // names are dropped inside renderAttr.
+        if (key === 'ref' || key === 'dangerouslySetInnerHTML') continue;
 
         // Resolve reactive values
         const resolved = typeof value === 'function' ? value() : value;
 
-        if (resolved === true) {
-          parts.push(' ', attrName);
-        } else if (resolved !== false && resolved != null) {
-          if (DANGEROUS_URI_ATTRS.has(attrName) && typeof resolved === 'string' && DANGEROUS_URI_RE.test(resolved)) {
-            continue; // skip dangerous URI
-          }
-          parts.push(' ', attrName, '="', escapeAttr(String(resolved)), '"');
-        }
+        const frag = renderAttr(key, resolved);
+        if (frag !== null) parts.push(frag);
       }
     }
 
