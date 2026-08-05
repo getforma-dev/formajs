@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createSignal, createRoot } from 'forma/reactive';
 import { mount } from '../mount';
+import { activateIslands } from '../activate';
 import {
   hydrating,
   setHydrating,
@@ -179,7 +180,6 @@ describe('collectMarkers', () => {
     expect(entry.end).toBeInstanceOf(Comment);
     expect((entry.start as Comment).data).toBe('f:s0');
     expect((entry.end as Comment).data).toBe('/f:s0');
-    expect(entry.cachedContent).toBeNull();
   });
 
   it('collects interleaved text and show markers', () => {
@@ -328,6 +328,82 @@ describe('applyDynamicProps', () => {
   it('handles null props gracefully', () => {
     const el = document.createElement('div');
     expect(() => applyDynamicProps(el, null)).not.toThrow();
+  });
+
+  it('maps className/htmlFor/tabIndex to their HTML attribute names', () => {
+    const el = document.createElement('label');
+    let dispose: (() => void) | undefined;
+
+    createRoot((d) => {
+      dispose = d;
+      const [cls, setCls] = createSignal('a');
+      applyDynamicProps(el, {
+        className: cls,
+        htmlFor: () => 'field',
+        tabIndex: () => 3,
+      });
+
+      // The raw prop name would produce classname="a", which styles nothing.
+      expect(el.getAttribute('class')).toBe('a');
+      expect(el.hasAttribute('classname')).toBe(false);
+      expect(el.getAttribute('for')).toBe('field');
+      expect(el.getAttribute('tabindex')).toBe('3');
+
+      setCls('b');
+      expect(el.getAttribute('class')).toBe('b');
+    });
+
+    dispose?.();
+  });
+
+  it('calls a function ref with the adopted element instead of writing a ref attribute', () => {
+    const el = document.createElement('input');
+    const seen: Element[] = [];
+
+    applyDynamicProps(el, { ref: (node: Element) => { seen.push(node); } });
+
+    expect(seen).toEqual([el]);
+    expect(el.hasAttribute('ref')).toBe(false);
+  });
+
+  it('never writes an inline event-handler attribute for an odd-cased on* prop', () => {
+    const el = document.createElement('img');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    applyDynamicProps(el, { ONERROR: () => 'alert(1)', Onload: () => 'alert(2)' });
+
+    // setAttribute lowercases qualified names on HTML elements, so writing
+    // these would install real inline handlers the SSR renderer drops.
+    expect(el.hasAttribute('onerror')).toBe(false);
+    expect(el.hasAttribute('onload')).toBe(false);
+    expect(el.attributes.length).toBe(0);
+
+    warn.mockRestore();
+  });
+
+  it('removes a URL attribute whose reactive value uses a dangerous scheme', () => {
+    const el = document.createElement('a');
+    el.setAttribute('href', '/safe');
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    let dispose: (() => void) | undefined;
+
+    createRoot((d) => {
+      dispose = d;
+      const [url, setUrl] = createSignal('/ok');
+      applyDynamicProps(el, { href: url });
+      expect(el.getAttribute('href')).toBe('/ok');
+
+      // Control characters are stripped by the browser before the scheme is
+      // read, so this is a live javascript: URL.
+      setUrl('java	script:alert(1)');
+      expect(el.hasAttribute('href')).toBe(false);
+
+      setUrl('/back-to-safe');
+      expect(el.getAttribute('href')).toBe('/back-to-safe');
+    });
+
+    warn.mockRestore();
+    dispose?.();
   });
 });
 
@@ -831,6 +907,95 @@ describe('adoptNode', () => {
 
     expect(ssrEl.querySelector('.alert-error')).toBeTruthy();
     expect(ssrEl.querySelector('.alert-info')).toBeTruthy();
+  });
+
+  it('does not duplicate a nested island that already has an SSR shell', () => {
+    // The compiler always emits a shell element between ISLAND_START/ISLAND_END;
+    // activateIslands hydrates it. Building our descriptor into the region too
+    // would put a second copy of the island next to the server's.
+    const desc: HydrationDescriptor = {
+      type: 'element',
+      tag: 'div',
+      props: null,
+      children: [
+        { type: 'element' as const, tag: 'section', props: { class: 'child' }, children: ['from client'] },
+        { type: 'element' as const, tag: 'form', props: null, children: [] },
+      ],
+    };
+
+    const ssrEl = document.createElement('div');
+    ssrEl.appendChild(document.createComment('f:i0'));
+    const shell = document.createElement('section');
+    shell.setAttribute('data-forma-island', '1');
+    shell.setAttribute('data-forma-component', 'Child');
+    shell.setAttribute('class', 'child');
+    shell.textContent = 'from server';
+    ssrEl.appendChild(shell);
+    ssrEl.appendChild(document.createComment('/f:i0'));
+    const form = document.createElement('form');
+    ssrEl.appendChild(form);
+
+    adoptNode(desc, ssrEl);
+
+    // Exactly one section, still the server's, untouched.
+    expect(ssrEl.querySelectorAll('section').length).toBe(1);
+    expect(ssrEl.querySelector('section')).toBe(shell);
+    expect(shell.textContent).toBe('from server');
+    // The cursor moved past the whole region, so the next child still adopts.
+    expect(ssrEl.querySelector('form')).toBe(form);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Marker parsing — authored comments must not be mistaken for markers
+// ---------------------------------------------------------------------------
+
+describe('marker parsing', () => {
+  it('ignores an authored comment that only shares a marker prefix', () => {
+    const root = document.createElement('div');
+    root.innerHTML =
+      '<!--f:side note--><!--f:t--><!--f:l--><!--f:i--><!--/f:s-->' +
+      '<!--f:s0--><span>x</span><!--/f:s0-->';
+
+    const markers = collectMarkers(root);
+    expect(markers.show.size).toBe(1);
+    expect(markers.show.get(0)!.start.data).toBe('f:s0');
+    expect(markers.text.size).toBe(0);
+    expect(markers.list.size).toBe(0);
+  });
+
+  it('adopts a show region even when an authored comment precedes it', () => {
+    let dispose: (() => void) | undefined;
+
+    createRoot((d) => {
+      dispose = d;
+
+      // `f:side note` is authored template text the walker passes through. Read
+      // as a show marker it has no closing tag, so the real f:s0 region below is
+      // never adopted and the show stops working entirely.
+      const root = document.createElement('div');
+      root.innerHTML = '<!--f:side note--><!--f:s0--><p class="content">Hi</p><!--/f:s0-->';
+      document.body.appendChild(root);
+
+      const [show, setShow] = createSignal(true);
+      setHydrating(true);
+      const showDesc = createShow(
+        show,
+        () => h('p', { class: 'content' }, 'Hi'),
+        () => h('p', { class: 'fallback' }, 'Bye'),
+      );
+      setHydrating(false);
+
+      const parentDesc = { type: 'element' as const, tag: 'div', props: null, children: [showDesc] };
+      adoptNode(parentDesc, root);
+
+      setShow(false);
+      expect(root.querySelector('p.fallback')).toBeTruthy();
+      expect(root.querySelector('p.content')).toBeNull();
+    });
+
+    document.body.innerHTML = '';
+    dispose?.();
   });
 });
 
@@ -1534,53 +1699,207 @@ describe('createShow hydration enhancement', () => {
       // Same DOM node, not moved
       expect(root.querySelector('p.content')).toBe(originalP);
 
-      // First toggle: content scooped into fragment, else rendered fresh
+      // First toggle: the adopted server content leaves and the else branch
+      // renders. The server content is NOT cached — hydration cannot prove
+      // which branch the server rendered, so re-inserting it under a branch
+      // label would be a guess.
       setShow(false);
       expect(root.querySelector('p.content')).toBeNull();
       expect(root.querySelector('p.fallback')).toBeTruthy();
+      expect(root.contains(originalP)).toBe(false);
 
-      // Toggle back: cached fragment re-inserted (same DOM node)
+      // Toggle back: the true branch is rebuilt from its factory.
       setShow(true);
-      expect(root.querySelector('p.content')).toBe(originalP);
+      const rebuilt = root.querySelector('p.content')!;
+      expect(rebuilt).toBeTruthy();
+      expect(rebuilt).not.toBe(originalP);
+      expect(rebuilt.textContent).toBe('Hello');
     });
 
     dispose?.();
   });
 
-  it('forward mismatch: SSR content stays until signals correct it', () => {
-    // When SSR content doesn't match the client condition, we can't reliably
-    // detect this from DOM alone (both branches can have content). The SSR
-    // content stays in place and is cached normally. In practice, server-
-    // injected props ensure signals match SSR, so this mismatch doesn't occur.
-    // activateIslands() solves this by design (per-island hydration).
+  it('forward mismatch: the server branch is never re-inserted as the other branch across repeated toggles', () => {
+    // Forward mismatch: SSR rendered the TRUE branch but the client condition
+    // is false at adoption (stale server data, or a slot-injection bug). Both
+    // branches render a <p>, so nothing in the DOM says which one is there —
+    // the region is adopted as-is. What must NOT happen is the server's truthy
+    // DOM coming back as the FALSE branch on a later toggle.
     let dispose: (() => void) | undefined;
 
     createRoot((d) => {
       dispose = d;
 
       const root = document.createElement('div');
-      root.innerHTML = '<!--f:s0--><p>Truthy</p><!--/f:s0-->';
+      root.innerHTML = '<!--f:s0--><p class="truthy" data-ssr="1">Truthy</p><!--/f:s0-->';
       document.body.appendChild(root);
 
       const [show, setShow] = createSignal(false);
       setHydrating(true);
       const showDesc = createShow(
         show,
-        () => h('p', null, 'Truthy'),
-        () => h('p', null, 'Falsy'),
+        () => h('p', { class: 'truthy' }, 'Truthy'),
+        () => h('p', { class: 'falsy' }, 'Falsy'),
       );
       setHydrating(false);
 
       const parentDesc = { type: 'element' as const, tag: 'div', props: null, children: [showDesc] };
       adoptNode(parentDesc, root);
 
-      // SSR content stays (no mismatch detection for forward case)
-      expect(root.querySelector('p')!.textContent).toBe('Truthy');
+      // Undetectable at adoption: the server content stays put.
+      expect(root.querySelector('p')!.getAttribute('data-ssr')).toBe('1');
 
-      // Toggle true→false cycle: SSR content is cached, factory creates
-      // fresh truthy branch. Cache labels match condition direction.
+      // Toggle 1 → true: the true branch is built by its factory.
       setShow(true);
-      expect(root.querySelector('p')!.textContent).toBe('Truthy');
+      expect(root.querySelector('p')!.className).toBe('truthy');
+      expect(root.querySelector('[data-ssr]')).toBeNull();
+
+      // Toggle 2 → false: the FALSE branch must render. Before the fix the
+      // server's truthy node was cached as the else-fragment and came back
+      // here, permanently showing the truthy UI while the condition is false.
+      setShow(false);
+      expect(root.querySelector('p')!.className).toBe('falsy');
+      expect(root.querySelector('[data-ssr]')).toBeNull();
+
+      // Toggles 3 and 4: the fragments keep swapping the right way round.
+      setShow(true);
+      expect(root.querySelector('p')!.className).toBe('truthy');
+      setShow(false);
+      expect(root.querySelector('p')!.className).toBe('falsy');
+      expect(root.querySelectorAll('p').length).toBe(1);
+    });
+
+    dispose?.();
+  });
+
+  it('forward mismatch with no whenFalse: the server content does not come back as the false branch', () => {
+    // createShow defaults elseFn to () => null, so a show with no author-supplied
+    // false branch renders NOTHING when the condition is false. That makes this
+    // mismatch detectable: the client branch is empty but the region has server
+    // content, so the content is dropped at adoption instead of being cached.
+    let dispose: (() => void) | undefined;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    createRoot((d) => {
+      dispose = d;
+
+      const root = document.createElement('div');
+      root.innerHTML = '<!--f:s0--><p class="truthy">Truthy</p><!--/f:s0-->';
+      document.body.appendChild(root);
+
+      const [show, setShow] = createSignal(false);
+      setHydrating(true);
+      const showDesc = createShow(show, () => h('p', { class: 'truthy' }, 'Truthy'));
+      setHydrating(false);
+
+      const parentDesc = { type: 'element' as const, tag: 'div', props: null, children: [showDesc] };
+      adoptNode(parentDesc, root);
+
+      expect(root.querySelector('p')).toBeNull();
+      expect(warn).toHaveBeenCalledWith(expect.stringContaining('show condition mismatch'));
+
+      setShow(true);
+      expect(root.querySelector('p.truthy')).toBeTruthy();
+
+      setShow(false);
+      expect(root.querySelector('p')).toBeNull();
+
+      setShow(true);
+      expect(root.querySelector('p.truthy')).toBeTruthy();
+      setShow(false);
+      expect(root.querySelector('p')).toBeNull();
+    });
+
+    warn.mockRestore();
+    dispose?.();
+  });
+
+
+  it('disposes the adopted branch bindings when the server content is dropped', () => {
+    // The adopted branch owns a reactive root, so when hydration drops that
+    // content its bindings stop. Without it they keep running against DOM that
+    // is no longer in the document, for as long as the island lives.
+    let dispose: (() => void) | undefined;
+    const runs = vi.fn();
+
+    createRoot((d) => {
+      dispose = d;
+
+      const root = document.createElement('div');
+      root.innerHTML = '<!--f:s0--><p class="content">one</p><!--/f:s0-->';
+      document.body.appendChild(root);
+
+      const [show, setShow] = createSignal(true);
+      const [label, setLabel] = createSignal('one');
+      setHydrating(true);
+      const showDesc = createShow(
+        show,
+        () => h('p', { class: 'content' }, () => { runs(); return label(); }),
+        () => h('p', { class: 'fallback' }, 'Hidden'),
+      );
+      setHydrating(false);
+
+      const parentDesc = { type: 'element' as const, tag: 'div', props: null, children: [showDesc] };
+      adoptNode(parentDesc, root);
+
+      const adopted = root.querySelector('p.content')!;
+      expect(runs).toHaveBeenCalledTimes(1);
+
+      setLabel('two');
+      expect(adopted.textContent).toBe('two');
+      expect(runs).toHaveBeenCalledTimes(2);
+
+      // The server content leaves and is not cached — its bindings must go too.
+      runs.mockClear();
+      setShow(false);
+      setLabel('three');
+      expect(runs).not.toHaveBeenCalled();
+    });
+
+    dispose?.();
+  });
+
+  it('a branch built by its factory keeps updating after a toggle round-trip', () => {
+    // The branch factory runs inside createRoot + untrack. Without untrack its
+    // bindings become dependencies of the show effect and alien-signals tears
+    // them down on the next toggle, so the cached branch would come back frozen.
+    let dispose: (() => void) | undefined;
+
+    createRoot((d) => {
+      dispose = d;
+
+      const root = document.createElement('div');
+      root.innerHTML = '<!--f:s0--><p class="content">one</p><!--/f:s0-->';
+      document.body.appendChild(root);
+
+      const [show, setShow] = createSignal(true);
+      const [label, setLabel] = createSignal('one');
+      setHydrating(true);
+      const showDesc = createShow(
+        show,
+        () => h('p', { class: 'content' }, label),
+        () => h('p', { class: 'fallback' }, 'Hidden'),
+      );
+      setHydrating(false);
+
+      const parentDesc = { type: 'element' as const, tag: 'div', props: null, children: [showDesc] };
+      adoptNode(parentDesc, root);
+
+      // Round-trip so the branch in the DOM is one this effect built itself.
+      setShow(false);
+      setShow(true);
+      expect(root.querySelector('p.content')!.textContent).toBe('one');
+
+      // Live while shown…
+      setLabel('two');
+      expect(root.querySelector('p.content')!.textContent).toBe('two');
+
+      // …and still live while cached off-DOM: a value written while the branch
+      // is hidden must be visible when it is re-inserted.
+      setShow(false);
+      setLabel('three');
+      setShow(true);
+      expect(root.querySelector('p.content')!.textContent).toBe('three');
     });
 
     dispose?.();
@@ -1912,5 +2231,81 @@ describe('collectMarkers child island skip', () => {
     const markers = collectMarkers(root);
     expect(markers.show.has(0)).toBe(true);
     expect(markers.show.has(1)).toBe(false); // inside child island
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Binding errors: first run fails the island, later runs never cross islands
+// ---------------------------------------------------------------------------
+
+describe('island isolation for throwing bindings', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('a binding that throws while being built fails only its own island', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    document.body.innerHTML = `
+      <div data-forma-island="0" data-forma-component="Broken" data-forma-status="pending">
+        <p title="x">SSR content stays</p>
+      </div>
+      <div data-forma-island="1" data-forma-component="Working" data-forma-status="pending">
+        <p><!--f:t0-->OK<!--/f:t0--></p>
+      </div>
+    `;
+
+    let setMsg!: (v: string) => void;
+
+    activateIslands({
+      // The component builds fine; its reactive attribute binding throws on the
+      // first (synchronous) run, which must surface to island activation.
+      Broken: () => h('div', null, h('p', { title: () => { throw new Error('binding blew up'); } }, 'SSR content stays')),
+      Working: () => {
+        const [msg, _setMsg] = createSignal('OK');
+        setMsg = _setMsg;
+        return h('div', null, h('p', null, () => msg()));
+      },
+    });
+
+    expect(document.querySelector('[data-forma-island="0"]')!.getAttribute('data-forma-status')).toBe('error');
+    expect(document.querySelector('[data-forma-island="0"] p')!.textContent).toBe('SSR content stays');
+
+    expect(document.querySelector('[data-forma-island="1"]')!.getAttribute('data-forma-status')).toBe('active');
+    setMsg('Updated');
+    expect(document.querySelector('[data-forma-island="1"] p')!.textContent).toBe('Updated');
+
+    errorSpy.mockRestore();
+  });
+
+  it('a binding that throws on a shared-signal update does not freeze the other island', () => {
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    document.body.innerHTML = `
+      <div data-forma-island="0" data-forma-component="Fragile" data-forma-status="pending">
+        <p><!--f:t0-->0<!--/f:t0--></p>
+      </div>
+      <div data-forma-island="1" data-forma-component="Display" data-forma-status="pending">
+        <p><!--f:t0-->0<!--/f:t0--></p>
+      </div>
+    `;
+
+    const [count, setCount] = createSignal(0);
+
+    activateIslands({
+      // Island 0 is fine at hydration time and breaks on the first update.
+      Fragile: () => h('div', null, h('p', null, () => {
+        if (count() > 0) throw new Error('island 0 binding is broken');
+        return '0';
+      })),
+      Display: () => h('div', null, h('p', null, () => String(count()))),
+    });
+
+    expect(document.querySelector('[data-forma-island="1"] p')!.textContent).toBe('0');
+
+    // The write comes from unrelated code and must not throw there…
+    expect(() => setCount(7)).not.toThrow();
+    // …and island 1 must still have been flushed.
+    expect(document.querySelector('[data-forma-island="1"] p')!.textContent).toBe('7');
+
+    errorSpy.mockRestore();
   });
 });

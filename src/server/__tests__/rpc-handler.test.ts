@@ -7,19 +7,6 @@ import {
   createRPCMiddleware,
 } from '../rpc-handler';
 
-/**
- * Helper: clear the internal registry between tests by removing known endpoints.
- * We re-register only what each test needs.
- */
-function clearRegistry() {
-  for (const ep of getRegisteredEndpoints()) {
-    // The registry is a Map; the only public mutation API is registerServerFunction.
-    // We can overwrite with a no-op, but to truly clear we rely on the module-scoped
-    // Map. Instead we'll use a fresh approach: register and then use getServerFunction.
-    // Actually, the simplest way is to access the map indirectly.
-  }
-}
-
 describe('registerServerFunction / getServerFunction', () => {
   it('registers and retrieves a function by endpoint', () => {
     const fn = vi.fn(async () => 'ok');

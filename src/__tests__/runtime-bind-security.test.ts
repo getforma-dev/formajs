@@ -3,8 +3,16 @@
  * able to inject javascript: URLs or inline event handlers, in EITHER the
  * standard or hardened build (the setAttribute sink is identical in both).
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { mount, unmount } from '../runtime';
+import { isDangerousUrl } from '../security/url-safety';
+
+// Spy on the real implementation (behaviour unchanged) so the tests below can
+// assert what the runtime PASSES to it, not just what it returns.
+vi.mock('../security/url-safety', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../security/url-safety')>();
+  return { ...actual, isDangerousUrl: vi.fn(actual.isDangerousUrl) };
+});
 
 describe('data-bind: attribute injection', () => {
   let container: HTMLDivElement;
@@ -50,6 +58,23 @@ describe('data-bind: attribute injection', () => {
     mount(container);
     const el = container.querySelector('#t')! as HTMLElement;
     expect(el.getAttribute('onclick')).toBeNull();
+  });
+
+  it('forwards the element tag to the URL scheme check', () => {
+    // `data:image/svg+xml` is inert on <img> but navigable on <a>, so the
+    // scheme check is only able to judge it if it knows the element it is
+    // about to land on.
+    vi.mocked(isDangerousUrl).mockClear();
+    container.innerHTML = `
+      <div data-forma-state='{"u": "data:image/svg+xml,<svg/>"}'>
+        <a id="a" data-bind:href="{u}">link</a>
+        <img id="i" data-bind:src="{u}">
+      </div>`;
+    mount(container);
+
+    const calls = vi.mocked(isDangerousUrl).mock.calls;
+    expect(calls.some(([, tag]) => tag === 'a')).toBe(true);
+    expect(calls.some(([, tag]) => tag === 'img')).toBe(true);
   });
 
   it('still binds safe attributes and URLs', () => {

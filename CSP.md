@@ -1,6 +1,11 @@
 # FormaJS & Content Security Policy (CSP)
 
-FormaJS is CSP-safe by default. No `unsafe-inline` or `unsafe-eval` required.
+FormaJS is CSP-safe by default. No `unsafe-inline` or `unsafe-eval` required — in **any** build, including the standard CDN runtime, not only the hardened one.
+
+If you turn the expression fallback on (`setUnsafeEval(true)`, `data-forma-unsafe-eval="true"`, or `window.__FORMA_RUNTIME_CONFIG.allowUnsafeEval`), the page then needs `'unsafe-eval'`. If the CSP blocks it anyway, FormaJS reports `expression NOT evaluated` with the `EvalError` and disables the fallback, rather than failing silently.
+
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "every build ships with the new Function fallback disabled"
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "reports a CSP diagnostic and stops using new Function when the page CSP blocks it"
 
 ---
 
@@ -15,9 +20,13 @@ script-src 'nonce-abc123' 'self';
 
 FormaJS handles this in two ways:
 
-**Scripts:** `<script>` tags rendered by `forma-server`'s page renderer include a `nonce` attribute. No inline event handlers are used — FormaJS attaches events via `addEventListener`.
+**Scripts:** `<script>` tags rendered by `forma-server`'s page renderer include a `nonce` attribute. No inline event handlers are used — FormaJS attaches events via `addEventListener`, and an `on*` attribute is dropped in any casing on both the client and SSR paths.
 
-> **Streaming SSR caveat:** the JS streaming renderer's Suspense swap scripts (`renderToStream` / `getSwapScript` / `getSwapTag`) are currently emitted **without** a `nonce`, so under a strict `script-src 'nonce-…'` policy they are blocked and out-of-order Suspense content will not swap in. Until nonce threading lands (tracked for a follow-up release), either use non-streaming SSR under strict CSP, or allow these scripts explicitly. Do not add `'unsafe-inline'` as a workaround.
+Verified by `src/dom/__tests__/element-url-safety.test.ts` > "drops ONCLICK-cased string props instead of writing an inline handler"
+
+> **Streaming SSR caveat:** the JS streaming renderer's Suspense swap scripts (`renderToStream` / `getSwapScript` / `getSwapTag`) are emitted **without** a `nonce` — the functions take no nonce parameter at all — so under a strict `script-src 'nonce-…'` policy they are blocked and out-of-order Suspense content will not swap in. Until nonce threading lands, either use non-streaming SSR under strict CSP, or allow these scripts explicitly. Do not add `'unsafe-inline'` as a workaround.
+>
+> Verified by `src/__tests__/docs-truth.test.ts` > "the streaming swap scripts really do lack a nonce, as the caveat says"
 
 **Styles:** The `h()` function applies styles via the CSSOM API (`Object.assign(el.style, ...)`) instead of `el.style.cssText` or `setAttribute('style', ...)`. CSSOM property assignment is not blocked by CSP — only string-based style injection is.
 
@@ -50,10 +59,10 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 |-----------|-----------------|-------------------|
 | `el.style.cssText = '...'` | Yes (`style-src` without `unsafe-inline`) | **No** — removed in v1.0.9 |
 | `el.setAttribute('style', '...')` | Yes | **No** |
-| `innerHTML` with `style="..."` | Yes | **No** |
+| `innerHTML` with `style="..."` | Yes | **Not for library-generated markup** — `h()` builds DOM with `createElement`/`textContent`. `innerHTML` is reached only through the explicit opt-in sinks: `dangerouslySetInnerHTML`, `setHTMLUnsafe()` and `reconcile()`. See [SECURITY.md](./SECURITY.md#unsanitized-html-sinks). |
 | `Object.assign(el.style, {...})` | No (CSSOM API) | **Yes** — all styles go through this |
 | `el.style.color = 'red'` | No (CSSOM API) | **Yes** (via Object.assign) |
-| `new Function(...)` | Yes (`script-src` without `unsafe-eval`) | **No** — CSP-safe expression parser used instead |
+| `new Function(...)` | Yes (`script-src` without `unsafe-eval`) | **No by default** — the CSP-safe parser is used instead. Reached only if you opt in with `setUnsafeEval(true)` / `data-forma-unsafe-eval="true"`; the hardened build has no `new Function` at all. |
 
 ---
 
@@ -67,7 +76,7 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 
 ### "Refused to execute inline script"
 
-**Cause:** A `<script>` tag is missing its `nonce` attribute. This happens if you inject scripts via `innerHTML` or create them with `document.createElement('script')` without setting the nonce.
+**Cause:** A `<script>` tag is missing its `nonce` attribute. This happens if you inject scripts via `innerHTML`, create them with `document.createElement('script')` without setting the nonce, or use streaming SSR (see the caveat above).
 
 **Fix:** Use `forma-server`'s `render_page()` which automatically injects nonces on all script tags. If you need to add custom scripts, use the `config_script` field in `PageConfig` — it's rendered inside a nonce-tagged script block.
 
@@ -76,6 +85,12 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 **Cause:** A `<style>` tag is missing its `nonce` attribute. `forma-server`'s `render_page()` adds nonces to the personality CSS `<style>` tag automatically. If you create `<style>` elements in JavaScript, they won't have nonces.
 
 **Fix:** Use CSS classes instead of dynamic `<style>` injection. Or use `el.style.property = value` (CSSOM) which is not blocked.
+
+### "An expression rendered nothing and the console says `data-forma-expr-error`"
+
+**Cause:** The expression is outside the CSP-safe grammar — most often an arrow function, or a `data-on:*` handler whose whole body is a method call. It was **not** evaluated, by design.
+
+**Fix:** Rewrite it within the grammar (see the README's *The expression grammar is a real constraint*), precompute the value server-side, or opt the fallback in and add `'unsafe-eval'` to your policy. Call `getDiagnostics()` for the full list, or listen for the `formajs:diagnostic` event.
 
 ---
 
@@ -97,7 +112,14 @@ form-action 'self'
 
 Every page render generates a unique cryptographic nonce. Scripts and the personality `<style>` tag get this nonce. Everything else must come from `'self'` (same origin).
 
+**This header is satisfied by the standard build.** You do not need the hardened build, and you do not need `unsafe-eval`, to run under it. The hardened build is for when you want that guaranteed by the artifact rather than by configuration — it cannot be talked into eval by any runtime switch.
+
 **Do not add `unsafe-inline` or `unsafe-eval`.** FormaJS is designed to work without them.
+
+Note that `img-src 'self' data:` above permits `data:` images. FormaJS matches that posture: `data:image/svg+xml` is allowed only for image-context sinks (`<img src>`, `<video poster>`, …) and blocked for document-context sinks (`<iframe src>`, `<object data>`, `<a href>`, `<use href>`), where the browser would parse it as a document and run script inside it.
+
+Verified by `src/security/__tests__/url-safety.test.ts` > "allows data:image/svg+xml for image-context sinks"
+Verified by `src/security/__tests__/url-safety.test.ts` > "blocks data:image/svg+xml for document-context sinks"
 
 ---
 
@@ -122,4 +144,5 @@ If you see this with FormaJS v1.0.9+, the issue is outside FormaJS — check for
 | Version | CSP Status |
 |---------|------------|
 | < 1.0.9 | String styles use `cssText` — **requires `unsafe-inline` in `style-src`** |
-| >= 1.0.9 | All styles use CSSOM — **fully CSP-safe, no `unsafe-inline` needed** |
+| 1.0.9 – 1.5.0 | All styles use CSSOM. Scripts need no `unsafe-inline`, **but the standard runtime shipped with the `new Function` fallback ENABLED**, so any expression outside the CSP-safe grammar silently evaluated to `undefined` under a policy without `unsafe-eval`. |
+| > 1.5.0 | The fallback is off in every build until opted in, and an expression it cannot compile is reported rather than silently dropped. **Fully CSP-safe, no `unsafe-inline` and no `unsafe-eval` needed.** |

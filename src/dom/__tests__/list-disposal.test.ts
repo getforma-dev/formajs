@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { createList } from '../list';
+import { createList, reconcileList } from '../list';
 import { createSignal } from '../../reactive/signal';
 import { createEffect } from '../../reactive/effect';
 import { createRoot } from '../../reactive/root';
@@ -89,5 +89,94 @@ describe('createList disposal', () => {
 
     setTick(1);
     expect(spy).toHaveBeenCalledTimes(0); // no orphaned effects
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Islands inside removed rows (islands-inside-removed-list-rows-never-deactivated)
+// ---------------------------------------------------------------------------
+
+describe('island teardown on row removal', () => {
+  function makeIsland(id: number, onDispose: (id: number) => void): HTMLElement {
+    const island = document.createElement('span');
+    island.setAttribute('data-forma-island', String(id));
+    island.setAttribute('data-forma-status', 'active');
+    (island as any).__formaDispose = () => onDispose(id);
+    return island;
+  }
+
+  it('deactivates an island inside a removed row', () => {
+    const disposed: number[] = [];
+    const [items, setItems] = createSignal([{ id: 1 }, { id: 2 }]);
+
+    createRoot(() => {
+      const frag = createList(
+        items,
+        (item) => item.id,
+        (item) => {
+          const row = document.createElement('div');
+          row.appendChild(makeIsland(item.id, (id) => disposed.push(id)));
+          return row;
+        },
+      );
+      mountFragment(frag);
+    });
+
+    expect(disposed).toEqual([]);
+
+    // Row 2 leaves: its island root is unowned (createUnownedRoot in
+    // activate.ts), so nothing else would ever tear it down.
+    setItems([{ id: 1 }]);
+    expect(disposed).toEqual([2]);
+
+    // Row 1 leaves via the "new list is empty" path.
+    setItems([]);
+    expect(disposed).toEqual([2, 1]);
+  });
+
+  it('deactivates an island that IS the removed row element', () => {
+    const disposed: number[] = [];
+    const [items, setItems] = createSignal([{ id: 1 }, { id: 2 }]);
+
+    createRoot(() => {
+      const frag = createList(
+        items,
+        (item) => item.id,
+        (item) => makeIsland(item.id, (id) => disposed.push(id)),
+      );
+      mountFragment(frag);
+    });
+
+    setItems([{ id: 2 }]);
+    expect(disposed).toEqual([1]);
+  });
+
+  it('defers island deactivation until an animated row is actually removed', () => {
+    const disposed: number[] = [];
+    const parent = document.createElement('div');
+    const rowA = document.createElement('div');
+    rowA.appendChild(makeIsland(1, (id) => disposed.push(id)));
+    parent.appendChild(rowA);
+
+    let finish: (() => void) | undefined;
+    reconcileList(
+      parent,
+      [{ id: 1 }],
+      [],
+      [rowA],
+      (item: { id: number }) => item.id,
+      () => document.createElement('div'),
+      () => {},
+      null,
+      { onBeforeRemove: (_node, done) => { finish = done; } },
+    );
+
+    // Exit animation in flight: the island keeps working.
+    expect(disposed).toEqual([]);
+    expect(parent.contains(rowA)).toBe(true);
+
+    finish!();
+    expect(disposed).toEqual([1]);
+    expect(parent.contains(rowA)).toBe(false);
   });
 });

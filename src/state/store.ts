@@ -13,7 +13,7 @@
  * Backed by alien-signals via forma/reactive.
  */
 
-import { createSignal, batch, untrack, value } from 'forma/reactive';
+import { createSignal, batch, untrack, value, __DEV__ } from 'forma/reactive';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -52,6 +52,28 @@ const ARRAY_MUTATORS = new Set([
   'copyWithin',
 ]);
 
+/**
+ * Keys that must never be written through the store. `JSON.parse` creates
+ * `__proto__` as a real own, enumerable property, so an untrusted payload fed to
+ * `setState` (or assigned onto the proxy) would otherwise reach
+ * `Reflect.set(target, '__proto__', …)`, which invokes
+ * `Object.prototype.__proto__`'s setter with `this = target` and replaces the
+ * store object's prototype — letting the payload forge state fields the app
+ * never defined. `constructor`/`prototype` are refused alongside it to match
+ * the RPC-argument and island-props sanitizers.
+ *
+ * Verified by: src/state/__tests__/store-proto-hijack.test.ts > "setState with a __proto__ key does not replace the store prototype"
+ */
+const FORBIDDEN_STORE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
+/** Dev-only diagnostic for a rejected pollution key. */
+function warnForbiddenKey(key: string): void {
+  console.warn(
+    `[forma] Refused to write "${key}" into a store — this key can replace the ` +
+    `object's prototype. Strip it from untrusted payloads before calling setState.`,
+  );
+}
+
 function isPlainObject(v: unknown): v is Record<string, unknown> {
   if (v == null || typeof v !== 'object') return false;
   const proto = Object.getPrototypeOf(v);
@@ -83,6 +105,13 @@ function deepClone(obj: unknown, seen?: WeakSet<object>): unknown {
   if (Array.isArray(obj)) return obj.map(item => deepClone(item, seen));
   const out: Record<string, unknown> = {};
   for (const key of Object.keys(obj as Record<string, unknown>)) {
+    // `out['__proto__'] = v` would invoke Object.prototype's setter and swap the
+    // clone's prototype instead of copying a key, so the snapshot handed to a
+    // functional updater would inherit attacker-supplied fields. Only this key
+    // is skipped: `constructor`/`prototype` copy as ordinary own properties
+    // here, and dropping them would silently lose real data.
+    // Verified by: src/state/__tests__/store-proto-hijack.test.ts > "a functional-updater snapshot never inherits from an injected prototype"
+    if (key === '__proto__') continue;
     out[key] = deepClone((obj as any)[key], seen);
   }
   return out;
@@ -372,6 +401,17 @@ export function createStore<T extends object>(
         }
 
         const key = String(prop);
+
+        // Reject prototype-hijacking keys at the single choke point every write
+        // passes through (setState, `state.x = …`, Object.assign onto the
+        // proxy). Report success so a spread of untrusted data does not throw in
+        // strict mode — the key is simply not applied.
+        // Verified by: src/state/__tests__/store-proto-hijack.test.ts > "assigning __proto__ directly on the proxy does not replace the prototype"
+        if (FORBIDDEN_STORE_KEYS.has(key)) {
+          if (__DEV__) warnForbiddenKey(key);
+          return true;
+        }
+
         const childPath = basePrefix + key;
 
         // Unwrap if the value being set is itself a proxy
@@ -529,6 +569,13 @@ export function createStore<T extends object>(
     // Batch all top-level key writes so effects run only once
     batch(() => {
       for (const key of Object.keys(updates) as (keyof T & string)[]) {
+        // Skipped here as well as in the proxy's set trap: the trap is the
+        // backstop for direct mutation, this loop stops the same key before it
+        // is ever handed to Reflect.set.
+        if (FORBIDDEN_STORE_KEYS.has(key)) {
+          if (__DEV__) warnForbiddenKey(key);
+          continue;
+        }
         (rootProxy as Record<string, unknown>)[key] = (updates as Record<string, unknown>)[key];
       }
     });

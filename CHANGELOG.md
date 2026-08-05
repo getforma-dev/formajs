@@ -2,6 +2,260 @@
 
 All notable changes to this project will be documented in this file.
 
+## [Unreleased]
+
+A hardening release. A five-lens audit of 1.5.0 (docs-vs-behaviour, security,
+reactive-core correctness, packaging, downstream contract) produced 38 confirmed
+findings; this entry is the result of fixing them. The theme is that several
+things the documentation promised were not true of the shipped code — most
+importantly the headline CSP promise — so behaviour was changed to match the
+promise rather than the other way round.
+
+**If you are upgrading, read "Changed — breaking" first.** The suite went from
+1007 tests to 1170.
+
+### Changed — breaking
+
+- **The `new Function()` fallback is now OFF by default in every build.**
+  Previously `dist/runtime.js`, `dist/runtime.cjs` and both IIFE globals shipped
+  with it *enabled*, and silently used it for any expression the CSP-safe parser
+  could not compile — so "CSP-safe by default" was false of exactly the builds
+  every CDN snippet points at, and under a policy without `unsafe-eval` the
+  expression evaluated to `undefined` with only a console message. Opt in with
+  `setUnsafeEval(true)`, `data-forma-unsafe-eval="true"` on the runtime's script
+  tag, or `window.__FORMA_RUNTIME_CONFIG = { allowUnsafeEval: true }`.
+  Expressions outside the CSP-safe grammar are now **not evaluated**: they log,
+  fire a `formajs:diagnostic` event, appear in `getDiagnostics()` and mark their
+  element (see below). See README > *The expression grammar is a real
+  constraint* for what the grammar accepts.
+- **`setUnsafeEvalMode('mutable')` no longer turns eval on.** `'mutable'` now
+  means "off, but you may turn it on". A build define can only choose whether
+  eval *can* be enabled, never whether it *is*.
+- **`h()` now drops props whose name starts with `on` in ANY casing.** Detection
+  was a case-sensitive two-character test, so `ONCLICK` / `Onerror` / `ONLOAD`
+  skipped `addEventListener` and fell through to `setAttribute`, writing a real
+  inline handler that the browser executes (SSR dropped these case-insensitively,
+  so spreading server-supplied props produced clean HTML and an executing handler
+  on the client). Apps that relied on writing an `ONCLICK` *attribute* break.
+- **`h()` and hydration now drop dangerous-scheme URL attributes**, matching what
+  the SSR renderer has always dropped: `javascript:`, `vbscript:` and
+  `data:text/html` on `href`, `src`, `action`, `formaction`, `xlink:href`,
+  `poster`, `background` and `data`. Previously the SSR-blocked payload was
+  *re-added* on the client at hydration. A reactive URL binding whose value turns
+  dangerous now **removes** the attribute rather than leaving the last accepted
+  value.
+- **`createStore` refuses `__proto__` / `constructor` / `prototype` writes**
+  through both `setState` and the proxy's `set` trap. Previously a `__proto__`
+  key — which `JSON.parse` creates as a real own property — replaced the store's
+  prototype, letting untrusted JSON forge fields the app never defined.
+- **Removed `renderToStringWithHydration`** from `@getforma/core/ssr`. It emitted
+  a second, undocumented marker dialect that no client code could enter (adoption
+  is driven per-island by `hydrateIsland` from a `data-forma-island` shell), and
+  its docstring promised hydration it could not deliver.
+- **Removed the `./runtime/global` and `./runtime-csp/global` exports subpaths.**
+  The files still ship and still load by URL; they were never resolvable as
+  modules, because an IIFE that assigns `var FormaRuntime = …` defines nothing
+  when imported.
+- **Deleted `dist/formajs.global.js`** (461 KB with its map). An undocumented
+  orphan: no README row, no exports subpath, no `sideEffects` entry. Use
+  `dist/forma.esm.js` to load the core from a CDN.
+- **`engines.node` raised from `>=18` to `>=20.19.0`**, which is what the dev
+  toolchain (vite) already required and what CI actually exercises.
+- **Show adoption no longer re-inserts the server's DOM after a toggle.** When
+  both branches render the same tag, adoption cannot tell which one the server
+  produced; the adopted nodes are now dropped on the first swap away and the
+  branch is rebuilt from its factory on return. Node identity across a full
+  toggle round-trip is gone — that is the price of never guessing.
+- **Adopted list rows re-run `renderFn` once at hydration** (in hydration mode:
+  descriptors only, no DOM), which is what makes `onClick` and reactive props
+  work on server-rendered rows. A `renderFn` with side effects therefore runs
+  once on the server and once at adoption.
+- **`MarkerMap.show` lost its `cachedContent` field** (public type change): it
+  was always `null` and never read.
+
+### Added
+
+- **`sanitizePropsDeep(props)`** (root entry): strips `__proto__` /
+  `constructor` / `prototype` at every depth, iteratively and cycle-safe. Island
+  props remain **shallow-sanitized by default** — call this yourself before
+  handing props to anything that deep-merges them. RPC arguments are already
+  sanitized recursively without an opt-in; the two were previously documented as
+  equivalent and are not.
+- **`isUnsafeEvalAllowed()`** (`@getforma/core/runtime`): the live answer to
+  whether the Function-constructor fallback can run.
+- **`data-forma-expr-error="unsupported"`**: client-only DOM marker on an element
+  whose expression could not be compiled, mirroring the existing
+  `data-forma-handler-error`. Not part of the hydration wire contract; the Rust
+  walker does not read it.
+- **`activateIslands(registry, root?)`**: optional root, so a Shadow DOM subtree
+  can be activated without touching the rest of the document.
+- **`dist/forma.esm.js`**: a self-contained browser ESM bundle (alien-signals
+  inlined, no code-split chunks), which is what makes the documented
+  `<script type="module">` CDN recipe work. The old recipe pointed at
+  `dist/index.js`, which imports the bare specifier `"alien-signals"` — a browser
+  can resolve neither that nor the chunks. **Do not mix it with the npm entry in
+  one app**; it carries its own copy of the core.
+- **`@getforma/core/wasm`** is now built, typed and exported. `renderLocal` /
+  `renderIsland` were announced as available "via direct import from the
+  `@getforma/core/wasm` path" in 0.7.1 but had no build entry, no dist output and
+  no exports key from 0.7.1 through 1.5.0, so the import always failed.
+- **Duplicate-instance detection**: loading two copies of the core in one process
+  (mixing `import`/`require`, or the browser bundle alongside the npm entry) now
+  warns once. Signals, the owner tree and both registries are per-copy, so this
+  used to present as "my signal updates nothing".
+- `$event` and `event` now resolve in the CSP-safe handler parser, so
+  `q = $event.target.value` and `if (event.key === 'Enter') { … }` compile with
+  no eval. The former used to compile into an assignment of `undefined` with no
+  diagnostic at all — silent data loss.
+- `scripts/verify-dist.mjs` runs as the last step of `npm run build` and asserts
+  properties of the real artifacts: exports targets exist, `require` conditions
+  are `.cjs`, the browser bundle is self-contained, Node entries keep deps
+  external, `__DEV__` is a literal, the hardened builds contain no
+  `new Function`, and each file has at most one sourcemap footer.
+
+### Fixed — security
+
+- **SSR tag names are validated.** A `VNode.tag` is interpolated into markup with
+  no escaping, so an attacker-controlled tag could inject an attribute
+  (`div onload=x`) or close the tag. All three VNode branches (`render.ts` and
+  both of `stream.ts`) now drop unsafe tags.
+- **`data:image/svg+xml` now has a context rule** instead of being blanket-allowed:
+  permitted for image-context sinks (`<img src>`, `<image href>`, `<video
+  poster>`/`src`, `<audio src>`, `<source src>`, the legacy `background`
+  attribute) where the browser decodes it in image mode, blocked for document
+  sinks (`<iframe src>`, `<object data>`, `<a href>`, `<use href>`) where an
+  `onload=` inside it fires, and blocked when the sink is unknown.
+- **`srcdoc`** is recognised as a raw-HTML sink (attribute escaping does not
+  neutralize it, because the browser entity-decodes and then parses the value as
+  a document). Still emitted — a sandboxed `<iframe srcdoc>` is legitimate — with
+  a dev-mode warning.
+- **RPC argument sanitization no longer recurses.** `deepStripForbidden` walked
+  fully attacker-controlled JSON recursively, before any authorization guard and
+  outside `handleRPC`'s try/catch: a ~120 KB deeply nested body overflowed the
+  stack, the `RangeError` escaped into `createRPCMiddleware`'s un-caught `await`,
+  and Node's default `--unhandled-rejections=throw` killed the process.
+  Remote, unauthenticated process kill. The walk is now iterative and
+  `createRPCMiddleware` has an error barrier that answers 500.
+- **A malformed `__forma_islands` block no longer stops every island on the
+  page.** The shared props block was parsed with a bare `JSON.parse` before the
+  island loop and outside any try/catch, so one truncated block — or an empty one,
+  since `JSON.parse('')` throws — meant zero islands hydrated, including islands
+  with inline props or no props. It now degrades to "no shared props". Only a
+  real `<script id="__forma_islands">` is accepted; `getElementById` alone matched
+  any element with that id, so a user-controlled node earlier in the document
+  could supply every island's props.
+- **A blocked expression no longer aborts runtime initialization.** The
+  blocklist path threw instead of degrading to the existing noop, and the
+  throw propagated out of `initRuntime`, so a single offending expression left
+  every directive on the page unbound.
+
+### Fixed — hydration and reactivity
+
+- **Hydrated list rows dispose their effects.** Rows created after SSR adoption
+  were rendered bare — no `createRoot`, no stored dispose — so their bindings
+  stayed subscribed forever: not on row removal, not on island dispose. They now
+  match the CSR path.
+- **A failed island disposes what it built.** `__formaDispose` was assigned only
+  *after* `hydrateIsland` returned, so a component that threw left every effect
+  created before the throw live and unreclaimable, still reacting to signal
+  writes inside an island marked `status="error"`.
+- **Removing a list row tears down islands inside it.** An island's root is
+  created with `createUnownedRoot`, so it deliberately does not die with the
+  row's root — leaving its effects (and its `IntersectionObserver` / interaction
+  listeners, if it had not hydrated yet) running against detached DOM.
+- **One broken binding no longer freezes unrelated islands.** A throw inside
+  alien-signals' flush aborted the flush, skipping every remaining queued
+  binding, and surfaced at the unrelated setter's call site. Re-run errors now
+  route to `reportError`/`onError` and the flush continues; the *first* run still
+  propagates to its caller, so island activation can mark the island failed.
+- **Reactive `className` / `htmlFor` / `tabIndex` survive adoption.** The
+  hydration path wrote reactive attribute bindings using the raw prop key with no
+  `PROP_TO_ATTR` mapping, producing a useless `classname="…"` attribute — the
+  same component rendered correctly server-side and in CSR, then silently lost
+  its class binding after hydration.
+- **A show whose branch is directly a list is adopted.** `createShow(cond, () =>
+  createList(…))` with no wrapper element left the SSR rows in place with no
+  reconcile effect bound.
+- **`unmount()` after the CSR fallback removes the right element.** When
+  `hydrateIsland` replaces an empty SSR shell with the component's own root,
+  clearing the detached original left the replacement in the document.
+- Also fixed in adoption: `ref` props, event-handler attributes, island-shell
+  skipping, digit-anchored marker parsing, duplicate-key ghost rows, and
+  adopted-row rebinding.
+
+### Fixed — packaging and build
+
+- **`__DEV__` is a genuine build-time constant.** It is a module *export*, so
+  esbuild's `define` never substituted it: no dev path was eliminated and the
+  shipped bundles computed it at runtime from `process.env.NODE_ENV` — meaning
+  every dev `console.warn`/`console.error` shipped and fired in any Node/SSR or
+  bundler context where `NODE_ENV` was unset. The replaceable flag now has its
+  own free-identifier name and the `NODE_ENV` fallback is gone from every shipped
+  byte. `reportError`'s console fallback no longer re-reads the environment per
+  error.
+- **Syntax minification is on for all outputs**, which is what actually makes the
+  build-time flags fold. Without it, `new Function(` was still present in
+  `dist/runtime-hardened.js`, `.cjs` and `formajs-runtime-hardened.global.js`,
+  contradicting every docstring that said otherwise. Identifiers and line
+  structure are preserved, so nothing is obfuscated. This changes every shipped
+  byte.
+- **The build is reproducible.** `dist` is cleaned once up front instead of from
+  inside parallel tsup configs, where the clean raced the other configs and
+  deleted declaration files another config had already written. Two consecutive
+  builds now produce 87 byte-identical files.
+- **The size gate measures what the README claims.** It gzipped `dist/index.js`
+  alone, a re-export shim, so moving code into a shared chunk — or growing one —
+  was free. It now walks the real ESM import graph.
+- **Types resolve everywhere.** `publint` reports "All good!" and
+  `@arethetypeswrong/cli` reports 44 green cells / 0 problems, including node10
+  resolution, which previously failed on all 8 subpaths.
+- Every emitted file carried **two** `sourceMappingURL` footers (Rollup emits
+  one, tsup appends another); they are collapsed to one and asserted.
+
+### Documentation
+
+Every claim in `README.md`, `SECURITY.md` and `CSP.md` was re-checked against the
+code, and the ones that assert a security or behavioural property now cite the
+test that proves them.
+
+- The flagship "single HTML file" showcase used arrow functions in
+  `data-computed` and `data-list`, which the CSP-safe parser rejects — the
+  example presented as proof of the zero-build CSP-safe story disproved it. It is
+  replaced with markup that a test mounts against the *hardened* build.
+- The `createHistory` snippet could not run: it showed a tuple return taking a
+  plain initial value, while the real signature takes a `[get, set]` tuple and
+  returns a `HistoryControls` object (`TypeError: source is not iterable`).
+- `SECURITY.md` called the `with()` + `Proxy` wrapper a sandbox. It is not: the
+  `has` trap returns `key in scope.getters`, so any undeclared identifier reports
+  `false` and `with()` falls through to the real globals — `document`, `fetch`,
+  `localStorage` are all reachable. Only the blocklisted names are stopped.
+- The `$el` / `$refs` / `$dispatch` examples in the directive table are handlers
+  whose whole body is a method call, which the CSP-safe grammar does not accept;
+  they are now marked as needing the opt-in.
+- Corrected: every CDN pin (was `1.0.7`), the alien-signals repository link, the
+  size figures (the runtime is 25.6 KB gzipped, not "~24 KB"; the core entry is
+  24.7 KB untree-shaken, not "~8 KB"), the island coverage figure, the
+  `@getforma/core/tc39` shape (it exports `State` and `Computed` — there is no
+  `Signal` namespace), and the Supported Versions table (it listed only `1.0.x`
+  while 1.5.0 was on npm).
+- Added: an *Escape hatches — the trust boundary* section naming the four
+  unsanitized HTML sinks (`dangerouslySetInnerHTML`, `setHTMLUnsafe`,
+  `reconcile`, `srcdoc`), which appeared in no document while `CSP.md` answered
+  "innerHTML — FormaJS uses it? No"; sections for `createResource`,
+  `createSuspense`, `svg()` and `createPortal`; a table covering the rest of the
+  export surface; and a *Known gaps* section in `SECURITY.md`.
+- `src/__tests__/docs-truth.test.ts` now checks the mechanically checkable
+  claims — version pins, artifact names, export coverage, the tc39 shape, the
+  coverage figure, the size limits — so this class of drift fails CI instead of
+  waiting for an audit.
+
+### Note on 1.1.0
+
+`getOwner`, `runWithOwner`, `getSignalName`, `value`, `Owner` and
+`ResourceFetcherInfo` are listed as "Added" under 1.1.0, but were not re-exported
+from the package root until commit `bf35b21` on this branch. Until then they were
+reachable only by deep import.
+
 ## [1.5.0] - 2026-07-08
 
 Storage / component / wasm robustness. Stacks on 1.4.0.
@@ -149,6 +403,8 @@ long-standing bugs), hence a minor bump. Stacks on the 1.0.10 security release.
 ### Added
 - `getOwner()` / `runWithOwner()` for owning work created outside the synchronous
   root scope; `getSignalName()`; `ResourceFetcherInfo`.
+  **Correction:** these were reachable only by deep import until the root-barrel
+  fix on the unreleased branch — see [Unreleased] > *Note on 1.1.0*.
 - `onError()` supports multiple handlers and returns an unsubscribe function.
 
 ### Changed

@@ -31,22 +31,30 @@ export function escapeAttr(str: string): string {
     .replace(/'/g, '&#39;');
 }
 
-import { isDangerousUrl, isUrlAttr, isEventHandlerAttr, isSafeAttrName } from '../security/url-safety.js';
-
-// Dangerous URI detection for href, src, action, formaction attributes.
-// Retained for backwards compatibility with external importers; the actual
-// scheme check now goes through `isDangerousUrl`, which additionally strips the
-// control characters browsers ignore in a URL scheme (see security/url-safety).
-export const DANGEROUS_URI_ATTRS = new Set(['href', 'src', 'action', 'formaction']);
-export const DANGEROUS_URI_RE = /^\s*(javascript|vbscript|data\s*:\s*text\/html)/i;
+import { __DEV__ } from '../reactive/dev.js';
+import {
+  isDangerousUrl,
+  isUrlAttr,
+  isEventHandlerAttr,
+  isRawHtmlAttr,
+  isSafeAttrName,
+  isSafeTagName,
+} from '../security/url-safety.js';
 
 /**
  * Decide whether a resolved prop should be emitted as an attribute, and return
  * the escaped `name="value"` fragment (or `name` for boolean `true`). Returns
- * null when the attribute must be dropped for safety. Shared by the plain and
- * hydration-aware renderers so the security rules cannot drift apart.
+ * null when the attribute must be dropped for safety. Shared by every SSR
+ * renderer so the security rules cannot drift apart.
+ *
+ * `tag` is the element the attribute belongs to (`VNode.tag`); it decides
+ * whether a `data:image/svg+xml` value lands in an image sink or a document
+ * sink. Omitting it selects the strict interpretation, which rejects that
+ * scheme rather than trusting an unnamed sink.
+ *
+ * Verified by: src/ssr/__tests__/render-safety.test.ts > "keeps data:image/svg+xml on an img but drops it on an iframe"
  */
-export function renderAttr(key: string, resolved: unknown): string | null {
+export function renderAttr(key: string, resolved: unknown, tag?: string): string | null {
   const attrName = PROP_TO_ATTR[key] ?? key;
   // Never emit event-handler or malformed attribute names — an attacker who
   // controls a prop key could otherwise inject `onload=…` or break out of the
@@ -55,7 +63,20 @@ export function renderAttr(key: string, resolved: unknown): string | null {
   if (resolved === true) return ' ' + attrName;
   if (resolved === false || resolved == null) return null;
   const str = String(resolved);
-  if (isUrlAttr(attrName) && isDangerousUrl(str)) return null;
+  if (isUrlAttr(attrName) && isDangerousUrl(str, tag)) return null;
+  // srcdoc is emitted, never blocked: a sandboxed `<iframe srcdoc>` is a
+  // legitimate pattern. But escaping does NOT make it safe — the browser
+  // entity-decodes the attribute and parses the result as an HTML document that
+  // is same-origin with the page — so it is a trusted-content sink like
+  // dangerouslySetInnerHTML, and says so in dev.
+  // Verified by: src/ssr/__tests__/render-safety.test.ts > "warns in dev that srcdoc is a raw-HTML sink but still emits it"
+  if (__DEV__ && isRawHtmlAttr(attrName)) {
+    console.warn(
+      `[forma] "${attrName}" is a raw-HTML sink: the browser parses its value as ` +
+      `an HTML document, and attribute escaping does not neutralize that. Pass ` +
+      `only trusted markup, and prefer a sandboxed iframe.`,
+    );
+  }
   return ' ' + attrName + '="' + escapeAttr(str) + '"';
 }
 
@@ -122,6 +143,16 @@ function renderToBuffer(node: unknown, parts: string[]): void {
   // VNode
   if (isVNode(node)) {
     const { tag, props, children } = node;
+
+    // A tag is interpolated verbatim, so it needs the same validation prop
+    // names get: a tag taken from data (a CMS block type, an FMIR component
+    // name) could otherwise inject an attribute or close the tag outright.
+    // Verified by: src/ssr/__tests__/render-safety.test.ts > "drops a VNode whose tag would inject an attribute"
+    if (!isSafeTagName(tag)) {
+      if (__DEV__) console.warn(`[forma] Skipped VNode with an unsafe tag name: ${JSON.stringify(tag)}`);
+      return;
+    }
+
     parts.push('<', tag);
 
     // Render props as attributes
@@ -134,7 +165,7 @@ function renderToBuffer(node: unknown, parts: string[]): void {
         // Resolve reactive values
         const resolved = typeof value === 'function' ? value() : value;
 
-        const frag = renderAttr(key, resolved);
+        const frag = renderAttr(key, resolved, tag);
         if (frag !== null) parts.push(frag);
       }
     }
@@ -175,136 +206,3 @@ function renderToBuffer(node: unknown, parts: string[]): void {
 export function isVNode(v: unknown): v is VNode {
   return v != null && typeof v === 'object' && 'tag' in v && 'children' in v;
 }
-
-// ---------------------------------------------------------------------------
-// Hydration-aware rendering
-// ---------------------------------------------------------------------------
-
-/** Per-render hydration context — avoids shared module-level counter. */
-interface HydrationContext {
-  id: number;
-}
-
-/**
- * Render a FormaJS virtual tree to an HTML string with hydration markers.
- *
- * Like `renderToString`, but injects comment markers and `data-forma-h`
- * attributes so the client-side `hydrate()` function can adopt existing
- * DOM nodes without re-creating them.
- *
- * Each call creates its own hydration counter, so concurrent calls
- * (e.g. multiple SSR requests in the same process) produce independent,
- * non-overlapping hydration IDs.
- *
- * Marker types:
- * - `data-forma-h="N"` — element boundary (attribute on the element)
- * - `<!--forma-t:N-->` / `<!--/forma-t:N-->` — reactive text boundary
- * - `<!--forma-l:N-->` / `<!--/forma-l:N-->` — list boundary
- *
- * Usage:
- * ```ts
- * import { renderToStringWithHydration, sh } from '@getforma/core/ssr';
- *
- * const html = renderToStringWithHydration(
- *   sh('div', { class: 'app' },
- *     sh('h1', null, 'Hello SSR!'),
- *     sh('p', null, () => count()),
- *   )
- * );
- * ```
- */
-export function renderToStringWithHydration(node: unknown): string {
-  const ctx: HydrationContext = { id: 0 };
-  const parts: string[] = [];
-  renderToBufferHydrated(node, parts, ctx);
-  return parts.join('');
-}
-
-/**
- * Internal: recursively render into a string array buffer with hydration markers.
- * The `ctx` object carries the hydration counter so concurrent renders are isolated.
- */
-function renderToBufferHydrated(node: unknown, parts: string[], ctx: HydrationContext): void {
-  // null/undefined/boolean → empty
-  if (node == null || node === true || node === false) return;
-
-  // String → escaped text
-  if (typeof node === 'string') { parts.push(escapeHtml(node)); return; }
-
-  // Number → stringified
-  if (typeof node === 'number') { parts.push(String(node)); return; }
-
-  // Function (signal getter / reactive text) → wrap with text markers
-  if (typeof node === 'function') {
-    const id = ctx.id++;
-    parts.push(`<!--forma-t:${id}-->`);
-    renderToBufferHydrated(node(), parts, ctx);
-    parts.push(`<!--/forma-t:${id}-->`);
-    return;
-  }
-
-  // Array → wrap with list markers
-  if (Array.isArray(node)) {
-    const id = ctx.id++;
-    parts.push(`<!--forma-l:${id}-->`);
-    for (const child of node) renderToBufferHydrated(child, parts, ctx);
-    parts.push(`<!--/forma-l:${id}-->`);
-    return;
-  }
-
-  // VNode
-  if (isVNode(node)) {
-    const id = ctx.id++;
-    const { tag, props, children } = node;
-
-    // Add hydration data-attribute to element
-    parts.push('<', tag, ` data-forma-h="${id}"`);
-
-    // Render props as attributes
-    if (props) {
-      for (const [key, value] of Object.entries(props)) {
-        // Skip refs and internal props; event handlers and unsafe attribute
-        // names are dropped inside renderAttr.
-        if (key === 'ref' || key === 'dangerouslySetInnerHTML') continue;
-
-        // Resolve reactive values
-        const resolved = typeof value === 'function' ? value() : value;
-
-        const frag = renderAttr(key, resolved);
-        if (frag !== null) parts.push(frag);
-      }
-    }
-
-    // Void elements
-    if (VOID_ELEMENTS.has(tag)) { parts.push(' />'); return; }
-
-    parts.push('>');
-
-    // dangerouslySetInnerHTML
-    if (props?.['dangerouslySetInnerHTML']) {
-      const raw = props['dangerouslySetInnerHTML'];
-      if (typeof raw === 'object' && raw != null && '__html' in raw) {
-        const html = (raw as { __html: unknown }).__html;
-        if (typeof html === 'string') {
-          parts.push(html);
-        } else {
-          throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
-        }
-      } else {
-        throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
-      }
-    } else {
-      // Render children
-      for (const child of children) {
-        renderToBufferHydrated(child, parts, ctx);
-      }
-    }
-
-    parts.push('</', tag, '>');
-    return;
-  }
-
-  // Fallback: stringify
-  parts.push(escapeHtml(String(node)));
-}
-

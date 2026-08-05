@@ -16,6 +16,7 @@
 
 import { createSignal, internalEffect, untrack, createRoot, registerDisposer, __DEV__ } from '../reactive';
 import { hydrating } from './hydrate.js';
+import { deactivateIsland } from './activate.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -111,6 +112,45 @@ const ABORT_SYM = Symbol.for('forma-abort');
 const CACHE_SYM = Symbol.for('forma-attr-cache');
 const DYNAMIC_CHILD_SYM = Symbol.for('forma-dynamic-child');
 
+/**
+ * Tear down any islands inside a row that is leaving the list.
+ *
+ * An island's reactive root is created with createUnownedRoot (activate.ts), so
+ * it deliberately does NOT die with the row's own root: without this, removing
+ * a row containing an island leaves that island's effects running against
+ * detached DOM — plus its IntersectionObserver / interaction listeners if it
+ * had not hydrated yet — for the lifetime of the page.
+ *
+ * Verified by: src/dom/__tests__/list-disposal.test.ts > "deactivates an island inside a removed row"
+ */
+function deactivateIslandsIn(node: Node): void {
+  if (!(node instanceof Element)) return;
+  if (node.hasAttribute('data-forma-island')) {
+    deactivateIsland(node as HTMLElement);
+  }
+  for (const nested of node.querySelectorAll<HTMLElement>('[data-forma-island]')) {
+    deactivateIsland(nested);
+  }
+}
+
+/**
+ * Remove one row, honouring an exit animation.
+ *
+ * With onBeforeRemove the island teardown is deferred into done() so an island
+ * inside an animating row keeps working until the row actually leaves.
+ */
+function removeRow(parent: Node, node: Node, hooks?: ListTransitionHooks): void {
+  if (hooks?.onBeforeRemove) {
+    hooks.onBeforeRemove(node, () => {
+      deactivateIslandsIn(node);
+      if (node.parentNode) node.parentNode.removeChild(node);
+    });
+    return;
+  }
+  deactivateIslandsIn(node);
+  parent.removeChild(node);
+}
+
 function canPatchStaticElement(target: Node, source: Node): target is HTMLElement {
   return target instanceof HTMLElement
     && source instanceof HTMLElement
@@ -186,14 +226,7 @@ function reconcileSmall<T>(
   // Remove old items not reused
   for (let i = 0; i < oldLen; i++) {
     if (!oldUsed[i]) {
-      if (hooks?.onBeforeRemove) {
-        const node = oldNodes[i]!;
-        hooks.onBeforeRemove(node, () => {
-          if (node.parentNode) node.parentNode.removeChild(node);
-        });
-      } else {
-        parent.removeChild(oldNodes[i]!);
-      }
+      removeRow(parent, oldNodes[i]!, hooks);
     }
   }
 
@@ -308,14 +341,7 @@ export function reconcileList<T>(
   // --- Trivial: new is empty -> remove all ---
   if (newLen === 0) {
     for (let i = 0; i < oldLen; i++) {
-      if (hooks?.onBeforeRemove) {
-        const node = oldNodes[i]!;
-        hooks.onBeforeRemove(node, () => {
-          if (node.parentNode) node.parentNode.removeChild(node);
-        });
-      } else {
-        parent.removeChild(oldNodes[i]!);
-      }
+      removeRow(parent, oldNodes[i]!, hooks);
     }
     return { nodes: [], items: [] };
   }
@@ -373,14 +399,7 @@ export function reconcileList<T>(
   // --- Remove old items not in new array ---
   for (let i = 0; i < oldLen; i++) {
     if (!oldUsed[i]) {
-      if (hooks?.onBeforeRemove) {
-        const node = oldNodes[i]!;
-        hooks.onBeforeRemove(node, () => {
-          if (node.parentNode) node.parentNode.removeChild(node);
-        });
-      } else {
-        parent.removeChild(oldNodes[i]!);
-      }
+      removeRow(parent, oldNodes[i]!, hooks);
     }
   }
 
@@ -541,7 +560,10 @@ export function createList<T>(
       }
       // Remove all nodes between the markers
       for (const node of currentNodes) {
-        if (node.parentNode === parent) parent.removeChild(node);
+        if (node.parentNode === parent) {
+          deactivateIslandsIn(node);
+          parent.removeChild(node);
+        }
       }
       cache = new Map();
       currentNodes = [];

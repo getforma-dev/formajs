@@ -50,12 +50,20 @@ export function mount(
 
   let disposeRoot!: () => void;
 
+  // The element unmount has to clean up. Usually `target`, but hydrateIsland's
+  // CSR fallback REPLACES an empty SSR shell with the component's own root
+  // element, and clearing the detached original would leave that replacement —
+  // and its whole subtree — in the document after unmount.
+  //
+  // Verified by: src/dom/__tests__/mount.test.ts > "unmount removes the replacement element after the CSR fallback"
+  let active: Element = target;
+
   if (target.hasAttribute('data-forma-ssr')) {
     // SSR content present — hydrate in-place using descriptor-based adoption.
     // The component MUST run inside createRoot so effects are tracked.
     createUnownedRoot((dispose) => {
       disposeRoot = dispose;
-      hydrateIsland(component, target);
+      active = hydrateIsland(component, target);
     });
   } else {
     // Normal mount — clear and append
@@ -73,6 +81,12 @@ export function mount(
     if (unmounted) return;
     unmounted = true;
     disposeRoot();
-    target.innerHTML = '';
+    if (active === target) {
+      target.innerHTML = '';
+    } else {
+      // The container was replaced by the component's root: removing that
+      // element is what "unmount" means here — there is no container left.
+      active.remove();
+    }
   };
 }

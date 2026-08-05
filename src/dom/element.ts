@@ -8,8 +8,15 @@
  * Provides event listener cleanup via AbortController.
  */
 
-import { internalEffect } from 'forma/reactive';
+import { internalEffect, __DEV__ } from 'forma/reactive';
 import { hydrating, type HydrationDescriptor } from './hydrate.js';
+import {
+  isDangerousUrl,
+  isEventHandlerAttr,
+  isRawHtmlAttr,
+  isUnsafeAttrWrite,
+  isUrlAttr,
+} from '../security/url-safety.js';
 
 /**
  * Symbol used as JSX Fragment factory. h(Fragment, null, ...children) returns DocumentFragment.
@@ -222,6 +229,33 @@ function getCache(el: Element): Record<string, unknown> {
 
 type PropHandler = (el: Element, key: string, value: unknown) => void;
 
+/**
+ * Dev-only diagnostic for a prop the attribute-safety guards refused to write.
+ * Silent in production, mirroring the SSR renderer, which drops the same props
+ * without failing the render.
+ */
+function warnDropped(el: Element, key: string, reason: string): void {
+  console.warn(
+    `[forma] Dropped ${reason} prop "${key}" on <${el.localName}> — the SSR ` +
+    `renderer drops it too, so allowing it here would re-introduce at hydration ` +
+    `exactly what the server refused to emit.`,
+  );
+}
+
+/**
+ * Dev-only diagnostic for `srcdoc`, whose value the browser parses as an HTML
+ * document. Attribute escaping does not neutralize it, so it is a
+ * trusted-content sink; it is warned about, never blocked, because a sandboxed
+ * `<iframe srcdoc>` is a legitimate pattern.
+ */
+function warnRawHtmlAttr(el: Element, key: string): void {
+  console.warn(
+    `[forma] "${key}" on <${el.localName}> is a raw-HTML sink: its value is ` +
+    `parsed as an HTML document, and escaping does not neutralize it. Only pass ` +
+    `trusted markup (and prefer a sandboxed iframe).`,
+  );
+}
+
 /** Handle class / className prop. */
 function handleClass(el: Element, _key: string, value: unknown): void {
   if (typeof value === 'function') {
@@ -371,24 +405,35 @@ function handleInnerHTML(el: Element, _key: string, value: unknown): void {
   }
 }
 
-/** Handle xlink: namespaced SVG attributes. */
+/**
+ * Handle xlink: namespaced SVG attributes.
+ *
+ * `xlink:href` is a URL attribute — on `<use>` it dereferences into a document
+ * context — so every write goes through the same guard as `href`/`src`; a
+ * rejected value removes the attribute rather than leaving a stale one.
+ *
+ * Verified by: src/dom/__tests__/element-url-safety.test.ts > "drops a javascript: xlink:href on <use>"
+ */
 function handleXLink(el: Element, key: string, value: unknown): void {
   const localName = key.slice(6); // strip "xlink:" prefix
-  if (typeof value === 'function') {
-    internalEffect(() => {
-      const v = (value as () => unknown)();
-      if (v == null || v === false) {
-        el.removeAttributeNS(XLINK_NS, localName);
-      } else {
-        el.setAttributeNS(XLINK_NS, key, String(v));
-      }
-    });
-  } else {
-    if (value == null || value === false) {
+  const write = (v: unknown): void => {
+    if (v == null || v === false) {
       el.removeAttributeNS(XLINK_NS, localName);
-    } else {
-      el.setAttributeNS(XLINK_NS, key, String(value));
+      return;
     }
+    const strVal = String(v);
+    if (isUnsafeAttrWrite(el.localName, key, strVal)) {
+      if (__DEV__) warnDropped(el, key, 'unsafe-URL');
+      el.removeAttributeNS(XLINK_NS, localName);
+      return;
+    }
+    el.setAttributeNS(XLINK_NS, key, strVal);
+  };
+
+  if (typeof value === 'function') {
+    internalEffect(() => { write((value as () => unknown)()); });
+  } else {
+    write(value);
   }
 }
 
@@ -418,37 +463,57 @@ function handleBooleanAttr(el: Element, key: string, value: unknown): void {
   }
 }
 
-/** Handle generic attributes with setAttribute/removeAttribute. */
+/**
+ * Handle generic attributes with setAttribute/removeAttribute.
+ *
+ * This is the tail of the prop dispatch, so it is where an attacker-supplied
+ * prop name/value lands. Two writes are refused here, matching what the SSR
+ * renderer's `renderAttr` refuses:
+ *
+ * - any `on…`-named prop, in any casing. `applyProp`'s fast path only routes
+ *   lowercase `on` to addEventListener, so `ONCLICK`/`Onerror` would otherwise
+ *   reach setAttribute — which ASCII-lowercases qualified names on HTML
+ *   elements and produces a live inline handler.
+ * - a URL attribute carrying a script-executing scheme, checked against the
+ *   element's tag so an image sink can still take `data:image/svg+xml`.
+ *
+ * A rejected reactive value removes the attribute instead of leaving the
+ * previous (accepted) one in place, so the DOM never disagrees with the cache.
+ *
+ * Verified by: src/dom/__tests__/element-url-safety.test.ts > "drops an uppercase-cased function prop instead of stringifying it into an attribute"
+ * Verified by: src/dom/__tests__/element-url-safety.test.ts > "drops a javascript: src on a reactive binding and removes the stale safe value"
+ */
 function handleGenericAttr(el: Element, key: string, value: unknown): void {
-  if (typeof value === 'function') {
-    internalEffect(() => {
-      const v = (value as () => unknown)();
-      if (v == null || v === false) {
-        const cache = getCache(el);
-        if (cache[key] === null) return;
-        cache[key] = null;
-        el.removeAttribute(key);
-      } else {
-        const strVal = String(v);
-        const cache = getCache(el);
+  if (isEventHandlerAttr(key)) {
+    if (__DEV__) warnDropped(el, key, 'inline-event-handler');
+    return;
+  }
+  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);
+  // `key` is fixed for this binding, so the (allocating) URL-attribute lookup
+  // happens once, not on every reactive re-run.
+  const urlAttr = isUrlAttr(key);
+
+  const write = (v: unknown): void => {
+    const cache = getCache(el);
+    if (v != null && v !== false) {
+      const strVal = String(v);
+      if (!urlAttr || !isDangerousUrl(strVal, el.localName)) {
         if (cache[key] === strVal) return;
         cache[key] = strVal;
         el.setAttribute(key, strVal);
+        return;
       }
-    });
-  } else {
-    if (value == null || value === false) {
-      const cache = getCache(el);
-      if (cache[key] === null) return;
-      cache[key] = null;
-      el.removeAttribute(key);
-    } else {
-      const strVal = String(value);
-      const cache = getCache(el);
-      if (cache[key] === strVal) return;
-      cache[key] = strVal;
-      el.setAttribute(key, strVal);
+      if (__DEV__) warnDropped(el, key, 'unsafe-URL');
     }
+    if (cache[key] === null) return;
+    cache[key] = null;
+    el.removeAttribute(key);
+  };
+
+  if (typeof value === 'function') {
+    internalEffect(() => { write((value as () => unknown)()); });
+  } else {
+    write(value);
   }
 }
 
@@ -482,6 +547,10 @@ function applyProp(el: Element, key: string, value: unknown): void {
 
   // 2. Event handler detection (2-char check, faster than startsWith)
   // Events are the #2 most common prop type — check before Map.
+  // Deliberately case-SENSITIVE: only `onClick`-style props become listeners.
+  // Other casings (`ONCLICK`) fall through to handleGenericAttr, which drops
+  // them rather than writing an inline handler attribute — the same rule the
+  // SSR renderer applies, so a tree renders identically on both sides.
   if (key.charCodeAt(0) === 111 /* 'o' */ && key.charCodeAt(1) === 110 /* 'n' */ && key.length > 2) {
     handleEvent(el, key, value); return;
   }
@@ -544,7 +613,12 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
 
   // xlink: namespace
   if (key.charCodeAt(0) === 120 /* x */ && key.startsWith('xlink:')) {
-    el.setAttributeNS(XLINK_NS, key, String(value));
+    const strVal = String(value);
+    if (isUnsafeAttrWrite(el.localName, key, strVal)) {
+      if (__DEV__) warnDropped(el, key, 'unsafe-URL');
+      return;
+    }
+    el.setAttributeNS(XLINK_NS, key, strVal);
     return;
   }
 
@@ -554,12 +628,29 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
     return;
   }
 
-  // Generic: true → empty string attribute, else stringified value
+  // Generic tail. This is the fast path an attacker-supplied prop reaches, so
+  // it refuses the same writes as handleGenericAttr (and as the SSR renderer):
+  // any `on…`-named prop — including the `value === true` case, which would
+  // otherwise emit a bare `ONCLICK` attribute — and script-scheme URLs, checked
+  // against the element's tag.
+  // Verified by: src/dom/__tests__/element-url-safety.test.ts > "drops on* props in the value===true branch"
+  if (isEventHandlerAttr(key)) {
+    if (__DEV__) warnDropped(el, key, 'inline-event-handler');
+    return;
+  }
+  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);
+
+  // true → empty string attribute, else stringified value
   if (value === true) {
     el.setAttribute(key, '');
-  } else {
-    el.setAttribute(key, String(value));
+    return;
   }
+  const strVal = String(value);
+  if (isUrlAttr(key) && isDangerousUrl(strVal, el.localName)) {
+    if (__DEV__) warnDropped(el, key, 'unsafe-URL');
+    return;
+  }
+  el.setAttribute(key, strVal);
 }
 
 /** Append a single child to a parent node. */
@@ -787,7 +878,9 @@ export function h(
       if (key === 'ref') continue;
       const value = props[key];
 
-      // Event handlers: no cache needed, direct binding
+      // Event handlers: no cache needed, direct binding. Case-sensitive by
+      // design — see applyProp; other casings are dropped downstream instead of
+      // becoming inline handler attributes.
       if (key.charCodeAt(0) === 111 /* o */ && key.charCodeAt(1) === 110 /* n */ && key.length > 2) {
         handleEvent(el, key, value);
         continue;

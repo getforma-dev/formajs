@@ -2,7 +2,7 @@
   "name": "@getforma/core",
   "author": "Forma <victor@getforma.dev>",
   "version": "1.5.0",
-  "description": "Real DOM reactive library — fine-grained signals, islands architecture, SSR hydration. No virtual DOM, no diffing. Core entry ~8KB gzipped; full HTML runtime ~24KB gzipped.",
+  "description": "Real DOM reactive library — fine-grained signals, islands architecture, SSR hydration. No virtual DOM, no diffing. Untree-shaken core ~25KB gzipped; CDN HTML runtime ~26KB gzipped (measured by scripts/check-size.mjs).",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -28,9 +28,6 @@
         "default": "./dist/runtime.cjs"
       }
     },
-    "./runtime/global": {
-      "default": "./dist/formajs-runtime.global.js"
-    },
     "./runtime-hardened": {
       "import": {
         "types": "./dist/runtime-hardened.d.ts",
@@ -51,8 +48,15 @@
         "default": "./dist/runtime-hardened.cjs"
       }
     },
-    "./runtime-csp/global": {
-      "default": "./dist/formajs-runtime-hardened.global.js"
+    "./wasm": {
+      "import": {
+        "types": "./dist/wasm.d.ts",
+        "default": "./dist/wasm.js"
+      },
+      "require": {
+        "types": "./dist/wasm.d.cts",
+        "default": "./dist/wasm.cjs"
+      }
     },
     "./tc39": {
       "import": {
@@ -103,6 +107,38 @@
         "types": "./dist/server.d.cts",
         "default": "./dist/server.cjs"
       }
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "runtime": [
+        "dist/runtime.d.ts"
+      ],
+      "runtime-hardened": [
+        "dist/runtime-hardened.d.ts"
+      ],
+      "runtime-csp": [
+        "dist/runtime-hardened.d.ts"
+      ],
+      "wasm": [
+        "dist/wasm.d.ts"
+      ],
+      "tc39": [
+        "dist/tc39-compat.d.ts"
+      ],
+      "ssr": [
+        "dist/ssr/index.d.ts"
+      ],
+      "http": [
+        "dist/http.d.ts"
+      ],
+      "storage": [
+        "dist/storage.d.ts"
+      ],
+      "server": [
+        "dist/server.d.ts"
+      ]
     }
   },
   "files": [
@@ -113,20 +149,18 @@
     "./dist/runtime.js",
     "./dist/runtime.cjs",
     "./dist/runtime-hardened.js",
-    "./dist/runtime-hardened.cjs",
-    "./dist/formajs-runtime.global.js",
-    "./dist/formajs-runtime-hardened.global.js",
-    "./dist/forma-runtime.js",
-    "./dist/forma-runtime-csp.js"
+    "./dist/runtime-hardened.cjs"
   ],
   "scripts": {
-    "build": "tsup && node scripts/post-build.mjs",
+    "build": "node scripts/clean-dist.mjs && tsup && node scripts/post-build.mjs && node scripts/verify-dist.mjs",
+    "check:size": "node scripts/check-size.mjs",
+    "check:pack": "publint && attw --pack .",
     "pack:release": "npm run build && npm pack --pack-destination releases",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
-    "test:e2e": "npm run build && cp dist/formajs-runtime.global.js e2e/fixtures/ && npx playwright test",
+    "test:e2e": "npm run build && node -e \"require('fs').copyFileSync('dist/formajs-runtime.global.js','e2e/fixtures/formajs-runtime.global.js')\" && npx playwright test",
     "docs": "typedoc",
     "prepublishOnly": "npm run build"
   },
@@ -167,14 +201,21 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/getforma-dev/formajs.git"
+    "url": "git+https://github.com/getforma-dev/formajs.git"
   },
   "homepage": "https://getforma.dev",
   "bugs": {
     "url": "https://github.com/getforma-dev/formajs/issues"
   },
   "engines": {
-    "node": ">=18"
+    "node": ">=20.19.0"
+  },
+  "devEngines": {
+    "runtime": {
+      "name": "node",
+      "version": ">=20.19.0",
+      "onFail": "warn"
+    }
   },
   "dependencies": {
     "alien-signals": "~3.1.2"
@@ -183,10 +224,13 @@
     "rollup": "^4.59.0"
   },
   "devDependencies": {
+    "@arethetypeswrong/cli": "^0.18.5",
     "@playwright/test": "^1.58.2",
     "@vitest/coverage-v8": "^4.0.18",
+    "esbuild": "0.27.3",
     "fake-indexeddb": "^6.2.3",
     "happy-dom": "^20.8.3",
+    "publint": "^0.3.23",
     "serve": "^14.2.6",
     "tsup": "^8.5.1",
     "typedoc": "^0.28.17",

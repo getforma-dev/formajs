@@ -7,10 +7,11 @@
  * reactive bindings. No DOM elements are created during hydration.
  */
 
-import { internalEffect, createSignal, untrack, __DEV__ } from 'forma/reactive';
+import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
 import { h } from './element.js';
 import { reconcileList, createList } from './list.js';
 import { createShow } from './show.js';
+import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
 
 // Same symbol identity as element.ts — Symbol.for() guarantees cross-module
 // sharing so cleanup(el) in element.ts aborts controllers created here.
@@ -64,7 +65,7 @@ export interface ListDescriptor {
 /** Maps built by collectMarkers() for O(1) marker lookup during adoption. */
 export interface MarkerMap {
   text: Map<number, Text>;
-  show: Map<number, { start: Comment; end: Comment; cachedContent: DocumentFragment | null }>;
+  show: Map<number, { start: Comment; end: Comment }>;
   list: Map<number, { start: Comment; end: Comment }>;
 }
 
@@ -88,6 +89,50 @@ export function isListDescriptor(v: unknown): v is ListDescriptor {
 }
 
 // ---------------------------------------------------------------------------
+// Marker grammar
+// ---------------------------------------------------------------------------
+
+// Marker kind characters, as char codes: f:t0 / f:s0 / f:l0 / f:i0.
+const KIND_TEXT = 116; /* t */
+const KIND_SHOW = 115; /* s */
+const KIND_LIST = 108; /* l */
+const KIND_ISLAND = 105; /* i */
+
+/**
+ * Parse a `f:<kind><decimal index>` marker starting at `offset` (1 for the
+ * closing `/f:<kind>N` form). Returns the index, or -1 when the comment is not
+ * a marker of that kind.
+ *
+ * The marker GRAMMAR is the wire contract shared with the Rust walker and ksx
+ * and is not changed here. The PARSER is deliberately stricter than a prefix
+ * test: every character after the kind must be a decimal digit, which is
+ * exactly what the walker and the compiler emit. Without that, an authored
+ * template comment such as `<!--f:side note-->` (the walker passes authored
+ * comments through nearly verbatim) is read as a show marker and desyncs the
+ * adoption cursor for the rest of its parent.
+ *
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "ignores an authored comment that only shares a marker prefix"
+ */
+function markerIndex(data: string, kind: number, offset: number): number {
+  if (
+    data.charCodeAt(offset) !== 102 /* f */ ||
+    data.charCodeAt(offset + 1) !== 58 /* : */ ||
+    data.charCodeAt(offset + 2) !== kind
+  ) {
+    return -1;
+  }
+  const first = offset + 3;
+  if (data.length <= first) return -1;
+  let idx = 0;
+  for (let i = first; i < data.length; i++) {
+    const c = data.charCodeAt(i);
+    if (c < 48 /* 0 */ || c > 57 /* 9 */) return -1;
+    idx = idx * 10 + (c - 48);
+  }
+  return idx;
+}
+
+// ---------------------------------------------------------------------------
 // collectMarkers() — single-pass TreeWalker
 // ---------------------------------------------------------------------------
 
@@ -100,7 +145,7 @@ export function isListDescriptor(v: unknown): v is ListDescriptor {
  */
 export function collectMarkers(root: Element): MarkerMap {
   const text = new Map<number, Text>();
-  const show = new Map<number, { start: Comment; end: Comment; cachedContent: DocumentFragment | null }>();
+  const show = new Map<number, { start: Comment; end: Comment }>();
   const list = new Map<number, { start: Comment; end: Comment }>();
 
   // Pending show-start comments keyed by index, waiting for their closing marker
@@ -129,60 +174,48 @@ export function collectMarkers(root: Element): MarkerMap {
 
     if (node.nodeType === Node.COMMENT_NODE) {
       const data = (node as Comment).data;
+      const closing = data.charCodeAt(0) === 47 /* / */;
+      const offset = closing ? 1 : 0;
 
       // Text marker: "f:t<index>"
-      if (data.length >= 4 && data.charCodeAt(0) === 102 /* f */ && data.charCodeAt(1) === 58 /* : */ && data.charCodeAt(2) === 116 /* t */) {
-        const idx = parseInt(data.slice(3), 10);
-        if (!isNaN(idx)) {
+      if (!closing) {
+        const idx = markerIndex(data, KIND_TEXT, 0);
+        if (idx >= 0) {
           // The text node is the next sibling
           const next = node.nextSibling;
           if (next && next.nodeType === Node.TEXT_NODE) {
             text.set(idx, next as Text);
           }
+          continue;
         }
-        continue;
       }
 
-      // Show opening marker: "f:s<index>"
-      if (data.length >= 4 && data.charCodeAt(0) === 102 /* f */ && data.charCodeAt(1) === 58 /* : */ && data.charCodeAt(2) === 115 /* s */) {
-        const idx = parseInt(data.slice(3), 10);
-        if (!isNaN(idx)) {
-          pendingShow.set(idx, node as Comment);
-        }
-        continue;
-      }
-
-      // Show closing marker: "/f:s<index>"
-      if (data.length >= 5 && data.charCodeAt(0) === 47 /* / */ && data.charCodeAt(1) === 102 /* f */ && data.charCodeAt(2) === 58 /* : */ && data.charCodeAt(3) === 115 /* s */) {
-        const idx = parseInt(data.slice(4), 10);
-        if (!isNaN(idx)) {
-          const start = pendingShow.get(idx);
+      // Show markers: "f:s<index>" … "/f:s<index>"
+      const showIdx = markerIndex(data, KIND_SHOW, offset);
+      if (showIdx >= 0) {
+        if (closing) {
+          const start = pendingShow.get(showIdx);
           if (start) {
-            show.set(idx, { start, end: node as Comment, cachedContent: null });
-            pendingShow.delete(idx);
+            show.set(showIdx, { start, end: node as Comment });
+            pendingShow.delete(showIdx);
           }
+        } else {
+          pendingShow.set(showIdx, node as Comment);
         }
         continue;
       }
 
-      // List opening marker: "f:l<index>"
-      if (data.length >= 4 && data.charCodeAt(0) === 102 /* f */ && data.charCodeAt(1) === 58 /* : */ && data.charCodeAt(2) === 108 /* l */) {
-        const idx = parseInt(data.slice(3), 10);
-        if (!isNaN(idx)) {
-          pendingList.set(idx, node as Comment);
-        }
-        continue;
-      }
-
-      // List closing marker: "/f:l<index>"
-      if (data.length >= 5 && data.charCodeAt(0) === 47 /* / */ && data.charCodeAt(1) === 102 /* f */ && data.charCodeAt(2) === 58 /* : */ && data.charCodeAt(3) === 108 /* l */) {
-        const idx = parseInt(data.slice(4), 10);
-        if (!isNaN(idx)) {
-          const start = pendingList.get(idx);
+      // List markers: "f:l<index>" … "/f:l<index>"
+      const listIdx = markerIndex(data, KIND_LIST, offset);
+      if (listIdx >= 0) {
+        if (closing) {
+          const start = pendingList.get(listIdx);
           if (start) {
-            list.set(idx, { start, end: node as Comment });
-            pendingList.delete(idx);
+            list.set(listIdx, { start, end: node as Comment });
+            pendingList.delete(listIdx);
           }
+        } else {
+          pendingList.set(listIdx, node as Comment);
         }
         continue;
       }
@@ -197,15 +230,52 @@ export function collectMarkers(root: Element): MarkerMap {
 // ---------------------------------------------------------------------------
 
 /**
+ * Prop name → HTML attribute name. Same three mappings as `PROP_TO_ATTR` in
+ * src/ssr/render.ts; duplicated rather than imported so the client bundle never
+ * pulls in the SSR renderer. Without it a reactive `className` binding writes a
+ * `classname="…"` attribute, which styles nothing.
+ *
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "maps className/htmlFor/tabIndex to their HTML attribute names"
+ */
+const PROP_TO_ATTR: Record<string, string> = {
+  className: 'class',
+  htmlFor: 'for',
+  tabIndex: 'tabindex',
+};
+
+/**
  * Attach event handlers and reactive attribute bindings to an existing
  * SSR element. Static (non-function) props are skipped because they are
  * already baked into the server HTML.
+ *
+ * Adoption applies the same three rules as h() and the SSR renderers, so this
+ * path cannot drift from the other two:
+ * - `ref` is a callback, not an attribute: it is invoked with the element.
+ * - any `on…` name (whatever its casing) never reaches setAttribute — writing
+ *   it would install a real inline event handler the server deliberately
+ *   dropped.
+ * - reactive values go through `isUnsafeAttrWrite` (the shared client/SSR
+ *   predicate) on every run, and the attribute is REMOVED rather than written
+ *   when the value is dangerous.
+ *
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "calls a function ref with the adopted element instead of writing a ref attribute"
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "never writes an inline event-handler attribute for an odd-cased on* prop"
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "removes a URL attribute whose reactive value uses a dangerous scheme"
  */
 export function applyDynamicProps(el: Element, props: Record<string, unknown> | null): void {
   if (!props) return;
 
+  let ref: ((el: Element) => void) | null = null;
+
   for (const key in props) {
     const value = props[key];
+
+    // ref is a callback, not an attribute — call it once the element is bound
+    // (h() does the same after it finishes building the element).
+    if (key === 'ref') {
+      if (typeof value === 'function') ref = value as (el: Element) => void;
+      continue;
+    }
 
     // Skip non-function values — they are static and already in the SSR HTML
     if (typeof value !== 'function') continue;
@@ -221,9 +291,26 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
       continue;
     }
 
-    // Reactive attribute binding (function, non-event)
+    const attrKey = PROP_TO_ATTR[key] ?? key;
+
+    // Any other `on…` casing (ONCLICK, Onerror) reached here instead of the
+    // fast path above. setAttribute lowercases qualified names on HTML
+    // elements, so writing it would create a live inline handler out of a prop
+    // the SSR renderer drops. Never write it.
+    if (isEventHandlerAttr(attrKey)) {
+      if (__DEV__) console.warn(`[forma] Hydration: dropped "${attrKey}" on <${el.localName}> (inline-event-handler) — use the lowercase on* prop form for listeners`);
+      el.removeAttribute(attrKey);
+      continue;
+    }
+    if (__DEV__ && isRawHtmlAttr(attrKey)) {
+      console.warn(`[forma] Hydration: "${attrKey}" on <${el.localName}> is a raw-HTML sink — its value is parsed as a document, so escaping does not neutralize it. Only pass trusted markup.`);
+    }
+
+    // Reactive attribute binding (function, non-event). isUnsafeAttrWrite is the
+    // same predicate h() and the SSR renderer use, so a payload the server
+    // refused to emit is not re-added here at hydration.
     const fn = value as () => unknown;
-    const attrKey = key; // capture for closure
+    const tag = el.localName;
     internalEffect(() => {
       const v = fn();
       if (v === false || v == null) {
@@ -231,10 +318,18 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
       } else if (v === true) {
         el.setAttribute(attrKey, '');
       } else {
-        el.setAttribute(attrKey, String(v));
+        const str = String(v);
+        if (isUnsafeAttrWrite(tag, attrKey, str)) {
+          if (__DEV__) console.warn(`[forma] Hydration: dropped "${attrKey}" on <${tag}> (unsafe-URL)`);
+          el.removeAttribute(attrKey);
+          return;
+        }
+        el.setAttribute(attrKey, str);
       }
     });
   }
+
+  if (ref) ref(el);
 }
 
 // ---------------------------------------------------------------------------
@@ -315,22 +410,22 @@ export function descriptorToElement(desc: HydrationDescriptor): Element {
 
 /** Check if comment data is an island start marker (f:iN). */
 function isIslandStart(data: string): boolean {
-  return data.length >= 4 && data.charCodeAt(0) === 102 /* f */ && data.charCodeAt(1) === 58 /* : */ && data.charCodeAt(2) === 105 /* i */;
+  return markerIndex(data, KIND_ISLAND, 0) >= 0;
 }
 
 /** Check if comment data is a show start marker (f:sN). */
 function isShowStart(data: string): boolean {
-  return data.length >= 4 && data.charCodeAt(0) === 102 /* f */ && data.charCodeAt(1) === 58 /* : */ && data.charCodeAt(2) === 115 /* s */;
+  return markerIndex(data, KIND_SHOW, 0) >= 0;
 }
 
 /** Check if comment data is a text marker (f:tN). */
 function isTextStart(data: string): boolean {
-  return data.length >= 4 && data.charCodeAt(0) === 102 /* f */ && data.charCodeAt(1) === 58 /* : */ && data.charCodeAt(2) === 116 /* t */;
+  return markerIndex(data, KIND_TEXT, 0) >= 0;
 }
 
 /** Check if comment data is a list start marker (f:lN). */
 function isListStart(data: string): boolean {
-  return data.length >= 4 && data.charCodeAt(0) === 102 /* f */ && data.charCodeAt(1) === 58 /* : */ && data.charCodeAt(2) === 108 /* l */;
+  return markerIndex(data, KIND_LIST, 0) >= 0;
 }
 
 /** Find the closing comment marker for a start marker (e.g., f:i0 → /f:i0). */
@@ -388,29 +483,110 @@ function extractContentBetweenMarkers(start: Comment, end: Comment): DocumentFra
 }
 
 /**
- * Set up reactive show effect after hydration adoption.
+ * Adopt one SSR show region: bind the initial branch to the server content and
+ * install the toggle effect.
+ *
+ * The adoption itself runs inside its own reactive root so the bindings it
+ * creates die with that branch instead of outliving the island.
+ *
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "disposes the adopted branch bindings when the server content is dropped"
+ */
+function adoptShowRegion(desc: ShowDescriptor, start: Comment, end: Comment): void {
+  let adoptedDispose: (() => void) | null = null;
+  if (desc.initialBranch != null) {
+    adoptedDispose = createRoot((dispose) => {
+      adoptBranchContent(desc.initialBranch, start, end);
+      return dispose;
+    });
+  }
+  setupShowEffect(desc, start, end, adoptedDispose);
+}
+
+/**
+ * Set up the reactive show effect after hydration adoption.
  *
  * During initial hydration, content is adopted in place (no DOM movement).
- * On first toggle, current content is scooped into a cached fragment.
- * Subsequent toggles swap between cached fragments (pure DOM moves, no re-render).
+ * On each toggle the outgoing branch is scooped into a fragment and the
+ * incoming branch is either re-inserted from its cached fragment or built by
+ * its factory. Two properties this relies on:
+ *
+ * 1. A branch is built inside `createRoot` + `untrack` (as the CSR path in
+ *    show.ts does). Without untrack, the branch's own bindings become
+ *    dependencies of THIS effect and alien-signals tears them down on the next
+ *    toggle, so a cached branch would come back frozen. A cached branch is
+ *    deliberately NOT disposed while it waits off-DOM — its effects keep
+ *    writing to the detached nodes, which is what makes re-insertion show
+ *    current data. The cost is that a hidden branch keeps recomputing; it is
+ *    reclaimed when the island root is disposed.
+ * 2. Server-rendered content is never cached under a branch label. Which branch
+ *    the server rendered cannot be recovered from the DOM (both branches can
+ *    produce identical tags), so if the client condition disagrees with the
+ *    server the label would be wrong forever: the false branch would keep
+ *    re-inserting the server's truthy UI. The adopted content is therefore
+ *    dropped (and its bindings disposed) the first time it leaves the DOM, and
+ *    the branch is rebuilt from its factory when the condition returns.
+ *
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "forward mismatch: the server branch is never re-inserted as the other branch across repeated toggles"
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "forward mismatch with no whenFalse: the server content does not come back as the false branch"
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "a branch built by its factory keeps updating after a toggle round-trip"
  */
 function setupShowEffect(
   desc: ShowDescriptor,
-  marker: { start: Comment; end: Comment; cachedContent: DocumentFragment | null },
+  start: Comment,
+  end: Comment,
+  adoptedDispose: (() => void) | null,
 ): void {
-  let currentCondition = !!desc.condition();
-  let thenFragment: DocumentFragment | null = null;
-  let elseFragment: DocumentFragment | null = null;
+  let currentCondition = !!untrack(() => desc.condition());
 
-  // Reverse mismatch: SSR is empty but client condition is true.
-  // Insert truthy content immediately so the user sees correct content.
-  const hasSSRContent = marker.start.nextSibling !== marker.end;
-  if (!hasSSRContent && currentCondition) {
-    if (__DEV__) console.warn('[forma] Hydration: show condition mismatch — SSR empty but client condition is true');
-    const trueBranch = desc.whenTrue();
-    if (trueBranch instanceof Node) {
-      marker.start.parentNode!.insertBefore(trueBranch, marker.end);
+  // Cached branch fragments and the disposer of the root owning each one.
+  let thenFragment: DocumentFragment | null = null;
+  let thenDispose: (() => void) | null = null;
+  let elseFragment: DocumentFragment | null = null;
+  let elseDispose: (() => void) | null = null;
+
+  // Disposer for whatever is between the markers right now.
+  let currentDispose: (() => void) | null = adoptedDispose;
+  // True while the content between the markers is the server's.
+  let holdingSSR = start.nextSibling !== end;
+
+  /** Build a branch in its own root; records its disposer as the current one. */
+  const renderBranch = (cond: boolean): Node | null => {
+    const factory = cond ? desc.whenTrue : desc.whenFalse;
+    if (!factory) return null;
+    let branchDispose!: () => void;
+    const node = createRoot((dispose) => {
+      branchDispose = dispose;
+      return untrack(() => {
+        const raw = factory();
+        // ensureNode covers a factory that returns a descriptor (possible when
+        // the branch was pre-computed during hydration mode).
+        return raw instanceof Node ? raw : ensureNode(raw);
+      });
+    });
+    if (!node) {
+      branchDispose();
+      return null;
     }
+    currentDispose = branchDispose;
+    return node;
+  };
+
+  // Mismatch repair, both directions. `initialBranch` is what the client would
+  // render right now (createShow computed it from the live condition), so
+  // comparing "does the client branch have content" against "does the region
+  // have content" catches the two cases the DOM can actually prove.
+  if (holdingSSR && desc.initialBranch == null) {
+    if (__DEV__) console.warn('[forma] Hydration: show condition mismatch — client branch renders nothing but SSR left content');
+    extractContentBetweenMarkers(start, end); // dropped
+    if (currentDispose) {
+      currentDispose();
+      currentDispose = null;
+    }
+    holdingSSR = false;
+  } else if (!holdingSSR && desc.initialBranch != null) {
+    if (__DEV__) console.warn('[forma] Hydration: show condition mismatch — SSR empty but the client branch has content');
+    const branch = renderBranch(currentCondition);
+    if (branch) start.parentNode!.insertBefore(branch, end);
   }
 
   internalEffect(() => {
@@ -418,34 +594,319 @@ function setupShowEffect(
     if (next === currentCondition) return;
     currentCondition = next;
 
-    const parent = marker.start.parentNode;
+    const parent = start.parentNode;
     if (!parent) return;
 
-    // Cache current content
-    const current = extractContentBetweenMarkers(marker.start, marker.end);
-    if (!next) {
-      thenFragment = current;
+    const leaving = extractContentBetweenMarkers(start, end);
+
+    if (holdingSSR) {
+      // Unlabellable server content — drop it and its bindings (see 2 above).
+      holdingSSR = false;
+      if (currentDispose) currentDispose();
+    } else if (next) {
+      // We were showing the false branch.
+      elseFragment = leaving;
+      elseDispose = currentDispose;
     } else {
-      elseFragment = current;
+      thenFragment = leaving;
+      thenDispose = currentDispose;
+    }
+    currentDispose = null;
+
+    let branch: Node | null;
+    if (next) {
+      if (thenFragment) {
+        branch = thenFragment;
+        currentDispose = thenDispose;
+        thenFragment = null;
+        thenDispose = null;
+      } else {
+        branch = renderBranch(true);
+      }
+    } else if (elseFragment) {
+      branch = elseFragment;
+      currentDispose = elseDispose;
+      elseFragment = null;
+      elseDispose = null;
+    } else {
+      branch = renderBranch(false);
     }
 
-    // Insert the appropriate branch: cached fragment if available, else factory
-    let branch: unknown = next
-      ? (thenFragment ?? desc.whenTrue())
-      : (desc.whenFalse ? (elseFragment ?? desc.whenFalse()) : null);
+    if (branch) parent.insertBefore(branch, end);
+  });
 
-    if (next && thenFragment) thenFragment = null; // consumed
-    if (!next && elseFragment) elseFragment = null; // consumed
+  // Branch roots created during a later toggle have no lexical parent root, so
+  // register an explicit teardown for every root this show owns — the one in
+  // the DOM and the cached ones, whose effects are still live by design.
+  registerDisposer(() => {
+    if (currentDispose) currentDispose();
+    if (thenDispose) thenDispose();
+    if (elseDispose) elseDispose();
+    currentDispose = thenDispose = elseDispose = null;
+    thenFragment = elseFragment = null;
+  });
+}
 
-    // Convert hydration descriptors to real DOM (happens when SSR/client
-    // branch mismatch causes the factory to return a pre-computed descriptor)
-    if (branch != null && !(branch instanceof Node)) {
-      branch = ensureNode(branch);
+// ---------------------------------------------------------------------------
+// adoptListRegion() — adopt an f:lN region against a ListDescriptor
+// ---------------------------------------------------------------------------
+
+/**
+ * One row of an adopted list: the index signal reconcileList keeps in sync and
+ * the disposer of the row's reactive root.
+ *
+ * Unlike CachedItem in list.ts this holds no element/item copy, because the
+ * adopted list path does not implement `updateOnItemChange: 'rerender'` — a
+ * same-key row whose item object changed keeps its server DOM until the key
+ * changes. Storing them would only be write-only state.
+ */
+interface AdoptedRow {
+  getIndex: () => number;
+  setIndex: (v: number) => void;
+  dispose: () => void;
+}
+
+/**
+ * Bind a server-rendered row: re-run renderFn in hydration mode (which builds
+ * NO DOM — h() returns descriptors) and walk the descriptor against the server
+ * row, so the row's event handlers and reactive bindings attach exactly like
+ * they do for any other adopted element. Returns the element that is in the DOM
+ * afterwards — the server row, or a replacement if its tag does not match.
+ *
+ * A renderFn that builds DOM directly instead of calling h() has no descriptor
+ * to adopt; the server row is kept unchanged and the throwaway node is dropped,
+ * which is the old behaviour for every row.
+ *
+ * Verified by: src/dom/__tests__/list-hydration.test.ts > "attaches event handlers from renderFn to adopted SSR rows"
+ */
+function adoptRow(
+  renderFn: (item: unknown, index: () => number) => HTMLElement,
+  item: unknown,
+  getIndex: () => number,
+  rowEl: HTMLElement,
+): HTMLElement {
+  const prevHydrating = hydrating;
+  hydrating = true;
+  let rendered: unknown;
+  try {
+    rendered = untrack(() => renderFn(item, getIndex));
+  } finally {
+    hydrating = prevHydrating;
+  }
+
+  if (!isDescriptor(rendered)) return rowEl;
+
+  if (rowEl.tagName !== rendered.tag.toUpperCase()) {
+    // Tag drift: adoptNode would replaceWith() and we would lose track of the
+    // live node, so do the replacement here where the caller sees the result.
+    const fresh = descriptorToElement(rendered) as HTMLElement;
+    rowEl.replaceWith(fresh);
+    return fresh;
+  }
+
+  adoptNode(rendered, rowEl);
+  return rowEl;
+}
+
+/**
+ * Adopt the SSR rows inside one `f:lN` region and attach the reconcile effect
+ * that keeps them in sync afterwards.
+ *
+ * Every row — adopted or freshly rendered — owns a reactive root, and that
+ * root is disposed when the row leaves the list or when the island is torn
+ * down. Without it the row's bindings stay subscribed to shared signals and
+ * keep writing into detached DOM for the lifetime of the page (the CSR path in
+ * list.ts has always done this; adoption did not).
+ *
+ * Verified by: src/dom/__tests__/list-hydration.test.ts > "disposes the effects of a row removed after adoption"
+ * Verified by: src/dom/__tests__/list-hydration.test.ts > "disposes every row when the island root is disposed"
+ */
+function adoptListRegion(desc: ListDescriptor, start: Comment, end: Comment): void {
+  const listKeyFn = desc.keyFn;
+  const listRenderFn = desc.renderFn;
+
+  // Walk DOM between markers, collect SSR rows.
+  const ssrKeyMap = new Map<string, HTMLElement>();
+  const ssrElements: HTMLElement[] = [];
+  const duplicateRows: HTMLElement[] = [];
+  let node: Node | null = start.nextSibling;
+  while (node && node !== end) {
+    if (node.nodeType === 1) {
+      const el = node as HTMLElement;
+      const key = el.getAttribute('data-forma-key');
+      if (key != null && ssrKeyMap.has(key)) {
+        // Duplicate data-forma-key: only one row can be matched to the item
+        // with that key, and the loser is tracked by nothing afterwards — it
+        // would sit between the markers forever as a row reconcileList never
+        // sees. First occurrence wins; the rest are removed here.
+        //
+        // Verified by: src/dom/__tests__/list-hydration.test.ts > "removes a duplicate data-forma-key row instead of leaving a ghost"
+        if (__DEV__) console.warn(`[FormaJS] Hydration: duplicate data-forma-key "${key}" in list — removing the extra SSR row`);
+        duplicateRows.push(el);
+      } else {
+        ssrElements.push(el);
+        if (key != null) ssrKeyMap.set(key, el);
+      }
+    }
+    node = node.nextSibling;
+  }
+  for (const dup of duplicateRows) {
+    if (dup.parentNode) dup.parentNode.removeChild(dup);
+  }
+
+  // Read current items without tracking (we set up our own effect below)
+  const currentItems = untrack(() => desc.items()) as unknown[];
+
+  // Fallback: if no SSR elements have data-forma-key, match by index
+  const useIndexFallback = ssrKeyMap.size === 0 && ssrElements.length > 0;
+
+  // key → row state, so index signals can be updated after reconcileList
+  // reorders items and each row's root can be disposed with the row
+  // (same pattern as the non-hydration createList in list.ts).
+  let cache = new Map<string | number, AdoptedRow>();
+  const adoptedNodes: Node[] = [];
+  const adoptedItems: unknown[] = [];
+  const usedIndices = new Set<number>();
+
+  for (let i = 0; i < currentItems.length; i++) {
+    const item = currentItems[i];
+    const key = listKeyFn(item);
+
+    let ssrNode: HTMLElement | undefined;
+    if (useIndexFallback) {
+      // Index-based matching: SSR elements lack keys, adopt by position
+      if (i < ssrElements.length) {
+        ssrNode = ssrElements[i];
+        usedIndices.add(i);
+      }
+    } else {
+      // Key-based matching: SSR keys from getAttribute() are always strings
+      ssrNode = ssrKeyMap.get(String(key));
+      if (ssrNode) ssrKeyMap.delete(String(key));
     }
 
-    if (branch instanceof Node) {
-      parent.insertBefore(branch, marker.end);
+    const [getIndex, setIndex] = createSignal(i);
+    let rowDispose!: () => void;
+    let element: HTMLElement;
+
+    if (ssrNode) {
+      const row = ssrNode;
+      element = createRoot((dispose) => {
+        rowDispose = dispose;
+        return adoptRow(listRenderFn, item, getIndex, row);
+      });
+    } else {
+      // Not found in SSR — render fresh, exit hydration mode temporarily
+      if (__DEV__) console.warn(`[FormaJS] Hydration: list item key "${key}" not found in SSR — rendering fresh`);
+      const prevHydrating = hydrating;
+      hydrating = false;
+      try {
+        element = createRoot((dispose) => {
+          rowDispose = dispose;
+          return untrack(() => listRenderFn(item, getIndex));
+        });
+        end.parentNode!.insertBefore(element, end);
+      } finally {
+        hydrating = prevHydrating;
+      }
     }
+
+    cache.set(key, { getIndex, setIndex, dispose: rowDispose });
+    adoptedNodes.push(element);
+    adoptedItems.push(item);
+  }
+
+  // Remove unused SSR nodes (keys that weren't matched, or excess index-based)
+  if (useIndexFallback) {
+    for (let i = 0; i < ssrElements.length; i++) {
+      if (!usedIndices.has(i) && ssrElements[i]!.parentNode) {
+        ssrElements[i]!.parentNode!.removeChild(ssrElements[i]!);
+      }
+    }
+  } else {
+    for (const [unusedKey, unusedNode] of ssrKeyMap) {
+      if (__DEV__) console.warn(`[FormaJS] Hydration: removing extra SSR list item with key "${unusedKey}"`);
+      if (unusedNode.parentNode) {
+        unusedNode.parentNode.removeChild(unusedNode);
+      }
+    }
+  }
+
+  // Reorder adopted nodes to match item order (insert before end marker)
+  const parent = start.parentNode!;
+  for (const adoptedNode of adoptedNodes) {
+    parent.insertBefore(adoptedNode, end);
+  }
+
+  let reconcileNodes: Node[] = adoptedNodes.slice();
+  let reconcileItems: unknown[] = adoptedItems.slice();
+
+  // Attach reactive effect that calls reconcileList for subsequent updates
+  internalEffect(() => {
+    const newItems = desc.items() as unknown[];
+
+    // The parent is discovered lazily: once inserted into the live DOM
+    const listParent = start.parentNode;
+    if (!listParent) return;
+
+    const result = reconcileList(
+      listParent,
+      reconcileItems,
+      newItems,
+      reconcileNodes,
+      listKeyFn,
+      (item: unknown) => {
+        const prevHydrating = hydrating;
+        hydrating = false;
+        try {
+          const key = listKeyFn(item);
+          const [getIndex, setIndex] = createSignal(0);
+          let rowDispose!: () => void;
+          const element = createRoot((dispose) => {
+            rowDispose = dispose;
+            return untrack(() => listRenderFn(item, getIndex));
+          });
+          cache.set(key, { getIndex, setIndex, dispose: rowDispose });
+          return element;
+        } finally {
+          hydrating = prevHydrating;
+        }
+      },
+      // updateFn: reused rows keep their DOM. The index signal is refreshed in
+      // the pass below, so there is nothing to do per reused row here.
+      () => {},
+      end,
+    );
+
+    // Rebuild cache + update index signals in a single pass
+    const newCache = new Map<string | number, AdoptedRow>();
+    for (let i = 0; i < newItems.length; i++) {
+      const key = listKeyFn(newItems[i]!);
+      const cached = cache.get(key);
+      if (cached) {
+        cached.setIndex(i);
+        newCache.set(key, cached);
+      }
+    }
+
+    // Dispose removed rows' reactive roots (createList does the same).
+    for (const [key, cached] of cache) {
+      if (!newCache.has(key)) cached.dispose();
+    }
+    cache = newCache;
+
+    reconcileNodes = result.nodes;
+    reconcileItems = result.items;
+  });
+
+  // Rows created by a later reconcile have no lexical parent root (the effect
+  // runs during a flush), so their roots would survive island teardown if the
+  // cache did not dispose them explicitly.
+  registerDisposer(() => {
+    for (const cached of cache.values()) cached.dispose();
+    cache = new Map();
+    reconcileNodes = [];
+    reconcileItems = [];
   });
 }
 
@@ -453,13 +914,30 @@ function setupShowEffect(
 // adoptBranchContent() — walk nested show/list descriptors in SSR content
 // ---------------------------------------------------------------------------
 
+/** Find the first `f:<kind>N` start marker between two markers (exclusive). */
+function nextMarkerBetween(
+  regionStart: Comment,
+  regionEnd: Comment,
+  isStart: (data: string) => boolean,
+): Comment | null {
+  let node: ChildNode | null = regionStart.nextSibling;
+  while (node && node !== regionEnd) {
+    if (node.nodeType === 8 && isStart((node as Comment).data)) return node as Comment;
+    node = node.nextSibling;
+  }
+  return null;
+}
+
 /**
  * Recursively adopt the content between show markers against a descriptor
  * that may be a HydrationDescriptor, ShowDescriptor, or ListDescriptor.
  *
- * This handles the case where createShow nests: the outer show's
- * initialBranch is itself a ShowDescriptor (not a plain element), so we
- * need to find inner SSR markers and walk into them.
+ * This handles the case where a branch is not a plain element: the outer show's
+ * initialBranch can itself be a ShowDescriptor or a ListDescriptor (e.g.
+ * `createShow(cond, () => createList(...))` with no wrapper element), so we
+ * find the inner SSR markers and walk into them. adoptNode only reaches list
+ * markers while walking an ELEMENT's children, so a bare list branch would
+ * otherwise keep its server rows with no reconcile effect bound to them.
  */
 function adoptBranchContent(
   desc: unknown,
@@ -472,26 +950,19 @@ function adoptBranchContent(
     if (el) adoptNode(desc, el);
   } else if (isShowDescriptor(desc)) {
     // Nested show — find inner show markers between region markers
-    let node: ChildNode | null = regionStart.nextSibling;
-    while (node && node !== regionEnd) {
-      if (node.nodeType === 8 && isShowStart((node as Comment).data)) {
-        const innerStart = node as Comment;
-        const innerEnd = findClosingMarker(innerStart);
-        if (innerEnd) {
-          // Recursively adopt the inner show's content
-          if (desc.initialBranch) {
-            adoptBranchContent(desc.initialBranch, innerStart, innerEnd);
-          }
-          // Set up the inner show's toggle effect
-          setupShowEffect(desc, { start: innerStart, end: innerEnd, cachedContent: null });
-        }
-        break;
-      }
-      node = node.nextSibling;
+    const innerStart = nextMarkerBetween(regionStart, regionEnd, isShowStart);
+    if (innerStart) {
+      const innerEnd = findClosingMarker(innerStart);
+      if (innerEnd) adoptShowRegion(desc, innerStart, innerEnd);
+    }
+  } else if (isListDescriptor(desc)) {
+    // Bare list branch — find its f:lN region between the show markers.
+    const innerStart = nextMarkerBetween(regionStart, regionEnd, isListStart);
+    if (innerStart) {
+      const innerEnd = findClosingMarker(innerStart);
+      if (innerEnd) adoptListRegion(desc, innerStart, innerEnd);
     }
   }
-  // ListDescriptor adoption within show markers is handled by the existing
-  // list adoption code in adoptNode when it encounters list markers.
 }
 
 // ---------------------------------------------------------------------------
@@ -555,15 +1026,30 @@ export function adoptNode(
         cursor = cursor.nextSibling;
         adoptNode(child, el);
       } else if (cursor.nodeType === 8 && isIslandStart((cursor as Comment).data)) {
-        // Island marker — create real DOM and insert before end marker
-        const end = findClosingMarker(cursor as Comment);
-        const fresh = descriptorToElement(child);
-        if (end) {
-          end.parentNode!.insertBefore(fresh, end);
+        // Island region. The compiler always emits a shell element between
+        // ISLAND_START/ISLAND_END (emitIsland writes either the resolved
+        // component root or a plain <div>), and the walker stamps the
+        // data-forma-* attributes onto it. That shell is activateIslands'
+        // business: creating DOM from our descriptor here would put a second
+        // copy of the island's content next to the server's, and — for a
+        // registered child — hydrate it twice. Only a genuinely empty region
+        // (no server output at all) is filled from the descriptor.
+        //
+        // Verified by: src/dom/__tests__/hydrate.test.ts > "does not duplicate a nested island that already has an SSR shell"
+        const islandStart = cursor as Comment;
+        const end = findClosingMarker(islandStart);
+        const shell = end ? nextElementBetweenMarkers(islandStart, end) : undefined;
+        if (shell && end) {
           cursor = end.nextSibling;
         } else {
-          ssrEl.appendChild(fresh);
-          cursor = null;
+          const fresh = descriptorToElement(child);
+          if (end) {
+            end.parentNode!.insertBefore(fresh, end);
+            cursor = end.nextSibling;
+          } else {
+            ssrEl.appendChild(fresh);
+            cursor = null;
+          }
         }
       } else {
         // Unexpected node — create fresh and append
@@ -580,13 +1066,10 @@ export function adoptNode(
         const start = cursor as Comment;
         const end = findClosingMarker(start);
         if (end) {
-          if (child.initialBranch) {
-            // Walk the initial branch against SSR content between markers.
-            // initialBranch can be a HydrationDescriptor (element), ShowDescriptor
-            // (nested show), or ListDescriptor — adoptBranchContent handles all.
-            adoptBranchContent(child.initialBranch, start, end);
-          }
-          setupShowEffect(child, { start, end, cachedContent: null });
+          // adoptShowRegion walks the initial branch against the SSR content
+          // between the markers (element, nested show, or bare list) and then
+          // installs the toggle effect.
+          adoptShowRegion(child, start, end);
           cursor = end.nextSibling;
         }
       }
@@ -601,174 +1084,7 @@ export function adoptNode(
         const start = cursor as Comment;
         const end = findClosingMarker(start);
         if (end) {
-          // Walk DOM between markers, collect SSR elements
-          const ssrKeyMap = new Map<string | number, HTMLElement>();
-          const ssrElements: HTMLElement[] = [];
-          let node: Node | null = start.nextSibling;
-          while (node && node !== end) {
-            if (node.nodeType === 1) {
-              const el = node as HTMLElement;
-              ssrElements.push(el);
-              const key = el.getAttribute('data-forma-key');
-              if (key != null) {
-                ssrKeyMap.set(key, el);
-              }
-            }
-            node = node.nextSibling;
-          }
-
-          // Read current items without tracking (we set up our own effect below)
-          const currentItems = untrack(() => child.items()) as any[];
-          const listKeyFn = child.keyFn;
-          const listRenderFn = child.renderFn;
-
-          // Fallback: if no SSR elements have data-forma-key, match by index
-          const useIndexFallback = ssrKeyMap.size === 0 && ssrElements.length > 0;
-
-          // Match current items to SSR nodes by key (or index fallback)
-          const adoptedNodes: Node[] = [];
-          const adoptedItems: any[] = [];
-          const usedIndices = new Set<number>();
-
-          for (let i = 0; i < currentItems.length; i++) {
-            const item = currentItems[i];
-            const key = listKeyFn(item);
-
-            let ssrNode: HTMLElement | undefined;
-            if (useIndexFallback) {
-              // Index-based matching: SSR elements lack keys, adopt by position
-              if (i < ssrElements.length) {
-                ssrNode = ssrElements[i];
-                usedIndices.add(i);
-              }
-            } else {
-              // Key-based matching: SSR keys from getAttribute() are always strings
-              ssrNode = ssrKeyMap.get(String(key));
-              if (ssrNode) ssrKeyMap.delete(String(key));
-            }
-
-            if (ssrNode) {
-              // Reuse SSR element
-              adoptedNodes.push(ssrNode);
-              adoptedItems.push(item);
-            } else {
-              // Not found in SSR — render fresh, exit hydration mode temporarily
-              if (__DEV__) console.warn(`[FormaJS] Hydration: list item key "${key}" not found in SSR — rendering fresh`);
-              const prevHydrating = hydrating;
-              hydrating = false;
-              try {
-                const [getIndex] = createSignal(i);
-                const fresh = listRenderFn(item, getIndex);
-                // Insert before end marker
-                end.parentNode!.insertBefore(fresh, end);
-                adoptedNodes.push(fresh);
-                adoptedItems.push(item);
-              } finally {
-                hydrating = prevHydrating;
-              }
-            }
-          }
-
-          // Remove unused SSR nodes (keys that weren't matched, or excess index-based)
-          if (useIndexFallback) {
-            for (let i = 0; i < ssrElements.length; i++) {
-              if (!usedIndices.has(i) && ssrElements[i]!.parentNode) {
-                ssrElements[i]!.parentNode!.removeChild(ssrElements[i]!);
-              }
-            }
-          } else {
-            for (const [unusedKey, unusedNode] of ssrKeyMap) {
-              if (__DEV__) console.warn(`[FormaJS] Hydration: removing extra SSR list item with key "${unusedKey}"`);
-              if (unusedNode.parentNode) {
-                unusedNode.parentNode.removeChild(unusedNode);
-              }
-            }
-          }
-
-          // Reorder adopted nodes to match item order (insert before end marker)
-          const parent = start.parentNode!;
-          for (const adoptedNode of adoptedNodes) {
-            parent.insertBefore(adoptedNode, end);
-          }
-
-          // Set up state for reactive reconciliation.
-          // Cache maps key → { element, item, getIndex, setIndex } so that
-          // index signals can be updated after reconcileList reorders items
-          // (same pattern as the non-hydration createList in list.ts).
-          let cache = new Map<string | number, {
-            element: HTMLElement;
-            item: any;
-            getIndex: () => number;
-            setIndex: (v: number) => void;
-          }>();
-
-          // Seed cache with adopted items
-          for (let i = 0; i < adoptedItems.length; i++) {
-            const item = adoptedItems[i];
-            const key = listKeyFn(item);
-            const [getIndex, setIndex] = createSignal(i);
-            cache.set(key, {
-              element: adoptedNodes[i] as HTMLElement,
-              item,
-              getIndex,
-              setIndex,
-            });
-          }
-
-          let reconcileNodes = adoptedNodes.slice();
-          let reconcileItems = adoptedItems.slice();
-
-          // Attach reactive effect that calls reconcileList for subsequent updates
-          internalEffect(() => {
-            const newItems = child.items() as any[];
-
-            // The parent is discovered lazily: once inserted into the live DOM
-            const parent = start.parentNode;
-            if (!parent) return;
-
-            const result = reconcileList(
-              parent,
-              reconcileItems,
-              newItems,
-              reconcileNodes,
-              listKeyFn,
-              (item: any) => {
-                const prevHydrating = hydrating;
-                hydrating = false;
-                try {
-                  const key = listKeyFn(item);
-                  const [getIndex, setIndex] = createSignal(0);
-                  const element = untrack(() => listRenderFn(item, getIndex));
-                  cache.set(key, { element, item, getIndex, setIndex });
-                  return element;
-                } finally {
-                  hydrating = prevHydrating;
-                }
-              },
-              (_node: Node, item: any) => {
-                const key = listKeyFn(item);
-                const cached = cache.get(key);
-                if (cached) cached.item = item;
-              },
-              end,
-            );
-
-            // Rebuild cache + update index signals in a single pass
-            const newCache = new Map<string | number, typeof cache extends Map<any, infer V> ? V : never>();
-            for (let i = 0; i < newItems.length; i++) {
-              const key = listKeyFn(newItems[i]!);
-              const cached = cache.get(key);
-              if (cached) {
-                cached.setIndex(i);
-                newCache.set(key, cached);
-              }
-            }
-            cache = newCache;
-
-            reconcileNodes = result.nodes;
-            reconcileItems = result.items;
-          });
-
+          adoptListRegion(child, start, end);
           cursor = end.nextSibling;
         }
       }

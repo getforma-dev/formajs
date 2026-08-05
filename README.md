@@ -5,7 +5,17 @@
 [![Socket Badge](https://socket.dev/api/badge/npm/package/@getforma/core)](https://socket.dev/npm/package/@getforma/core)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Reactive DOM library with fine-grained signals. No virtual DOM — signals update only the DOM nodes that changed. Components run once. The core entry (`@getforma/core`) is ~8 KB gzipped; the full HTML runtime bundle (`formajs-runtime.global.js`) is ~24 KB gzipped.
+Reactive DOM library with fine-grained signals. No virtual DOM — signals update only the DOM nodes that changed. Components run once.
+
+Gzipped sizes, measured by `npm run check:size` on the 1.5.0 build (that script walks the real ESM import graph, so shared chunks are weighed, and CI fails the build if any entry exceeds its limit):
+
+| Artifact | Gzipped | CI limit |
+|---|---|---|
+| `@getforma/core` entry + every chunk it imports | 24.7 KB (25,262 B) | 30,000 B |
+| CDN HTML runtime (`formajs-runtime.global.js`) | 25.6 KB (26,257 B) | 31,000 B |
+| CDN browser ESM (`forma.esm.js`, inlines alien-signals) | 23.5 KB (24,030 B) | 29,000 B |
+
+The core figure is **untree-shaken** — it is everything `dist/index.js` pulls in. A bundler that drops what your app does not import ships less.
 
 ```tsx
 import { createSignal, h, mount } from "@getforma/core";
@@ -43,7 +53,7 @@ Or use a CDN — no build step, no bundler:
 <script src="https://unpkg.com/@getforma/core/dist/formajs-runtime.global.js"></script>
 ```
 
-> **Production:** Pin the version (e.g., `@getforma/core@1.0.7`) instead of `@latest`.
+> **Production:** Pin the version (e.g., `@getforma/core@1.5.0`) instead of `@latest`.
 
 ---
 
@@ -191,36 +201,39 @@ That's a working reactive counter. No JavaScript file. No build step. Just HTML.
 **Here's what you get from a single HTML file with one script tag:**
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@latest/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/formajs-runtime.global.js"></script>
 
 <div data-forma-state='{
-  "query": "",
-  "items": ["Apples", "Bananas", "Cherries", "Dates", "Elderberries"],
+  "name": "",
+  "qty": 1,
+  "price": 12.5,
+  "toppings": ["Mushroom", "Olive", "Basil"],
   "darkMode": false
 }'>
 
-  <!-- Two-way binding: type in the input, the list filters instantly -->
-  <input data-model="{query}" placeholder="Search fruits...">
+  <!-- Two-way binding: type in the input, every binding below updates -->
+  <input data-model="{name}" placeholder="Your name">
+  <p data-text="`Order for ${name}`"></p>
 
-  <!-- Computed value: derived from query, updates automatically -->
-  <p data-computed="matchCount = items.filter(i => i.toLowerCase().includes(query.toLowerCase())).length"
-     data-text="{'Found ' + matchCount + ' results'}"></p>
+  <!-- Computed value: derived from state, recomputed automatically -->
+  <p data-computed="total = qty * price"
+     data-text="`Total: $${total}`"></p>
+
+  <!-- Event handling: increment, decrement, toggle -->
+  <button data-on:click="{qty--}">-</button>
+  <button data-on:click="{qty++}">+</button>
 
   <!-- Conditional rendering: show/hide based on state -->
-  <p data-show="{query.length > 0 && matchCount === 0}">No matches found.</p>
+  <p data-show="{qty >= 10}">Bulk discount applied.</p>
 
   <!-- List rendering: keyed reconciliation, only changed items re-render -->
-  <ul data-list="{items.filter(i => i.toLowerCase().includes(query.toLowerCase()))}">
+  <ul data-list="{toppings}">
     <li>{item}</li>
   </ul>
 
-  <!-- Event handling with $dispatch: cross-component communication -->
-  <button data-on:click="{darkMode = !darkMode}">
-    Toggle Dark Mode
-  </button>
-
   <!-- Dynamic classes and attributes -->
   <div data-class:dark="{darkMode}" data-bind:data-theme="{darkMode ? 'dark' : 'light'}">
+    <button data-on:click="{darkMode = !darkMode}">Toggle theme</button>
     Theme is: <span data-text="{darkMode ? 'Dark' : 'Light'}"></span>
   </div>
 
@@ -229,13 +242,40 @@ That's a working reactive counter. No JavaScript file. No build step. Just HTML.
 </div>
 ```
 
-That single HTML file gives you: reactive state, two-way data binding, computed values, conditional rendering, list rendering with filtering, event handling, dynamic CSS classes, dynamic attributes, and localStorage persistence. **No JavaScript written. No build tools installed.**
+That single HTML file gives you: reactive state, two-way data binding, computed values, conditional rendering, list rendering, event handling, dynamic CSS classes, dynamic attributes, and localStorage persistence. **No JavaScript written. No build tools installed.**
 
-The expression parser is hand-written and CSP-safe — no `eval()`, no `new Function()` by default. For strict CSP environments, use the hardened build:
+That block is not illustrative — the test below mounts this exact markup against the *hardened* build (the one with no `eval` fallback compiled in at all), asserts every binding renders and reacts, and fails if a single expression falls outside the CSP-safe grammar.
+
+Verified by `src/__tests__/readme-examples.test.ts` > "runs on the hardened build with no unsupported expression or handler"
+Verified by `src/__tests__/readme-examples.test.ts` > "renders every documented binding and updates them reactively"
+
+### The expression grammar is a real constraint
+
+The expression parser is hand-written: **no `eval()` and no `new Function()` in any build**, unless you opt in with `setUnsafeEval(true)` or `data-forma-unsafe-eval="true"` on the script tag. That is the whole point, and it has a price — the grammar is a subset of JavaScript.
+
+**Value expressions** (`data-text`, `data-show`, `data-if`, `data-list`, `data-bind:*`, `data-class:*`, the right-hand side of `data-computed`) support: identifiers, `obj.a.b`, `obj?.a`, `obj['key']`, `arr[0]`, method calls **rooted at an identifier** whose arguments are themselves parseable (`name.trim()`, `tags.join(', ')`, `Math.round(x)`), `!x`, `? :`, `??`, `&&`, `||`, comparisons, `+ - * / %`, bare array literals, and template literals with `${…}` interpolation.
+
+**Handler statements** (`data-on:*`) support: `x++`, `++x`, `x--`, `x = expr`, `x = !x`, `x += expr` (and `-=`, `*=`, `/=`), `if (cond) { … }` with optional `else`, `$refetch('id')`, and `;`-separated sequences of those. `$event` and `event` resolve inside them, so `q = $event.target.value` and `if (event.key === 'Enter') { … }` compile with no eval.
+
+Verified by `src/__tests__/readme-examples.test.ts` > "accepts every value-expression form the grammar section lists"
+Verified by `src/__tests__/readme-examples.test.ts` > "accepts every handler-statement form the grammar section lists"
+
+**Not supported:** arrow functions and any other function literal — so `items.filter(i => i.includes(query))` has no CSP-safe translation. Have the server (or the endpoint behind `data-fetch`) return the already-filtered array. Also unsupported: object literals, and a handler that is *only* a method call — which is the shape of the `$el`, `$refs` and `$dispatch` examples in the directive table below (`$el.classList.toggle('active')`, `$refs.myInput.focus()`, `$dispatch('selected', id)`, `$event.preventDefault()`). Those need the opt-in fallback.
+
+An expression outside the grammar is **not evaluated**. It logs a console warning, emits a `formajs:diagnostic` event, appears in `getDiagnostics()`, and marks its element `data-forma-expr-error="unsupported"` (handlers get `data-forma-handler-error="unsupported"`). It never silently renders a wrong value.
+
+Verified by `src/__tests__/readme-examples.test.ts` > "the arrow-function showcase this replaced does NOT run — why it was changed"
+Verified by `src/__tests__/readme-examples.test.ts` > "$event resolves in a handler on every build"
+Verified by `src/__tests__/readme-examples.test.ts` > "a bare method-call statement is NOT in the CSP-safe grammar — the opt-in note is real"
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "never reaches new Function for an unparseable expression by default"
+
+For a guarantee that comes from the artifact rather than from configuration, use the hardened build — it has the fallback removed at compile time, so no configuration can turn it on:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@latest/dist/formajs-runtime-hardened.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/formajs-runtime-hardened.global.js"></script>
 ```
+
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "a locked-off build cannot be talked into eval by any configuration"
 
 <details>
 <summary><strong>Full directive reference</strong></summary>
@@ -253,12 +293,21 @@ The expression parser is hand-written and CSP-safe — no `eval()`, no `new Func
 | `data-list` | List rendering (keyed reconciliation) | `data-list="{items}"` |
 | `data-computed` | Computed value | `data-computed="doubled = count * 2"` |
 | `data-persist` | Persist state to localStorage | `data-persist="{count}"` |
-| `data-fetch` | Fetch data from URL | `data-fetch="GET /api/items → items"` |
+| `data-fetch` | Fetch data from URL into a new state key | `data-fetch="GET /api/items → items"` |
+| `data-fetch-id` | Name a `data-fetch` so `$refetch` can re-run it | `data-fetch-id="items"` |
 | `data-transition:*` | Enter/leave CSS transitions | `data-transition:enter="fade-in"` |
 | `data-ref` | Register element for `$refs` access | `data-ref="myInput"` |
-| `$el` | Current DOM element | `data-on:click="{$el.classList.toggle('active')}"` |
-| `$dispatch` | Fire CustomEvent (bubbles, crosses Shadow DOM) | `data-on:click="{$dispatch('selected', {id})}"` |
-| `$refs` | Named element references | `data-on:click="{$refs.myInput.focus()}"` |
+| `$event` | The dispatched Event (also spelled `event`) | `data-on:input="{q = $event.target.value}"` |
+| `$refetch` | Re-run a `data-fetch` by its `data-fetch-id` | `data-on:click="{$refetch('items')}"` |
+| `$el` † | Current DOM element | `data-on:click="{$el.classList.toggle('active')}"` |
+| `$dispatch` † | Fire CustomEvent (bubbles, crosses Shadow DOM) | `data-on:click="{$dispatch('selected', id)}"` |
+| `$refs` † | Named element references | `data-on:click="{$refs.myInput.focus()}"` |
+
+† These three examples are handlers whose whole body is a method call — a shape the CSP-safe parser does not accept (see the grammar section above). On the default build they are dropped with a `data-forma-handler-error="unsupported"` marker; they run only after `setUnsafeEval(true)` / `data-forma-unsafe-eval="true"`.
+
+Verified by `src/__tests__/readme-examples.test.ts` > "a bare method-call statement is NOT in the CSP-safe grammar — the opt-in note is real"
+Verified by `src/__tests__/readme-examples.test.ts` > "the same three examples do run once the fallback is opted in"
+Verified by `src/__tests__/readme-examples.test.ts` > "data-fetch loads into a state key and $refetch re-runs it, both without eval"
 
 </details>
 
@@ -340,13 +389,16 @@ Most UI libraries force a choice: simple but limited (Alpine, htmx), or powerful
 
 **Components run once.** No virtual DOM, no diffing, no reconciliation overhead. `h('div')` returns an actual `HTMLDivElement`. When a signal changes, only the specific text node or attribute that reads it updates — not the component, not the tree.
 
-**Fine-grained reactivity.** Powered by [alien-signals](https://github.com/nicolo-ribaudo/alien-signals) 3.x. The signal graph tracks dependencies automatically. No dependency arrays, no stale closures, no `useCallback` / `useMemo` ceremony.
+**Fine-grained reactivity.** Powered by [alien-signals](https://github.com/johnsoncodehk/signals) 3.x. The signal graph tracks dependencies automatically. No dependency arrays, no stale closures, no `useCallback` / `useMemo` ceremony.
 
 **Three entry points, one engine.** HTML Runtime (like Alpine — zero build step), `h()` hyperscript (like Preact), or JSX (like React/Solid). All share the same signal graph. Start with a CDN script tag, graduate to a full build pipeline without rewriting.
 
 **Islands over SPAs.** `activateIslands()` hydrates independent regions of server-rendered HTML. Each island is self-contained with error isolation, deferred hydration triggers (`visible`, `idle`, `interaction`), and disposal for module swaps.
 
-**CSP-safe.** The HTML Runtime includes a hand-written expression parser — no `eval()`, no `new Function()`. The hardened build locks it off entirely, with zero `new Function` in the dist (verified by dead code elimination).
+**CSP-safe.** The HTML Runtime includes a hand-written expression parser — no `eval()`, no `new Function()` by default, in any build, with an opt-in fallback for apps that want it. The hardened build removes the fallback at compile time so no configuration can enable it, and ships with zero `new Function` in the artifact — asserted by `scripts/verify-dist.mjs`, which greps the built files as the last step of `npm run build`.
+
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "every build ships with the new Function fallback disabled"
+Verified by `src/__tests__/build-artifacts.test.ts` > "hardened builds emit no new Function at all"
 
 **What FormaJS is not:** It's not a framework with opinions about routing, data fetching, or state management. It's a reactive DOM library. You bring the architecture.
 
@@ -594,18 +646,28 @@ dispatch({ type: "INCREMENT" }); // state() === { count: 1 }
 
 ### History (Undo / Redo)
 
+`createHistory` wraps a signal you already have. It takes the `[get, set]` tuple as its single source argument and returns a **controls object** — it is not a tuple and must not be destructured as one.
+
 ```ts
-import { createHistory } from "@getforma/core";
+import { createSignal, createHistory } from "@getforma/core";
 
-const [state, setState, { undo, redo, canUndo, canRedo }] = createHistory({ text: "" });
+const [text, setText] = createSignal("");
+const { undo, redo, canUndo, canRedo } = createHistory([text, setText]);
 
-setState({ text: "hello" });
-setState({ text: "hello world" });
+setText("hello");
+setText("hello world");
 
-undo();     // state.text === "hello"
 canUndo();  // true
-redo();     // state.text === "hello world"
+undo();     // text() === "hello"
+canRedo();  // true
+redo();     // text() === "hello world"
 ```
+
+`createHistory(source, { maxLength })` caps the stack (default 100, minimum 1). The full controls object is `{ undo, redo, canUndo, canRedo, history, cursor, clear, destroy }`; `canUndo`/`canRedo`/`history`/`cursor` are reactive getters. Call `destroy()` to stop tracking the source and release the stack.
+
+> **Limitation:** the source getter must return a stable value — a primitive or a stable object reference. A `createStore` slice that returns a *fresh proxy on every read* is not supported: the undo/redo echo guard compares by identity, so every undo would look like an external change and clear the redo stack.
+
+Verified by `src/__tests__/readme-examples.test.ts` > "runs exactly as documented"
 
 ### Error Handling
 
@@ -641,6 +703,97 @@ createErrorBoundary(
 );
 ```
 
+### Async — `createResource` and `createSuspense`
+
+`createResource(source, fetcher, options?)` re-runs the fetcher whenever the source signal changes, aborting the previous request. The returned resource is callable for the data and carries `loading`, `error`, `refetch` and `mutate`.
+
+```ts
+import { createSignal, createResource, createSuspense, h } from "@getforma/core";
+
+const [userId, setUserId] = createSignal(1);
+
+const user = createResource(
+  userId,
+  (id, { signal }) => fetch(`/api/users/${id}`, { signal }).then((r) => r.json()),
+);
+
+user();          // data, or undefined while loading
+user.loading();  // reactive boolean
+user.error();    // reactive; undefined when fine
+user.refetch();  // re-run with the current source
+
+setUserId(2);    // aborts the in-flight request and refetches
+```
+
+`createSuspense(fallback, children)` shows `fallback` while any `createResource` created *inside* `children` is loading. The boundary is captured when the resource is created, so the resource must be constructed during the `children()` call.
+
+```ts
+createSuspense(
+  () => h("p", null, "Loading…"),
+  () => h(UserCard),
+);
+```
+
+### SVG
+
+`h()` creates HTML elements. Wrap a tree in `svg()` to create it in the SVG namespace instead — nested elements inherit the namespace for the duration of the callback.
+
+```ts
+import { svg, h } from "@getforma/core";
+
+const icon = svg(() =>
+  h("svg", { viewBox: "0 0 24 24", width: 24 },
+    h("circle", { cx: 12, cy: 12, r: 10, fill: "currentColor" }),
+  ),
+);
+```
+
+### Portals
+
+`createPortal(children, target?)` renders `children` into another element (default `document.body`) and returns a placeholder comment to keep in the tree. Disposal removes the portalled node.
+
+```ts
+import { createPortal, h } from "@getforma/core";
+
+createPortal(() => h("div", { class: "modal" }, "Hi"), "#modal-root");
+```
+
+### Rest of the export surface
+
+Everything the root entry exports, grouped. These are stable and typed; the sections above cover the ones with non-obvious semantics.
+
+| Group | Exports |
+|---|---|
+| Signals | `createSignal`, `createEffect`, `createComputed`, `createMemo` (alias of `createComputed`), `createResource`, `createRef`, `createReducer`, `batch`, `untrack`, `on`, `value` (wraps a constant as a getter) |
+| Ownership | `createRoot`, `createUnownedRoot`, `getOwner`, `runWithOwner`, `onCleanup`, `onError`, `trackDisposer` |
+| Introspection | `isSignal`, `isComputed`, `isEffect`, `isEffectScope`, `getBatchDepth`, `trigger`, `getSignalName` |
+| Rendering | `h`, `svg`, `Fragment`, `fragment`, `createText`, `mount`, `template`, `templateMany` |
+| Control flow | `createShow`, `createSwitch`, `createList`, `reconcileList`, `createPortal`, `createSuspense`, `createErrorBoundary`, `cleanup` |
+| Components | `defineComponent`, `disposeComponent`, `onMount`, `onUnmount`, `createContext`, `provide`, `inject`, `unprovide` |
+| State | `createStore`, `createHistory`, `persist(source, key, options?)` — mirrors a `[get, set]` pair into `localStorage` |
+| Islands | `activateIslands`, `hydrateIsland`, `deactivateIsland`, `deactivateAllIslands`, `sanitizePropsDeep` |
+| Events | `createBus`, `delegate(container, selector, event, handler)`, `onKey(combo, handler, options?)` |
+| DOM utils | `$`, `$$`, `addClass`, `removeClass`, `toggleClass`, `setStyle`, `setAttr`, `setText`, `setHTMLUnsafe`, `closest`, `children`, `siblings`, `parent`, `nextSibling`, `prevSibling`, `onResize`, `onIntersect`, `onMutation` |
+
+Verified by `src/__tests__/docs-truth.test.ts` > "documents every symbol the root entry exports"
+
+### Escape hatches — the trust boundary
+
+FormaJS never builds markup from strings. `h()` creates elements with `document.createElement` and writes text with `textContent`, which is why the CSP tables below say `innerHTML` is not used for library-generated markup. Four APIs deliberately break that rule; **none of them sanitizes**, and all four are first-party-content-only sinks:
+
+| Sink | Where | What it does |
+|---|---|---|
+| `dangerouslySetInnerHTML={{ __html }}` | prop on `h()` / JSX | assigns `innerHTML` on the element |
+| `setHTMLUnsafe(el, html)` | `@getforma/core` | assigns `innerHTML` on the element |
+| `reconcile(container, html)` | `@getforma/core/runtime` | parses an HTML string into a `<template>` and diffs it into the live page |
+| `srcdoc` attribute | `h()` and SSR | the browser parses the *attribute value* as a document, so escaping does not neutralize it — emitted with a dev-mode warning |
+
+Everything else is guarded: URL-bearing attributes (`href`, `src`, `action`, `formaction`, `xlink:href`, `poster`, `background`, `data`) drop `javascript:`, `vbscript:` and `data:text/html` values, and `on*` attribute names are dropped in any casing, on both the client and SSR paths.
+
+Verified by `src/dom/__tests__/element-url-safety.test.ts` > "drops exactly what the SSR renderer drops, so hydration cannot re-add it"
+Verified by `src/dom/__tests__/element-url-safety.test.ts` > "drops ONCLICK-cased string props instead of writing an inline handler"
+Verified by `src/dom/__tests__/element-url-safety.test.ts` > "emits srcdoc but warns that escaping does not neutralize it"
+
 ---
 
 ## Islands Architecture
@@ -672,7 +825,10 @@ activateIslands({
 </div>
 ```
 
-Each island runs in its own `createRoot` scope with error isolation — a broken island never takes down its siblings.
+Each island runs in its own `createRoot` scope with error isolation — a broken island never takes down its siblings, and a component that throws part-way through disposes whatever it had already created rather than leaving live effects behind.
+
+Verified by `src/dom/__tests__/activate-isolation.test.ts` > "disposes effects created before a failing island threw"
+Verified by `src/dom/__tests__/hydrate.test.ts` > "a binding that throws on a shared-signal update does not freeze the other island"
 
 ### SSR with Server Data
 
@@ -710,7 +866,25 @@ In dev builds this mismatch is loud. Grep your console for these warnings:
 </script>
 ```
 
-Because the block is `type="application/json"`, the browser treats it as inert data and never executes it — no `unsafe-inline` script needed, CSP-friendly. Both channels sanitize top-level `__proto__` / `constructor` / `prototype` keys before your island sees the props (the check is shallow — keys nested inside child objects pass through). An island with an inline `data-forma-props` attribute ignores the script block.
+Because the block is `type="application/json"`, the browser treats it as inert data and never executes it — no `unsafe-inline` script needed, CSP-friendly. An island with an inline `data-forma-props` attribute ignores the script block. A malformed or truncated block degrades to "no shared props" instead of aborting hydration for the whole page.
+
+Verified by `src/dom/__tests__/activate-isolation.test.ts` > "a malformed __forma_islands block does not stop islands from hydrating"
+
+**Prop sanitization is shallow by default.** Both channels delete top-level `__proto__` / `constructor` / `prototype` keys before your island sees the props. Keys nested inside child objects **pass through** — that is a deliberate trade (a deep walk of every payload on every hydration is a cost no island should pay by default). If you hand props to anything that merges them into another object — `createStore`, a deep-merge helper, an `Object.assign` chain — sanitize them yourself:
+
+```ts
+import { activateIslands, sanitizePropsDeep } from "@getforma/core";
+
+activateIslands({
+  Cart: (el, props) => renderCart(el, sanitizePropsDeep(props)),
+});
+```
+
+`sanitizePropsDeep` walks iteratively with a `WeakSet`, so neither deeply nested nor cyclic props can overflow the stack or loop. RPC arguments (`@getforma/core/server`) are stripped recursively **without** an opt-in — the two paths are not equivalent, and this is the difference.
+
+Verified by `src/dom/__tests__/activate-isolation.test.ts` > "is opt-in: island activation still sanitizes only the top level"
+Verified by `src/dom/__tests__/activate-isolation.test.ts` > "sanitizePropsDeep strips forbidden keys at every depth"
+Verified by `src/server/__tests__/rpc-deep-strip.test.ts` > "strips forbidden keys at a depth that overflows a recursive walk"
 
 #### Server-rendered lists
 
@@ -779,16 +953,23 @@ Control when an island hydrates via `data-forma-hydrate`:
 </div>
 ```
 
-### Island Disposal
+### Scoping to a subtree, and disposal
 
-When swapping content (e.g., inside `<forma-stage>` Shadow DOM), dispose islands to prevent leaked effects:
+`activateIslands(registry, root?)` takes an optional root — pass a `ShadowRoot` or a container element to hydrate only the islands inside it. It defaults to `document`. When swapping content (e.g. inside a `<forma-stage>` Shadow DOM), dispose the old islands first or their effects leak:
 
 ```ts
-import { deactivateIsland, deactivateAllIslands } from "@getforma/core";
+import { activateIslands, deactivateIsland, deactivateAllIslands } from "@getforma/core";
 
-deactivateAllIslands(shadowRoot);
-deactivateIsland(islandElement);
+activateIslands(registry, shadowRoot);   // hydrate one subtree
+deactivateAllIslands(shadowRoot);        // tear the whole subtree down
+deactivateIsland(islandElement);         // or one island
 ```
+
+Both `root` parameters accept any `ParentNode`. A shared `__forma_islands` block in the main document is still found when activating a shadow subtree that has none of its own. An island removed as part of a `createList` row is deactivated automatically.
+
+Verified by `src/dom/__tests__/activate-isolation.test.ts` > "activates islands inside a shadow root when one is passed as root"
+Verified by `src/dom/__tests__/activate-isolation.test.ts` > "falls back to the document props block for a shadow subtree"
+Verified by `src/dom/__tests__/list-disposal.test.ts` > "deactivates an island inside a removed row"
 
 ---
 
@@ -798,33 +979,43 @@ deactivateIsland(islandElement);
 
 ```html
 <!-- jsDelivr (recommended) -->
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.0.7/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/formajs-runtime.global.js"></script>
 
 <!-- unpkg -->
-<script src="https://unpkg.com/@getforma/core@1.0.7/dist/formajs-runtime.global.js"></script>
+<script src="https://unpkg.com/@getforma/core@1.5.0/dist/formajs-runtime.global.js"></script>
 ```
 
 ### ESM import (modern browsers, no bundler)
 
+Use `dist/forma.esm.js`. It is the only ESM artifact a browser can load directly: it is built as a single file with `alien-signals` inlined, so there are no bare specifiers and no code-split chunks for the browser to resolve. (`dist/index.js` is the npm entry — it code-splits and imports `"alien-signals"`, which a browser cannot resolve.)
+
 ```html
 <script type="module">
-  import { createSignal, h, mount } from "https://cdn.jsdelivr.net/npm/@getforma/core@1.0.7/dist/index.js";
+  import { createSignal, h, mount } from "https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/forma.esm.js";
 
   const [count, setCount] = createSignal(0);
   mount(() => h("button", { onClick: () => setCount((c) => c + 1) }, () => `${count()}`), "#app");
 </script>
 ```
 
+unpkg equivalent: `https://unpkg.com/@getforma/core@1.5.0/dist/forma.esm.js`
+
+> **Do not mix `forma.esm.js` with the npm entry in one app.** It carries its own private copy of the reactive core, so signals, the owner tree and the island registry would be duplicated. The library detects this and warns: *"Duplicate @getforma/core instance detected"*.
+
 ### All builds
 
 | Build | Filename |
 |---|---|
-| Standard (recommended) | `formajs-runtime.global.js` |
-| CSP-safe (no `new Function`) | `formajs-runtime-hardened.global.js` |
-| Standard (short alias) | `forma-runtime.js` |
-| CSP-safe (short alias) | `forma-runtime-csp.js` |
+| HTML Runtime, standard (recommended) | `formajs-runtime.global.js` |
+| HTML Runtime, hardened — no `new Function` compiled in | `formajs-runtime-hardened.global.js` |
+| HTML Runtime, standard (short alias) | `forma-runtime.js` |
+| HTML Runtime, hardened (short alias) | `forma-runtime-csp.js` |
+| Browser ESM — `h()` / signals / islands, no bundler | `forma.esm.js` |
 
-Available from `unpkg.com/@getforma/core@VERSION/dist/` and `cdn.jsdelivr.net/npm/@getforma/core@VERSION/dist/`.
+Available from `unpkg.com/@getforma/core@VERSION/dist/` and `cdn.jsdelivr.net/npm/@getforma/core@VERSION/dist/`. These five are reached by URL only — none of them is behind an `exports` subpath, because the IIFE bundles are classic scripts that must not go through a module resolver.
+
+Verified by `src/__tests__/docs-truth.test.ts` > "the All builds table lists exactly the CDN artifacts the build emits"
+Verified by `src/__tests__/build-config.test.ts` > "builds a self-contained browser ESM bundle for the CDN recipe"
 
 ---
 
@@ -837,11 +1028,25 @@ The main entry point (`@getforma/core`) has **zero network code** — no fetch, 
 | `@getforma/core` | Signals, `h()`, mount, lists, stores, components, islands, events, DOM utils |
 | `@getforma/core/http` | `createFetch`, `fetchJSON`, `createSSE`, `createWebSocket` |
 | `@getforma/core/storage` | `createLocalStorage`, `createSessionStorage`, `createIndexedDB` |
-| `@getforma/core/server` | `createAction`, `$$serverFunction`, `handleRPC`, `createRPCMiddleware` |
-| `@getforma/core/runtime` | HTML Runtime — `initRuntime()`, `mount()`, `unmount()` |
-| `@getforma/core/runtime-hardened` | Runtime with `new Function()` locked off (strict CSP) |
-| `@getforma/core/ssr` | Server-side rendering — `renderToString()`, `renderToStream()` |
-| `@getforma/core/tc39` | TC39-compatible `Signal.State` and `Signal.Computed` classes |
+| `@getforma/core/server` | `createAction`, `$$serverFunction`, `handleRPC`, `createRPCMiddleware`, `setRPCGuard` |
+| `@getforma/core/runtime` | HTML Runtime — `initRuntime()`, `mount()`, `unmount()`, `reconcile()`, `setUnsafeEval()`, `getDiagnostics()` |
+| `@getforma/core/runtime-hardened` | Same API, with the `new Function` fallback removed at compile time (alias: `@getforma/core/runtime-csp`) |
+| `@getforma/core/ssr` | Server-side rendering — `renderToString()`, `renderToStream()`, `sh()`, `shSuspense()`, `ssrSignal()`, `getSwapScript()` |
+| `@getforma/core/wasm` | `renderLocal()`, `renderIsland()` — render via the Rust FMIR walker compiled to WASM |
+| `@getforma/core/tc39` | TC39-shaped `State` and `Computed` classes |
+
+`@getforma/core/tc39` exports the two classes **directly**. There is no `Signal` namespace object, so import them by name:
+
+```ts
+import { State, Computed } from "@getforma/core/tc39";
+
+const count = new State(0);
+const doubled = new Computed(() => count.get() * 2);
+count.set(5);
+doubled.get(); // 10
+```
+
+Verified by `src/__tests__/docs-truth.test.ts` > "the tc39 subpath exports State and Computed, not a Signal namespace"
 
 ```ts
 // Core — zero network code
@@ -895,17 +1100,25 @@ See the [`examples/`](./examples) directory:
 | Reactive introspection (`isSignal`, `isComputed`, `trigger`, `getBatchDepth`) | **Stable** | alien-signals 3.x type guards |
 | `h()` / JSX rendering | **Stable** | Function components supported |
 | `mount()`, `createShow`, `createSwitch`, `createList` | **Stable** | |
-| HTML Runtime (`data-*` directives) | **Stable** | CSP-safe expression parser |
-| CSP-hardened runtime | **Stable** | Zero `new Function()` in dist |
+| HTML Runtime (`data-*` directives) | **Stable** | CSP-safe expression parser; grammar is a documented subset |
+| CSP-hardened runtime | **Stable** | No `new Function` in the artifact — asserted by `scripts/verify-dist.mjs` |
 | `createStore` (deep reactivity) | **Stable** | |
 | Components (`defineComponent`, lifecycle) | **Stable** | |
 | Context (`createContext`, `provide`, `inject`) | **Stable** | |
-| Islands (`activateIslands`, disposal, triggers) | **Stable** | 10 activation + 88 hydration + 10 trigger tests |
-| `createHistory` (undo/redo) | **Stable** | |
+| Islands (`activateIslands`, disposal, triggers) | **Stable** | 197 tests across 12 dedicated files |
+| `createHistory` (undo/redo) | **Stable** | Takes a `[get, set]` tuple; returns a controls object |
 | `createReducer` | **Stable** | |
+| `createResource` / `createSuspense` | **Stable** | Abortable; Suspense boundary captured at resource creation |
+| `createPortal`, `svg()`, `template()` | **Stable** | |
 | `data-fetch`, `data-transition:*`, `data-ref` | **Stable** | |
 | SSR (`renderToString`, `renderToStream`) | **Beta** | Functional, API may evolve |
-| TC39 Signals compat (`Signal.State`, `Signal.Computed`) | **Beta** | Tracks an evolving TC39 proposal |
+| Streaming SSR under strict CSP | **Known gap** | Suspense swap scripts carry no `nonce` — see [CSP.md](./CSP.md) |
+| TC39 Signals compat (`State`, `Computed`) | **Beta** | Tracks an evolving TC39 proposal |
+| WASM render (`@getforma/core/wasm`) | **Experimental** | Needs `window.__FORMA_WASM__`; unreachable before 1.6.0 |
+
+The island figure is the number of test cases in `activate`, `activate-isolation`, `activate-reactivate`, `activate-triggers`, `activate-visible`, `activate-visible-leak`, `deactivate`, `hydrate`, `hydrate-cleanup`, `list-hydration`, `multi-island-integration` and `shared-signals-across-islands` under `src/dom/__tests__/`.
+
+Verified by `src/__tests__/docs-truth.test.ts` > "the island coverage figure matches the island test files"
 
 ---
 

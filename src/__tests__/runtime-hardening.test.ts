@@ -5,6 +5,7 @@ import {
   setUnsafeEval,
   setUnsafeEvalMode,
   getUnsafeEvalMode,
+  isUnsafeEvalAllowed,
 } from '../runtime';
 
 function waitForEffects(): Promise<void> {
@@ -26,6 +27,23 @@ describe('runtime unsafe-eval hardening', () => {
     container.remove();
     setUnsafeEvalMode('mutable');
     setUnsafeEval(false);
+  });
+
+  it("setUnsafeEvalMode('mutable') does not enable the fallback", () => {
+    // 'mutable' is the DEFAULT mode of every build, so it has to mean
+    // "off, but you may turn it on" — never "on". Coming back to it from a
+    // locked mode must not hand the page an eval it never asked for.
+    setUnsafeEvalMode('locked-off');
+    expect(isUnsafeEvalAllowed()).toBe(false);
+
+    setUnsafeEvalMode('mutable');
+    expect(getUnsafeEvalMode()).toBe('mutable');
+    expect(isUnsafeEvalAllowed()).toBe(false);
+
+    setUnsafeEvalMode('locked-on');
+    expect(isUnsafeEvalAllowed()).toBe(true);
+    setUnsafeEvalMode('mutable');
+    expect(isUnsafeEvalAllowed()).toBe(false);
   });
 
   it('allows unsafe fallback in mutable mode when explicitly enabled', async () => {

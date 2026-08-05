@@ -2,8 +2,15 @@
  * FormaJS HTML Runtime
  *
  * Declarative reactive UI via data-* attributes, powered by fine-grained
- * signals (alien-signals 3.x). Combined into a single, CSP-safe runtime
- * with zero build step required.
+ * signals (alien-signals 3.x). Zero build step required.
+ *
+ * CSP posture: every build evaluates expressions with the hand-written parser
+ * below and calls neither eval() nor new Function() unless the app opts in
+ * (setUnsafeEval(true), `data-forma-unsafe-eval="true"` on the script tag, or
+ * __FORMA_RUNTIME_CONFIG). The hardened build removes the fallback at compile
+ * time so it cannot be opted into at all. Expressions the parser cannot compile
+ * degrade to a noop plus a diagnostic — they never fall through to eval.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "every build ships with the new Function fallback disabled"
  *
  * Design inspirations:
  *   Alpine.js   — data-* directive model, progressive enhancement
@@ -14,7 +21,7 @@
  *   Lit         — root element access during hydration, (el, props) pattern
  *
  * ┌─────────────────────────────────────────────────────────────────────┐
- * │  Yes, this file is ~3,300 lines. It's a monolith on purpose.      │
+ * │  Yes, this file is ~3,650 lines. It's a monolith on purpose.      │
  * │                                                                     │
  * │  The HTML Runtime is a self-contained unit: expression parser,      │
  * │  handler compiler, transition system, DOM scanner, and observer     │
@@ -52,20 +59,20 @@
  *
  * ── FILE MAP ──────────────────────────────────────────────────────────
  *
- *   Line ~31-71     Core types & scope (Getter, Setter, Scope, createChildScope)
- *   Line ~73-253    Configuration & diagnostics (debug, CSP modes, containment)
- *   Line ~254-344   Performance utilities (yieldToMain, containment hints)
- *   Line ~346-534   Regexes, caches, security blocklist (findBlockedMethod)
- *   Line ~536-923   Parsing utilities (splitCallArgs, readBalancedSegment, if-handler)
- *   Line ~925-1049  Template compilation (data-list templates)
- *   Line ~1051-1396 CSS Transitions (parse, run, enter/leave phases)
- *   Line ~1398-1809 CSP-safe expression parser (chained access, operators, literals)
- *   Line ~1811-2091 Evaluator & handler builder (CSP path + new Function fallback)
- *   Line ~2093-2184 State initialization & safe $el proxy
- *   Line ~2186-2682 bindElement() — the central directive processor
- *   Line ~2684-2952 MutationObserver, directive map, mountScope/unmountScope
- *   Line ~2954-3064 Init/destroy, mount/unmount, public API setters
- *   Line ~3066-3188 DevTools API, reconciler bridge, exports
+ *   Line ~140-200   Attribute safety, core types & scope (Scope, createChildScope)
+ *   Line ~202-470   Configuration & diagnostics (debug, unsafe-eval policy, config)
+ *   Line ~471-576   Performance utilities (yieldToMain, containment hints)
+ *   Line ~578-710   Regexes, caches, security blocklist (findBlockedMethod)
+ *   Line ~711-1230  Parsing utilities (splitCallArgs, readBalancedSegment, if-handler)
+ *   Line ~1231-1330 Template compilation (data-list templates)
+ *   Line ~1331-1682 CSS Transitions (parse, run, enter/leave phases)
+ *   Line ~1683-2095 CSP-safe expression parser (chained access, operators, literals)
+ *   Line ~2096-2475 Evaluator & handler builder (CSP path + opt-in eval fallback)
+ *   Line ~2476-2568 State initialization & safe $el proxy
+ *   Line ~2569-3107 bindElement() — the central directive processor
+ *   Line ~3108-3399 MutationObserver, directive map, mountScope/unmountScope
+ *   Line ~3400-3529 Init/destroy, mount/unmount, public API setters
+ *   Line ~3530-3650 DevTools API, reconciler bridge, exports
  *
  * ── SUPPORTED DIRECTIVES ──────────────────────────────────────────────
  *
@@ -103,10 +110,15 @@
  *     data-fetch-id="name"               Register for $refetch('name')
  *
  *   Configuration (on <script> tag):
- *     data-forma-unsafe-eval="false"     Disable the new Function() fallback
- *                                        (the standard build ships with it
- *                                        ENABLED by default; only the hardened
- *                                        build compiles it out entirely)
+ *     data-forma-unsafe-eval="true"      Opt IN to the new Function() fallback
+ *                                        for expressions the CSP-safe parser
+ *                                        cannot compile. Off in every build by
+ *                                        default; the page then needs
+ *                                        'unsafe-eval' in its CSP. The hardened
+ *                                        build compiles the fallback out, so
+ *                                        this switch does nothing there.
+ *     data-forma-unsafe-eval-mode="…"    "mutable" | "locked-off" | "locked-on"
+ *     data-forma-lock-unsafe-eval="true" Shorthand for mode="locked-off"
  *     data-forma-diagnostics="true"      Enable expression diagnostics
  *     data-forma-auto-containment="true" Enable CSS containment hints
  *
@@ -127,13 +139,21 @@ import { createReconciler } from './dom/reconcile';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 
 /**
- * True if writing `value` to attribute `name` via setAttribute would create an
- * XSS sink: an `on*` inline event handler, or a URL attribute carrying a
- * script-executing scheme. Shared by data-bind:* and list-template binding.
+ * True if writing `value` to attribute `name` on a `<tag>` element via
+ * setAttribute would create an XSS sink: an `on*` inline event handler, or a
+ * URL attribute carrying a script-executing scheme. Shared by data-bind:* and
+ * list-template binding.
+ *
+ * `tag` is the lower-case name of the element receiving the attribute and is
+ * always passed: `isDangerousUrl` needs it to tell a `data:image/svg+xml` that
+ * is inert on an `<img>` from the same value on an `<a href>`, where it is a
+ * navigable document.
+ * Verified by: src/__tests__/runtime-bind-security.test.ts > "does not set a javascript: URL from data-bind:href"
+ * Verified by: src/__tests__/runtime-bind-security.test.ts > "forwards the element tag to the URL scheme check"
  */
-function isUnsafeAttrBinding(name: string, value: string): boolean {
+function isUnsafeAttrBinding(name: string, value: string, tag: string): boolean {
   if (isEventHandlerAttr(name)) return true;
-  if (isUrlAttr(name) && isDangerousUrl(value)) return true;
+  if (isUrlAttr(name) && isDangerousUrl(value, tag)) return true;
   return false;
 }
 
@@ -181,14 +201,67 @@ function createChildScope(parent: Scope, locals: Record<string, unknown>): Scope
 
 // ── Debug logger — enable via FormaRuntime.debug = true or window.__FORMA_DEBUG = true ──
 let _debug = false;
+
+/**
+ * Policy for the `new Function()` fallback that runs when the CSP-safe parser
+ * cannot compile an expression:
+ *
+ *   'mutable'    — fallback OFF, opt-in at runtime (setUnsafeEval(true), the
+ *                  `data-forma-unsafe-eval` script attribute, or
+ *                  `window.__FORMA_RUNTIME_CONFIG.allowUnsafeEval`).
+ *   'locked-off' — fallback OFF and setUnsafeEval() cannot turn it on. The
+ *                  hardened build compiles the `new Function` calls out entirely.
+ *   'locked-on'  — fallback ON and setUnsafeEval() cannot turn it off. Never a
+ *                  build default; only reachable by explicit configuration.
+ *
+ * `mutable` is the default in EVERY build, and `mutable` means off-until-asked:
+ * no build ships a runtime that reaches `new Function()` on its own.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "every build ships with the new Function fallback disabled"
+ */
 type UnsafeEvalMode = 'mutable' | 'locked-off' | 'locked-on';
+
+/**
+ * The one and only mapping from policy mode to "may this runtime call
+ * `new Function`". Keeping it in a single function is what makes the standard
+ * build, the IIFE builds and SSR/Node start in the same state — the build-time
+ * define selects the MODE, it can no longer smuggle in a different flag.
+ */
+function allowsUnsafeEval(mode: UnsafeEvalMode): boolean {
+  return mode === 'locked-on';
+}
+
 let _unsafeEvalMode: UnsafeEvalMode = 'mutable';
-let _allowUnsafeEval = false;
+let _allowUnsafeEval = allowsUnsafeEval(_unsafeEvalMode);
 let _diagnosticsEnabled = true;
+/** True once we have warned that the unsafe fallback was switched on. */
+let _unsafeEvalWarned = false;
 function dbg(...args: unknown[]): void {
   if (_debug || (typeof window !== 'undefined' && (window as any).__FORMA_DEBUG)) {
     console.log('[FormaJS]', ...args);
   }
+}
+
+/**
+ * Turning the fallback on is a security decision, so it is never silent: the
+ * page now needs `unsafe-eval` in its CSP and every expression the CSP-safe
+ * parser rejects is handed to `new Function`. Warned once per runtime instance.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "warns once when the unsafe fallback is switched on"
+ */
+function warnUnsafeEvalEnabled(source: string): void {
+  if (_unsafeEvalWarned) return;
+  _unsafeEvalWarned = true;
+  console.warn(
+    `[FormaJS] unsafe-eval fallback ENABLED via ${source}. Expressions the CSP-safe `
+    + `parser cannot compile are passed to the Function constructor, so this page now requires `
+    + `'unsafe-eval' in its Content-Security-Policy.`,
+  );
+}
+
+/** Apply a policy mode and the `new Function` capability it implies. */
+function applyUnsafeEvalMode(mode: UnsafeEvalMode, source: string): void {
+  _unsafeEvalMode = mode;
+  _allowUnsafeEval = allowsUnsafeEval(mode);
+  if (_allowUnsafeEval) warnUnsafeEvalEnabled(source);
 }
 
 interface RuntimeConfig {
@@ -231,6 +304,34 @@ function parseUnsafeEvalMode(raw: string | null | undefined): UnsafeEvalMode | u
   return undefined;
 }
 
+// Script attributes that carry runtime configuration. Used to locate the
+// configuring <script> in module builds, where document.currentScript is null.
+const CONFIG_SCRIPT_SELECTOR = [
+  'script[data-forma-unsafe-eval]',
+  'script[data-forma-unsafe-eval-mode]',
+  'script[data-forma-lock-unsafe-eval]',
+  'script[data-forma-diagnostics]',
+  'script[data-forma-auto-containment]',
+].join(',');
+
+/**
+ * The <script> tag that configures the runtime.
+ *
+ * `document.currentScript` is the right answer for the IIFE builds, but it is
+ * null by spec while a `<script type="module">` runs — so the ESM builds
+ * (dist/runtime.js) would ignore every `data-forma-*` switch. Falling back to
+ * the first script tag that carries one keeps the switches working identically
+ * in every build. Module scripts are deferred, so the whole document is parsed
+ * by the time this runs. Anyone who can add such a script tag can already run
+ * script on the page, so the fallback grants no new capability.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "honours the data-forma-unsafe-eval script attribute when document.currentScript is null (ESM builds)"
+ */
+function findConfigScript(): HTMLScriptElement | null {
+  const current = document.currentScript as HTMLScriptElement | null;
+  if (current) return current;
+  return document.querySelector(CONFIG_SCRIPT_SELECTOR) as HTMLScriptElement | null;
+}
+
 function readRuntimeConfig(): RuntimeConfig {
   const config: RuntimeConfig = {};
 
@@ -257,7 +358,7 @@ function readRuntimeConfig(): RuntimeConfig {
   }
 
   if (typeof document !== 'undefined') {
-    const script = document.currentScript as HTMLScriptElement | null;
+    const script = findConfigScript();
     if (script) {
       const unsafeFromAttr = parseBooleanFlag(script.getAttribute('data-forma-unsafe-eval'));
       if (unsafeFromAttr !== undefined) {
@@ -331,15 +432,32 @@ function reportDiagnostic(
 declare const __FORMA_UNSAFE_EVAL_MODE__: string | undefined;
 
 /**
- * Compile-time flag: true when the build CAN use new Function().
- * In the hardened build, __FORMA_UNSAFE_EVAL_MODE__ is "locked-off" and
- * esbuild constant-folds this to `false`, allowing dead code elimination
- * of all new Function() paths. This ensures Socket.dev/Snyk static analysis
- * does not flag eval usage in the hardened build.
+ * Compile-time flag: true when the build CAN use new Function() *if the app
+ * opts in*. It is not a statement about the default — that is `_allowUnsafeEval`,
+ * which starts false in every build.
+ *
+ * In the hardened build, __FORMA_UNSAFE_EVAL_MODE__ is "locked-off" and esbuild
+ * constant-folds this to `false`; tsup's treeshake pass then drops the guarded
+ * blocks, so the hardened artifacts contain no Function constructor at all and
+ * Socket.dev/Snyk static analysis has nothing to flag. That property is a
+ * property of the ARTIFACT, so it is gated by scripts/verify-dist.mjs (which
+ * greps the built hardened files) rather than by a unit test; the test below
+ * covers the runtime behaviour.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "a locked-off build cannot be talked into eval by any configuration"
  */
 const __EVAL_CAPABLE__ = typeof __FORMA_UNSAFE_EVAL_MODE__ !== 'string'
   || __FORMA_UNSAFE_EVAL_MODE__ !== 'locked-off';
 
+/**
+ * Build-time policy. tsup defines __FORMA_UNSAFE_EVAL_MODE__ as "mutable" for
+ * the standard builds and "locked-off" for the hardened ones; when the define
+ * is absent (source imports, vitest) the module default 'mutable' already
+ * applies. Because 'mutable' resolves to allow=false, all three of
+ * dist/runtime.js, the IIFE globals and SSR/Node start with the `new Function`
+ * fallback OFF — the define chooses whether it CAN be turned on, never whether
+ * it IS on.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "every build ships with the new Function fallback disabled"
+ */
 const buildUnsafeEvalMode = parseUnsafeEvalMode(
   typeof __FORMA_UNSAFE_EVAL_MODE__ === 'string'
     ? __FORMA_UNSAFE_EVAL_MODE__
@@ -347,10 +465,7 @@ const buildUnsafeEvalMode = parseUnsafeEvalMode(
 );
 
 if (buildUnsafeEvalMode) {
-  _unsafeEvalMode = buildUnsafeEvalMode;
-  if (_unsafeEvalMode === 'locked-off') _allowUnsafeEval = false;
-  if (_unsafeEvalMode === 'locked-on') _allowUnsafeEval = true;
-  if (_unsafeEvalMode === 'mutable') _allowUnsafeEval = true;
+  applyUnsafeEvalMode(buildUnsafeEvalMode, 'build configuration');
 }
 
 const runtimeConfig = readRuntimeConfig();
@@ -358,15 +473,14 @@ const configUnsafeMode = runtimeConfig.lockUnsafeEval
   ? 'locked-off'
   : runtimeConfig.unsafeEvalMode;
 if (configUnsafeMode) {
-  _unsafeEvalMode = configUnsafeMode;
-  if (_unsafeEvalMode === 'locked-off') _allowUnsafeEval = false;
-  if (_unsafeEvalMode === 'locked-on') _allowUnsafeEval = true;
+  applyUnsafeEvalMode(configUnsafeMode, 'runtime configuration');
 }
 if (
   _unsafeEvalMode === 'mutable'
   && typeof runtimeConfig.allowUnsafeEval === 'boolean'
 ) {
   _allowUnsafeEval = runtimeConfig.allowUnsafeEval;
+  if (_allowUnsafeEval) warnUnsafeEvalEnabled('runtime configuration');
 }
 if (typeof runtimeConfig.diagnostics === 'boolean') {
   _diagnosticsEnabled = runtimeConfig.diagnostics;
@@ -553,9 +667,6 @@ const RE_COMPUTED = /^(\w+)\s*=\s*(.+)$/;
 const RE_FETCH = /^(.+?)(?:→|->)\s*(\S+)(.*)$/;
 const RE_FETCH_METHOD = /^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i;
 const RE_STRIP_ITEM_BRACES = /^\{item\.?|\}$/g;
-// Detect expressions referencing DOM event parameters — these can't be resolved
-// through scope getters and must fall through to the new Function handler path.
-const RE_EVENT_REF = /\bevent\s*[.([]|\$event\b/;
 const RE_REFETCH_CALL = /^\$refetch\(\s*['"]([^'"]+)['"]\s*\)$/;
 
 interface TransitionSpec {
@@ -1042,10 +1153,6 @@ function consumeStatement(raw: string): { body: string; rest: string } | null {
 function parseIfHandler(expr: string, scope: Scope): ((e: Event) => void) | null {
   const input = expr.trim();
   if (!RE_IF_PREFIX.test(input)) return null;
-
-  // If the expression references DOM event parameters (`event`, `$event`),
-  // bail out — these aren't in scope getters and must use new Function.
-  if (RE_EVENT_REF.test(input)) return null;
 
   let idx = 2;
   while (idx < input.length && /\s/.test(input[idx]!)) idx++;
@@ -1562,7 +1669,7 @@ function cloneAttributeTemplates(el: Element, item: unknown): void {
         const compiled = compileTemplate(attr.value);
         entries.push({ attr: attr.name, compiled });
         const value = evaluateCompiledTemplate(compiled, item);
-        if (isUnsafeAttrBinding(attr.name, value)) {
+        if (isUnsafeAttrBinding(attr.name, value, node.tagName.toLowerCase())) {
           node.removeAttribute(attr.name);
         } else {
           node.setAttribute(attr.name, value);
@@ -1999,16 +2106,74 @@ function getScopeCache<T>(cache: WeakMap<Scope, Map<string, T>>, scope: Scope): 
   return scoped;
 }
 
+// The `new Function` fallback is opt-in, so this suffix is the actionable half
+// of every "cannot compile" diagnostic: it names the switch and its cost.
+const UNSAFE_EVAL_OPT_IN_HINT =
+  ` Opt in to the unsafe-eval fallback with setUnsafeEval(true) or `
+  + `<script data-forma-unsafe-eval="true"> (requires 'unsafe-eval' in your CSP), `
+  + `or rewrite the expression.`;
+
 /** Build an actionable hint for expressions/handlers that failed CSP-safe parsing. */
 function cspExpressionHint(expr: string): string {
   if (expr.includes('...')) {
-    return `Unsupported expression in CSP-safe mode: spread syntax detected. Use .concat() instead, or enable unsafe-eval via setUnsafeEval(true).`;
+    return `Unsupported expression in CSP-safe mode: spread syntax detected. Use .concat() instead.`
+      + UNSAFE_EVAL_OPT_IN_HINT;
   }
   // Note: optional chaining (?.) is now supported by the CSP-safe parser.
   if (expr.includes('=>')) {
-    return `Unsupported expression in CSP-safe mode: arrow function detected. Extract logic to a data-computed attribute, or enable unsafe-eval via setUnsafeEval(true).`;
+    return `Unsupported expression in CSP-safe mode: arrow function detected. Extract the logic to a data-computed attribute.`
+      + UNSAFE_EVAL_OPT_IN_HINT;
   }
-  return `Unsupported expression in CSP-safe mode. Simplify the expression or enable unsafe-eval via setUnsafeEval(true).`;
+  return `Unsupported expression in CSP-safe mode. Simplify the expression.` + UNSAFE_EVAL_OPT_IN_HINT;
+}
+
+/**
+ * `new Function(...)` threw. The interesting case is EvalError: that is what a
+ * Content-Security-Policy without 'unsafe-eval' raises, for EVERY expression —
+ * so the fallback the app asked for does not exist in this environment. We turn
+ * it back off (a capability, not a policy, so the mode is left alone) and say
+ * so, instead of repeating a misleading "expression too complex" for the rest
+ * of the page. Anything else is a genuine syntax error in the expression.
+ *
+ * Nothing needs to be evicted from the caches: an environment that blocks eval
+ * blocks it from the first call, so no compiled `new Function` closure can exist.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "reports a CSP diagnostic and stops using new Function when the page CSP blocks it"
+ */
+function reportUnsafeCompileFailure(
+  kind: RuntimeDiagnostic['kind'],
+  expr: string,
+  err: unknown,
+): void {
+  const name = (err as { name?: string } | null)?.name;
+  if (err instanceof EvalError || name === 'EvalError') {
+    _allowUnsafeEval = false;
+    reportDiagnostic(
+      kind,
+      expr,
+      `unsafe-eval fallback is enabled but this page's Content-Security-Policy blocks `
+      + `the Function constructor — expression NOT evaluated. Add 'unsafe-eval' to script-src, or `
+      + `rewrite the expression so the CSP-safe parser can compile it`,
+    );
+    return;
+  }
+  const message = (err as { message?: string } | null)?.message ?? String(err);
+  reportDiagnostic(kind, expr, `Failed to compile expression via the Function constructor: ${message}`);
+}
+
+/**
+ * Evaluators that could not be compiled at all. They return `undefined` so the
+ * rest of the page still binds; membership here is what lets bindElement flag
+ * the owning element with data-forma-expr-error instead of failing silently.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "marks the element with data-forma-expr-error when an expression cannot be compiled"
+ */
+const blockedEvaluators = new WeakSet<() => unknown>();
+
+/** Cache and return a noop evaluator, recorded as blocked for the DOM marker. */
+function blockedEvaluator(cache: Map<string, () => unknown>, cleaned: string): () => unknown {
+  const blocked = () => undefined;
+  blockedEvaluators.add(blocked);
+  cache.set(cleaned, blocked);
+  return blocked;
 }
 
 function buildEvaluator(expr: string, scope: Scope): () => unknown {
@@ -2024,16 +2189,18 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
     return cspFn;
   }
 
-  // Fallback to Function constructor (for complex expressions)
+  // Fallback to the Function constructor (for complex expressions). Reached
+  // only when the app has opted in — `_allowUnsafeEval` is false in every build
+  // until setUnsafeEval(true), the data-forma-unsafe-eval attribute or
+  // __FORMA_RUNTIME_CONFIG says otherwise.
   // __EVAL_CAPABLE__ is a compile-time constant — in the hardened build,
   // esbuild constant-folds it to false and eliminates this entire block,
   // ensuring no `new Function` appears in the hardened dist.
+  // Verified by: src/__tests__/runtime-csp-default.test.ts > "never reaches new Function for an unparseable expression by default"
   if (!__EVAL_CAPABLE__ || !_allowUnsafeEval) {
     dbg('buildEvaluator: blocked unsafe eval fallback for expression:', cleaned);
     reportDiagnostic('expression-unsupported', cleaned, cspExpressionHint(cleaned));
-    const blocked = () => undefined;
-    cache.set(cleaned, blocked);
-    return blocked;
+    return blockedEvaluator(cache, cleaned);
   }
 
   // Apply UNSAFE_METHOD_NAMES blocklist before new Function — prevents
@@ -2045,9 +2212,8 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
     // Degrade to a noop (matching the CSP-unsupported path above) instead of
     // throwing — a throw here would propagate out of initRuntime and prevent
     // every other directive on the page from binding.
-    const blocked = () => undefined;
-    cache.set(cleaned, blocked);
-    return blocked;
+    // Verified by: src/__tests__/runtime-hardening.test.ts > "blocks constructor in new Function path"
+    return blockedEvaluator(cache, cleaned);
   }
 
   try {
@@ -2067,11 +2233,9 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
     const unsafe = () => fn(proxy);
     cache.set(cleaned, unsafe);
     return unsafe;
-  } catch {
-    reportDiagnostic('expression-unsupported', cleaned, 'Expression too complex for CSP-safe mode. Enable unsafe-eval via FormaRuntime.unsafeEval = true, or use the standard (non-hardened) build.');
-    const failed = () => undefined;
-    cache.set(cleaned, failed);
-    return failed;
+  } catch (err) {
+    reportUnsafeCompileFailure('expression-unsupported', cleaned, err);
+    return blockedEvaluator(cache, cleaned);
   }
 }
 
@@ -2203,16 +2367,41 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
   const cached = cache.get(cleaned);
   if (cached) return cached;
 
+  // `$event` / `event` are not scope state — they exist only for the duration
+  // of one dispatch, so they are bound through a child scope whose two locals
+  // are refreshed on every invocation. Without this the CSP-safe parser happily
+  // compiles `q = $event.target.value` into an assignment of `undefined`
+  // (unknown identifiers read as undefined) and the page loses data with no
+  // error at all. Handlers are synchronous, so one box per handler is enough;
+  // the previous value is restored afterwards, which both keeps a re-entrant
+  // dispatch correct and stops a compiled handler retaining the Event.
+  // Verified by: src/__tests__/runtime-csp-default.test.ts > "compiles $event handlers without eval instead of assigning undefined"
+  const eventLocals: Record<string, unknown> = { $event: undefined, event: undefined };
+  const eventScope = createChildScope(scope, eventLocals);
+
   // Try CSP-safe parsing first
-  const cspFn = parseHandler(cleaned, scope);
+  const cspFn = parseHandler(cleaned, eventScope);
   if (cspFn) {
-    const result: HandlerBuildResult = { handler: cspFn, supported: true };
+    const handler = (e: Event) => {
+      const outer = eventLocals.$event;
+      eventLocals.$event = e;
+      eventLocals.event = e;
+      try {
+        cspFn(e);
+      } finally {
+        eventLocals.$event = outer;
+        eventLocals.event = outer;
+      }
+    };
+    const result: HandlerBuildResult = { handler, supported: true };
     cache.set(cleaned, result);
     return result;
   }
 
-  // Fallback to Function constructor (for complex expressions)
+  // Fallback to the Function constructor (for complex expressions). Reached
+  // only when the app has opted in — see buildEvaluator.
   // __EVAL_CAPABLE__ gate ensures hardened build eliminates this entire block.
+  // Verified by: src/__tests__/runtime-csp-default.test.ts > "never reaches new Function for an unparseable handler by default"
   if (!__EVAL_CAPABLE__ || !_allowUnsafeEval) {
     dbg('buildHandler: blocked unsafe eval fallback for expression:', cleaned);
     reportDiagnostic('handler-unsupported', cleaned, cspExpressionHint(cleaned));
@@ -2233,6 +2422,7 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
     // Degrade to a noop (matching the CSP-unsupported path above) instead of
     // throwing — a throw here would propagate out of initRuntime and prevent
     // every other directive on the page from binding.
+    // Verified by: src/__tests__/runtime-hardening.test.ts > "blocks .Function() access in handler"
     const result: HandlerBuildResult = {
       handler: () => {},
       supported: false,
@@ -2274,8 +2464,8 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
     };
     cache.set(cleaned, result);
     return result;
-  } catch {
-    reportDiagnostic('handler-unsupported', cleaned, 'Expression too complex for CSP-safe mode. Enable unsafe-eval via FormaRuntime.unsafeEval = true, or use the standard (non-hardened) build.');
+  } catch (err) {
+    reportUnsafeCompileFailure('handler-unsupported', cleaned, err);
     const result: HandlerBuildResult = {
       handler: () => {},
       supported: false,
@@ -2393,6 +2583,18 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   };
   scope = createChildScope(scope, elMagics);
 
+  // An expression this build cannot compile evaluates to `undefined` forever.
+  // That is invisible in the DOM, so every directive on this element goes
+  // through `evaluator()` and a blocked one leaves data-forma-expr-error behind
+  // — the same contract data-on:* already has via data-forma-handler-error.
+  // Verified by: src/__tests__/runtime-csp-default.test.ts > "marks the element with data-forma-expr-error when an expression cannot be compiled"
+  let exprBlocked = false;
+  const evaluator = (expression: string): (() => unknown) => {
+    const fn = buildEvaluator(expression, scope);
+    if (blockedEvaluators.has(fn)) exprBlocked = true;
+    return fn;
+  };
+
   // When the server provides a directive map, we know exactly which directives
   // this element has. Skip getAttribute calls for directives it doesn't have.
   // `known` is null when no map is available (fallback: check everything).
@@ -2416,7 +2618,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         // to prevent self-referential cycle (computed reading itself)
         const prevGetter = scope.getters[name];
         delete scope.getters[name];
-        const evaluate = buildEvaluator(`{${expr}}`, scope);
+        const evaluate = evaluator(`{${expr}}`);
         const getter = createComputed(evaluate);
         scope.getters[name] = getter;
         // Keep the original setter so manual overrides still work
@@ -2431,7 +2633,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-text="{expr}"
   const textExpr = (!known || known.has('data-text')) ? el.getAttribute('data-text') : null;
   if (textExpr) {
-    const evaluate = buildEvaluator(textExpr, scope);
+    const evaluate = evaluator(textExpr);
     const dispose = internalEffect(() => {
       setElementTextFast(el, toTextValue(evaluate()));
     });
@@ -2441,7 +2643,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-show="{expr}"
   const showExpr = (!known || known.has('data-show')) ? el.getAttribute('data-show') : null;
   if (showExpr) {
-    const evaluate = buildEvaluator(showExpr, scope);
+    const evaluate = evaluator(showExpr);
     const transition = parseTransitionSpec(el);
     if (_debug) {
       const tag = el.tagName.toLowerCase();
@@ -2464,7 +2666,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-if="{expr}" — conditional DOM insertion/removal with optional transitions
   const ifExpr = (!known || known.has('data-if')) ? el.getAttribute('data-if') : null;
   if (ifExpr) {
-    const evaluate = buildEvaluator(ifExpr, scope);
+    const evaluate = evaluator(ifExpr);
     const transition = parseTransitionSpec(el);
     const placeholder = document.createComment('forma-if');
     const parent = el.parentNode;
@@ -2518,11 +2720,11 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       // and set the last key on the resolved parent object to write. Reactive
       // when the parent is a store proxy; a plain object still round-trips the
       // input value.
-      getter = buildEvaluator(prop, scope);
+      getter = evaluator(prop);
       const lastDot = prop.lastIndexOf('.');
       const basePath = prop.slice(0, lastDot);
       const key = prop.slice(lastDot + 1);
-      const baseGet = buildEvaluator(basePath, scope);
+      const baseGet = evaluator(basePath);
       setter = (v: unknown) => {
         const base = baseGet();
         if (base != null && typeof base === 'object') (base as Record<string, unknown>)[key] = v;
@@ -2619,14 +2821,14 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       }
     } else if (name.startsWith('data-class:')) {
       const cls = name.slice(11); // 'data-class:'.length === 11
-      const evaluate = buildEvaluator(attr.value, scope);
+      const evaluate = evaluator(attr.value);
       const dispose = internalEffect(() => {
         el.classList.toggle(cls, !!evaluate());
       });
       disposers.push(dispose);
     } else if (name.startsWith('data-bind:')) {
       const attrName = name.slice(10); // 'data-bind:'.length === 10
-      const evaluate = buildEvaluator(attr.value, scope);
+      const evaluate = evaluator(attr.value);
       const dispose = internalEffect(() => {
         const val = evaluate();
         if (val == null || val === false) {
@@ -2636,7 +2838,8 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
           // Drop event-handler and dangerous-URL bindings — a bound value from
           // state/data-fetch must not be able to inject javascript: URLs or
           // inline handlers. Applies to standard and hardened builds alike.
-          if (isUnsafeAttrBinding(attrName, str)) {
+          // Verified by: src/__tests__/runtime-bind-security.test.ts > "does not set an inline event-handler attribute via data-bind:onclick"
+          if (isUnsafeAttrBinding(attrName, str, el.tagName.toLowerCase())) {
             el.removeAttribute(attrName);
           } else {
             el.setAttribute(attrName, str);
@@ -2669,7 +2872,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-list="{expr}" — keyed reconciliation with LIS
   const listExpr = (!known || known.has('data-list')) ? el.getAttribute('data-list') : null;
   if (listExpr) {
-    const evaluate = buildEvaluator(listExpr, scope);
+    const evaluate = evaluator(listExpr);
     const templateEl = el.children[0] as Element | undefined;
     if (templateEl) {
       const template = templateEl.cloneNode(true) as Element;
@@ -2894,6 +3097,13 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         disposers.push(() => clearInterval(id));
       }
     }
+  }
+
+  // Surface unevaluatable expressions in the DOM (see `evaluator` above).
+  if (exprBlocked) {
+    el.setAttribute('data-forma-expr-error', 'unsupported');
+  } else if (el.hasAttribute('data-forma-expr-error')) {
+    el.removeAttribute('data-forma-expr-error');
   }
 }
 
@@ -3260,18 +3470,28 @@ if (typeof document !== 'undefined') {
 
 /** Enable/disable debug logging. Also toggleable via window.__FORMA_DEBUG = true */
 function setDebug(on: boolean): void { _debug = on; }
-/** Set unsafe-eval mode. `locked-off` is hardened and non-toggleable via setUnsafeEval. */
+/**
+ * Set the unsafe-eval policy mode.
+ *
+ * Switching to `mutable` or `locked-off` disables the `new Function` fallback;
+ * only `locked-on` enables it, and only `mutable` leaves setUnsafeEval() able
+ * to change it afterwards.
+ * Verified by: src/__tests__/runtime-hardening.test.ts > "setUnsafeEvalMode('mutable') does not enable the fallback"
+ */
 function setUnsafeEvalMode(mode: UnsafeEvalMode): void {
   if (_unsafeEvalMode === mode) return;
-  _unsafeEvalMode = mode;
-  if (mode === 'locked-off') _allowUnsafeEval = false;
-  if (mode === 'locked-on') _allowUnsafeEval = true;
-  if (mode === 'mutable') _allowUnsafeEval = true;
+  applyUnsafeEvalMode(mode, 'setUnsafeEvalMode()');
   // Rebuild caches whenever policy changes.
   scopeExpressionCache = new WeakMap<Scope, Map<string, () => unknown>>();
   scopeHandlerCache = new WeakMap<Scope, Map<string, HandlerBuildResult>>();
 }
-/** Enable/disable unsafe `new Function` fallback for complex expressions. */
+/**
+ * Enable/disable the unsafe `new Function` fallback for expressions the
+ * CSP-safe parser cannot compile. It is OFF in every build until this is
+ * called; enabling it means the page needs `unsafe-eval` in its CSP.
+ * Ignored in the locked modes.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "opting in with setUnsafeEval(true) enables the fallback"
+ */
 function setUnsafeEval(on: boolean): void {
   if (_unsafeEvalMode !== 'mutable') {
     dbg(
@@ -3281,6 +3501,7 @@ function setUnsafeEval(on: boolean): void {
   }
   if (_allowUnsafeEval === on) return;
   _allowUnsafeEval = on;
+  if (on) warnUnsafeEvalEnabled('setUnsafeEval(true)');
   // Rebuild handlers/evaluators after mode change so cached blocked results
   // don't persist when toggling trusted mode at runtime.
   scopeExpressionCache = new WeakMap<Scope, Map<string, () => unknown>>();
@@ -3288,6 +3509,13 @@ function setUnsafeEval(on: boolean): void {
 }
 /** Get current unsafe-eval policy mode. */
 function getUnsafeEvalMode(): UnsafeEvalMode { return _unsafeEvalMode; }
+/**
+ * True when this runtime will hand an unparseable expression to `new Function`.
+ * False in every build until the app opts in — the honest answer to "is this
+ * page CSP-safe right now?".
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "every build ships with the new Function fallback disabled"
+ */
+function isUnsafeEvalAllowed(): boolean { return __EVAL_CAPABLE__ && _allowUnsafeEval; }
 /** Enable/disable runtime diagnostics for unsupported expressions/handlers. */
 function setDiagnostics(on: boolean): void { _diagnosticsEnabled = on; }
 
@@ -3414,6 +3642,7 @@ export {
   setUnsafeEvalMode,
   getUnsafeEvalMode,
   setUnsafeEval,
+  isUnsafeEvalAllowed,
   yieldToMain,
   applyContainmentHints,
   setDirectiveMap,
