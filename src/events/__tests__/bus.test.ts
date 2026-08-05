@@ -147,3 +147,38 @@ describe('clear', () => {
     expect(bSpy).not.toHaveBeenCalled();
   });
 });
+
+describe('createBus — dispatch snapshot', () => {
+  it('a handler subscribed during emit is not called by that same emit', () => {
+    // emit() iterates a copy of the listener set. Iterating the live Set would
+    // visit an entry added mid-dispatch, and a handler that re-subscribes
+    // itself would then loop forever.
+    const bus = createBus<{ tick: number }>();
+    const late = vi.fn();
+
+    bus.on('tick', () => { bus.on('tick', late); });
+
+    bus.emit('tick', 1);
+    expect(late, 'the late subscriber must not see the emit it was added during').not.toHaveBeenCalled();
+
+    bus.emit('tick', 2);
+    expect(late).toHaveBeenCalledTimes(1);
+  });
+
+  it('a handler unsubscribed by an earlier handler still runs for that emit', () => {
+    const bus = createBus<{ tick: number }>();
+    const second = vi.fn();
+    let offSecond: (() => void) | null = null;
+
+    // Registered first, so it runs first and can remove the one behind it.
+    bus.on('tick', () => { offSecond?.(); });
+    offSecond = bus.on('tick', second);
+
+    bus.emit('tick', 1);
+    expect(second, 'a mid-dispatch removal must not skip an already-scheduled handler')
+      .toHaveBeenCalledTimes(1);
+
+    bus.emit('tick', 2);
+    expect(second, 'and it must be gone from the next dispatch').toHaveBeenCalledTimes(1);
+  });
+});

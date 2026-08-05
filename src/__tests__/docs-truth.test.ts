@@ -11,8 +11,8 @@
  * runtime-csp-default.test.ts — this file only pins what can be read.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync, readdirSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { existsSync, readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative, resolve } from 'node:path';
 import { CDN_URL_ARTIFACTS } from '../../scripts/build-defines.mjs';
 import * as rootEntry from '../index.js';
 import * as tc39 from '../reactive/tc39-compat.js';
@@ -25,6 +25,9 @@ const README = read('README.md');
 const SECURITY = read('SECURITY.md');
 const CSP = read('CSP.md');
 const CHANGELOG = read('CHANGELOG.md');
+const CONTRIBUTING = read('CONTRIBUTING.md');
+const LEDGER = read('docs/HARDENING-AUDIT.md');
+const PERFORMANCE = read('docs/PERFORMANCE.md');
 
 /** Island/hydration suites the README's Stability row counts. */
 const ISLAND_TEST_FILES = [
@@ -47,6 +50,16 @@ describe('version pins', () => {
     const pins = [...README.matchAll(/@getforma\/core@([\d.]+)/g)].map((m) => m[1]);
     expect(pins.length, 'README should still contain concrete pins').toBeGreaterThan(0);
     for (const pin of pins) expect(pin).toBe(pkg.version);
+  });
+
+  it("the runtime header's CDN pin is the current package version", () => {
+    // src/runtime.ts opens with a copy-pasteable CDN snippet. It sat on 1.0.1
+    // through five minor releases, so anyone following the file's own usage
+    // example pinned a runtime that predated the CSP-safe default.
+    const runtime = read('src/runtime.ts');
+    const pins = [...runtime.matchAll(/@getforma\/core@([\d.]+)/g)].map((m) => m[1]);
+    expect(pins.length, 'src/runtime.ts should still carry its CDN usage example').toBe(1);
+    expect(pins[0]).toBe(pkg.version);
   });
 
   it('the changelog has an Unreleased section above the newest release', () => {
@@ -129,8 +142,27 @@ describe('"Verified by" citations', () => {
   // The docs carry the same convention as the code comments: a claim about a
   // security or behavioural property names the test that proves it. A citation
   // that does not resolve is worse than none, so all of them are resolved here.
-  const CITATION = /Verified by:?\s+`([^`]+)`\s*>\s*"([^"]+)"/g;
-  const DOCS = { 'README.md': README, 'SECURITY.md': SECURITY, 'CSP.md': CSP };
+  // Anchored on the `.test.ts` suffix rather than on the backticks: the same
+  // citation is written with backticks in prose and without them inside fenced
+  // code samples, and both forms have to resolve. Anchoring here also means the
+  // convention's own placeholder (`<repo-relative test path>`) is not mistaken
+  // for a citation.
+  const CITATION = /Verified by:?\s+`?([^`\s]+\.test\.ts)`?\s*>\s*"([^"]+)"/g;
+
+  // Every markdown file that makes a claim and names its proof. The hardening
+  // ledger is here for the same reason the others are: an entry marked FIXED
+  // that cites a test which does not exist is a worse record than no record.
+  const DOCS = {
+    'README.md': README,
+    'SECURITY.md': SECURITY,
+    'CSP.md': CSP,
+    'CONTRIBUTING.md': CONTRIBUTING,
+    'docs/HARDENING-AUDIT.md': LEDGER,
+    // The performance doc makes behavioural claims too — every "this guard buys
+    // us X" verdict rests on a test, and a verdict resting on a test that does
+    // not exist is how a guard gets removed for being slow.
+    'docs/PERFORMANCE.md': PERFORMANCE,
+  };
 
   it('every citation names a test file that exists and a test that is in it', () => {
     let checked = 0;
@@ -143,10 +175,143 @@ describe('"Verified by" citations', () => {
         } catch {
           throw new Error(`${doc}: cited test file does not exist: ${file}`);
         }
-        expect(source, `${doc} cites "${name}" in ${file}`).toContain(`'${name}'`);
+        const declared =
+          source.includes(`'${name}'`) || source.includes(`"${name}"`) || source.includes(`\`${name}\``);
+        expect(declared, `${doc} cites "${name}" in ${file}, which has no such test`).toBe(true);
       }
     }
-    expect(checked, 'the docs should still carry citations').toBeGreaterThan(20);
+    expect(checked, 'the docs should still carry citations').toBeGreaterThan(150);
+  });
+
+  // Same rule for source comments — see CONTRIBUTING.md, "Comments that assert
+  // must cite their proof". The code form drops the backticks:
+  //   // Verified by: <repo-relative test path> > "<exact test name>"
+  const CODE_CITATION = /Verified by:\s+(\S+\.test\.ts)\s*>\s*"([^"]+)"/g;
+
+  /**
+   * Every .ts/.mjs file under src/ and scripts/, the tsup config, and the CI
+   * workflows — a citation in a YAML comment is a claim like any other, and the
+   * one on the engines floor is load-bearing.
+   */
+  function sourceFiles(): string[] {
+    const found: string[] = [];
+    const walk = (dir: string, ext: RegExp): void => {
+      for (const name of readdirSync(dir)) {
+        const p = join(dir, name);
+        if (statSync(p).isDirectory()) walk(p, ext);
+        else if (ext.test(name)) found.push(p);
+      }
+    };
+    walk(resolve(ROOT, 'src'), /\.(ts|mjs)$/);
+    walk(resolve(ROOT, 'scripts'), /\.(ts|mjs)$/);
+    walk(resolve(ROOT, '.github/workflows'), /\.ya?ml$/);
+    found.push(resolve(ROOT, 'tsup.config.ts'));
+    return found;
+  }
+
+  // A performance claim cites the benchmark that produced it, in the same shape
+  // and for the same reason a behavioural claim cites its test:
+  //   Benchmarked by: bench/<file>.bench.ts > "<exact bench name>"
+  // A benchmark is renamed far more casually than a test — its name carries the
+  // repeat count and the fixture size — so an unresolved perf citation is a
+  // realistic failure, not a hypothetical one.
+  const BENCH_CITATION = /Benchmarked by:?\s+`?(bench\/[\w.-]+\.bench\.ts)`?\s*>\s*"([^"]+)"/g;
+
+  // Benchmark names are assembled from template literals — `(×${NODES})`,
+  // `${width} effects on one signal` — so they cannot be grepped out of the
+  // source the way a test name can. They are resolved instead against
+  // docs/performance-baseline.json, the committed record of what the suite
+  // actually ran, which holds every RENDERED name. Renaming a benchmark means
+  // re-running `npm run bench:doc`, which rewrites that file, which is what
+  // makes a stale citation fail here.
+  it('every benchmark citation names a benchmark the suite actually ran', () => {
+    const baseline = JSON.parse(read('docs/performance-baseline.json')) as {
+      entries: Array<{ file: string; name: string }>;
+    };
+    const ran = new Set(baseline.entries.map((e) => `${e.file} > ${e.name}`));
+    expect(ran.size, 'the committed baseline should list the whole suite').toBeGreaterThan(50);
+
+    // The baseline must describe benchmark files that still exist.
+    for (const file of new Set(baseline.entries.map((e) => e.file))) {
+      expect(existsSync(resolve(ROOT, file)), `${file} is in the baseline but not on disk`).toBe(true);
+    }
+
+    let checked = 0;
+    for (const [doc, text] of Object.entries(DOCS)) {
+      for (const [, file, name] of text.matchAll(BENCH_CITATION)) {
+        checked += 1;
+        expect(
+          ran.has(`${file} > ${name}`),
+          `${doc} cites "${name}" in ${file}; no such benchmark in docs/performance-baseline.json`,
+        ).toBe(true);
+      }
+    }
+    expect(checked, 'the docs should carry benchmark citations').toBeGreaterThan(4);
+  });
+
+  it('every code comment citation resolves to a test that exists', () => {
+    const broken: string[] = [];
+    let checked = 0;
+    for (const file of sourceFiles()) {
+      const rel = relative(ROOT, file).replace(/\\/g, '/');
+      const text = readFileSync(file, 'utf8');
+      for (const m of text.matchAll(CODE_CITATION)) {
+        checked += 1;
+        const [, cited, name] = m;
+        const line = text.slice(0, m.index).split('\n').length;
+        if (!existsSync(resolve(ROOT, cited!))) {
+          broken.push(`${rel}:${line} → missing file ${cited}`);
+          continue;
+        }
+        // A test name may be declared with any quote style, so accept all three.
+        const source = read(cited!);
+        const declared =
+          source.includes(`'${name}'`) || source.includes(`"${name}"`) || source.includes(`\`${name}\``);
+        if (!declared) {
+          broken.push(`${rel}:${line} → no test named "${name}" in ${cited}`);
+        }
+      }
+    }
+    expect(broken, 'fix or remove these citations').toEqual([]);
+    expect(checked, 'the source should still carry citations').toBeGreaterThan(50);
+  });
+});
+
+describe('the runtime file map', () => {
+  // src/runtime.ts is a deliberate 3.7k-line monolith and navigates by a map in
+  // its header. The map used to list line ranges; four of them were stale, and
+  // the one naming the security blocklist pointed 150 lines above it. It now
+  // names the section MARKERS, which this test keeps honest.
+  const RUNTIME = read('src/runtime.ts');
+  const header = RUNTIME.slice(RUNTIME.indexOf('── FILE MAP'), RUNTIME.indexOf('── SUPPORTED DIRECTIVES'));
+
+  it('the runtime file map names every section marker, in order', () => {
+    const markers = [...RUNTIME.matchAll(/^\/\/ ── (.+?) ──$/gm)].map((m) => m[1]!);
+    expect(markers.length, 'runtime.ts should still be sectioned with // ── … ── markers')
+      .toBeGreaterThan(20);
+
+    // Each map row starts with the marker name (markers may carry a trailing
+    // explanation the row omits, e.g. "Debug logger — enable via …").
+    const rows = header
+      .split('\n')
+      .map((l) => l.replace(/^\s*\*\s?/, '').trimEnd())
+      .filter((l) => /^ {2,}\S/.test(l))
+      .map((l) => l.trim());
+
+    expect(rows.length, 'the map should list one row per section').toBe(markers.length);
+    for (let i = 0; i < markers.length; i++) {
+      const marker = markers[i]!;
+      const row = rows[i]!;
+      expect(
+        marker.startsWith(row.split(/ {2,}/)[0]!),
+        `map row ${i + 1} ("${row.split(/ {2,}/)[0]}") does not match section marker "${marker}"`,
+      ).toBe(true);
+    }
+  });
+
+  it('no section marker is duplicated', () => {
+    const markers = [...RUNTIME.matchAll(/^\/\/ ── (.+?) ──$/gm)].map((m) => m[1]!);
+    expect(new Set(markers).size).toBe(markers.length);
   });
 });
 

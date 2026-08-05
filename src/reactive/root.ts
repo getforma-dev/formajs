@@ -129,6 +129,8 @@ function createRootImpl<T>(fn: (dispose: () => void) => T, owned: boolean): T {
     // this call is synchronous, Solid-style), and defer the rest — the alien
     // scope dispose plus any after-created disposers — until setup finishes.
     // Without the deferral, everything created afterward would leak.
+    // Verified by: src/reactive/__tests__/root-dispose-during-setup.test.ts > "effect created AFTER an in-setup dispose() is still torn down"
+    // Verified by: src/reactive/__tests__/root-dispose-during-setup.test.ts > "userland disposer registered before an in-setup dispose() still runs"
     if (!setupComplete) {
       disposeRequestedDuringSetup = true;
       runDisposers();

@@ -22,8 +22,16 @@
       "forma/*": ["./src/*"]
     }
   },
-  // tsup.config.ts and scripts/ are included so `npm run typecheck` covers the
-  // build definition itself, not just the library. rootDir is "." for the same
-  // reason; tsc is only ever run with --noEmit here (tsup produces dist).
-  "include": ["src/**/*", "tsup.config.ts", "scripts/**/*.mjs"]
+  // tsup.config.ts, scripts/ and bench/ are included so `npm run typecheck`
+  // covers the build definition and the benchmark suite, not just the library.
+  // A benchmark that stops compiling is a benchmark that stops being run.
+  // rootDir is "." for the same reason; tsc is only ever run with --noEmit here
+  // (tsup produces dist).
+  "include": [
+    "src/**/*",
+    "tsup.config.ts",
+    "scripts/**/*.mjs",
+    "bench/**/*.ts",
+    "vitest.bench.config.ts"
+  ]
 }

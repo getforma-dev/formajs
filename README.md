@@ -402,6 +402,21 @@ Verified by `src/__tests__/build-artifacts.test.ts` > "hardened builds emit no n
 
 **What FormaJS is not:** It's not a framework with opinions about routing, data fetching, or state management. It's a reactive DOM library. You bring the architecture.
 
+### Measured, not asserted
+
+`npm run bench` runs the hot-path benchmark suite in `bench/`; the numbers below and the full table live in [docs/PERFORMANCE.md](docs/PERFORMANCE.md), with the run-to-run noise floor next to every row so a later comparison can tell a regression from a bad afternoon. They are happy-dom figures — good for comparing FormaJS against FormaJS, not against a browser.
+
+- **A write that changes nothing does nothing.** An equal-value write never reaches an effect and costs one to two orders of magnitude less than a write that does change (72 ns).
+  Benchmarked by: bench/reactive.bench.ts > "write a CHANGING value, effect runs (×500)"
+- **`batch()` collapses repeated writes to one flush** — 100 writes to one signal go from 237 µs to 19 µs, 12×. It does nothing for writes to 100 *different* signals, which is the correct result.
+  Benchmarked by: bench/reactive.bench.ts > "one signal, 100 writes, batched (×30)"
+- **A keyed list update that changes no keys and no order is 27× cheaper** than the same 1000 rows reordered (97 µs vs 2.6 ms).
+  Benchmarked by: bench/list.bench.ts > "same keys, same order — reconciler fast path"
+- **Hydration beats client rendering.** Adopting 1000 server-rendered keyed rows costs 2.4× less than building the same list client-side, with the HTML parse subtracted from both sides.
+  Benchmarked by: bench/hydrate.bench.ts > "1000 rows: parse + adopt by data-forma-key"
+- **The CSP-safe interpreter is faster than the `eval` path it replaced** — 53 ns per expression evaluation against 126 ns for `new Function` + `with` + a scope Proxy, and it needs no `unsafe-eval` in your CSP.
+  Benchmarked by: bench/expression.bench.ts > "8 count-dependent expressions: write → evaluate → text (×20)"
+
 ---
 
 ## The Rust Compiler (Optional)
@@ -1105,7 +1120,7 @@ See the [`examples/`](./examples) directory:
 | `createStore` (deep reactivity) | **Stable** | |
 | Components (`defineComponent`, lifecycle) | **Stable** | |
 | Context (`createContext`, `provide`, `inject`) | **Stable** | |
-| Islands (`activateIslands`, disposal, triggers) | **Stable** | 197 tests across 12 dedicated files |
+| Islands (`activateIslands`, disposal, triggers) | **Stable** | 198 tests across 12 dedicated files |
 | `createHistory` (undo/redo) | **Stable** | Takes a `[get, set]` tuple; returns a controls object |
 | `createReducer` | **Stable** | |
 | `createResource` / `createSuspense` | **Stable** | Abortable; Suspense boundary captured at resource creation |

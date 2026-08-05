@@ -15,7 +15,7 @@
 import { getSwapScript, getSwapTag } from './client-script.js';
 import { __DEV__ } from '../reactive/dev.js';
 import { isSafeTagName } from '../security/url-safety.js';
-import { escapeHtml, isVNode, VOID_ELEMENTS, renderAttr, type VNode } from './render.js';
+import { escapeHtml, isVNode, VOID_ELEMENTS, renderAttr } from './render.js';
 
 // ---------------------------------------------------------------------------
 // Suspense boundary tracking
@@ -26,7 +26,7 @@ interface PendingBoundary {
   promise: Promise<string>;
 }
 
-/** Per-render mutable state, scoped to a single renderToStreamNew call. */
+/** Per-render mutable state, scoped to a single renderToStream call. */
 interface StreamState {
   suspenseCounter: number;
   pendingBoundaries: PendingBoundary[];
@@ -177,7 +177,7 @@ function raceTimeout<T>(p: Promise<T>, ms: number | undefined): Promise<T | type
  * }
  * ```
  */
-export async function* renderToStreamNew(
+export async function* renderToStream(
   node: unknown,
   options?: StreamOptions,
 ): AsyncGenerator<string> {

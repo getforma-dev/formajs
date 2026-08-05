@@ -7,3 +7,5 @@ coverage/
 test-results/
 playwright-report/
 api-docs/
+# Copied fresh from dist/ by `npm run test:e2e`; a committed copy is only ever stale.
+e2e/fixtures/formajs-runtime.global.js

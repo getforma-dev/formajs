@@ -76,6 +76,7 @@ export function persist<T>(
   // Read a stored string, returning its value and version. A versioned envelope
   // is an object with an OWN ENVELOPE_TAG property (checked via hasOwnProperty,
   // never `in`, and never merged onto a prototype — no prototype-pollution vector).
+  // Verified by: src/state/__tests__/persist.test.ts > "does not pollute Object.prototype from a malicious __proto__ payload"
   function unwrap(stored: string): { value: unknown; version: number } {
     const parsed = deserialize(stored) as unknown;
     if (

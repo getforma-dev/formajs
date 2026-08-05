@@ -74,12 +74,6 @@ function warnForbiddenKey(key: string): void {
   );
 }
 
-function isPlainObject(v: unknown): v is Record<string, unknown> {
-  if (v == null || typeof v !== 'object') return false;
-  const proto = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null || Array.isArray(v);
-}
-
 function shouldWrap(v: unknown): v is object {
   if (v == null || typeof v !== 'object') return false;
   // Don't wrap special built-ins (Date, RegExp, Map, Set, etc.)

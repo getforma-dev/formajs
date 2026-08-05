@@ -9,7 +9,7 @@
  */
 
 import { internalEffect, __DEV__ } from 'forma/reactive';
-import { hydrating, type HydrationDescriptor } from './hydrate.js';
+import { hydrating } from './hydrate.js';
 import {
   isDangerousUrl,
   isEventHandlerAttr,
@@ -145,10 +145,13 @@ const BOOLEAN_ATTRS = new Set([
 ]);
 
 // ---------------------------------------------------------------------------
-// Element prototype cache — cloneNode(false) is a C++ memcpy, faster than
-// createElement which must parse the tag string and validate.
-// "Flexible Wings" exploit: the prototypes pass static inspection (they're
-// standard elements) but flex at runtime to avoid parsing overhead.
+// Element prototype cache. Rationale, not a measurement: one detached element
+// per common tag is created on first use, and every later h('div') shallow-
+// clones it instead of going back through createElement's tag-name validation.
+// (An earlier version of this comment asserted "cloneNode is a C++ memcpy" and
+// that it is "faster than createElement" — engine internals nobody here has
+// benchmarked. The behaviour that IS load-bearing is that a clone is a fresh,
+// detached, attribute-free element, which the tests cover.)
 // ---------------------------------------------------------------------------
 
 let ELEMENT_PROTOS: Record<string, HTMLElement> | null = null;
@@ -171,8 +174,8 @@ function getProto(tag: string): HTMLElement {
 }
 
 // ---------------------------------------------------------------------------
-// Event name cache — avoids .slice(2).toLowerCase() string allocations
-// on every event binding. "Super Clipping" exploit.
+// Event name cache — memoizes the `onClick` → `click` conversion so repeated
+// bindings of the same prop name do not re-run slice + toLowerCase.
 // ---------------------------------------------------------------------------
 
 const EVENT_NAMES: Record<string, string> = Object.create(null);
@@ -316,7 +319,26 @@ function applyStyleObj(el: Element, obj: Record<string, string>, prevKeys: strin
   return nextKeys;
 }
 
-/** Handle style prop. Reconciles styles via CSSOM (CSP-safe — never uses cssText). */
+/**
+ * Handle the `style` prop.
+ *
+ * A style string is parsed into declarations and written one property at a time
+ * through the CSSOM (`el.style.foo = …` / `removeProperty`). Two consequences,
+ * both load-bearing:
+ *
+ * - `cssText` is never assigned, and neither is the `style` content attribute.
+ *   A `style-src` policy without `'unsafe-inline'` blocks writing that
+ *   attribute but permits CSSOM property writes, which is why this path works
+ *   on a CSP-hardened page. (The browser still reflects the resulting
+ *   declaration block back into the attribute — that reflection is the
+ *   browser's, not ours, and CSP does not block it.)
+ * - A reactive style RECONCILES: a declaration present on the previous run and
+ *   absent on this one is removed individually, rather than the whole block
+ *   being rewritten.
+ *
+ * Verified by: src/dom/__tests__/element.test.ts > "reconciles a reactive style per declaration instead of rewriting the block"
+ * Verified by: src/dom/__tests__/element.test.ts > "never assigns cssText anywhere in the element factory"
+ */
 function handleStyle(el: Element, _key: string, value: unknown): void {
   if (typeof value === 'function') {
     let prevKeys: string[] = [];
@@ -655,11 +677,12 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
 
 /** Append a single child to a parent node. */
 function appendChild(parent: Node, child: unknown): void {
-  // "Active Suspension" exploit: check the MOST COMMON type first.
-  // In h('div', props, h('span'), h('button')), children are Nodes 70%+ of the time.
-  // instanceof Node returns false in O(1) for primitives (null, string, number)
-  // because V8 checks "is this an object?" first — no prototype chain walk.
-  // This saves 3-5 wasted type comparisons vs the conventional null-first order.
+  // Rationale for the branch ORDER, not a measured claim: the Node check is
+  // first because nested h() calls are the common child in this codebase's own
+  // trees, and `instanceof` on a primitive is rejected without walking a
+  // prototype chain, so putting it first costs the other branches nothing.
+  // (The earlier version of this comment asserted "70%+ of children are Nodes"
+  // and "saves 3-5 comparisons"; neither figure was ever measured.)
   if (child instanceof Node) {
     parent.appendChild(child);
     return;
@@ -865,13 +888,12 @@ export function h(
     el = getProto(tagName).cloneNode(false) as HTMLElement;
   }
 
-  // "Blown Diffuser" exploit: split props into static and dynamic paths.
-  // Static props (string/number/boolean literals) go through a zero-cache
-  // fast path. Only dynamic props (function values) need the attribute cache
-  // for diffing on re-runs. This avoids:
-  // - Object.create(null) allocation for elements with only static props
-  // - Cache read/write operations that always miss on first call
-  // - getCache() indirection in every prop handler
+  // Props are split into a static and a dynamic path. Static props
+  // (string/number/boolean literals) are written once and never re-read, so
+  // they skip the attribute cache entirely; only function-valued props need it,
+  // to diff against the previous value on re-runs. An element with no dynamic
+  // prop therefore never allocates a cache object.
+  // Verified by: src/dom/__tests__/element.test.ts > "allocates no attribute cache for an element with only static props"
   if (props) {
     let hasDynamic = false;
     for (const key in props) {

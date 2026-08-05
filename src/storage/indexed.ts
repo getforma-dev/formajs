@@ -23,6 +23,9 @@ const dbCache = new Map<string, Promise<IDBDatabase>>();
  * from a stale probe and race, so some stores are never created and their
  * connections are permanently wedged. Chaining opens for the same db name makes
  * each see the previous open's committed version.
+ *
+ * Verified by: src/storage/__tests__/indexed-concurrent-stores.test.ts > "creating many object stores on one db concurrently keeps them all usable"
+ * Verified by: src/storage/__tests__/indexed-concurrent-stores.test.ts > "a store that fails once still self-heals on retry (no permanent wedge)"
  */
 const openLocks = new Map<string, Promise<unknown>>();
 
@@ -154,6 +157,8 @@ export function createIndexedDB<T>(
           // A readwrite value is only durable once the transaction COMMITS —
           // resolving on request.onsuccess would falsely report success for a
           // write that later aborts (e.g. QuotaExceededError at commit).
+          // Verified by: src/storage/__tests__/indexed-hardening.test.ts > "set resolves only after the transaction COMMITS (tx.oncomplete), not on request.onsuccess"
+          // Verified by: src/storage/__tests__/indexed-hardening.test.ts > "a readwrite op whose transaction ABORTS rejects instead of falsely resolving"
           tx.oncomplete = () => resolve(result);
           tx.onerror = () => reject(tx.error ?? request.error);
           tx.onabort = () => reject(tx.error ?? request.error ?? new DOMException('Transaction aborted', 'AbortError'));

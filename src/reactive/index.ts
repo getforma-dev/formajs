@@ -42,14 +42,6 @@ export {
   type ResourceFetcherInfo,
 } from './resource.js';
 
-// Suspense context (shared between reactive/resource and dom/suspense)
-export {
-  getSuspenseContext,
-  pushSuspenseContext,
-  popSuspenseContext,
-  type SuspenseContext,
-} from './suspense-context.js';
-
 // Dev & observability
 export { onError, __DEV__, type ErrorHandler } from './dev.js';
 

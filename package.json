@@ -160,6 +160,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:coverage": "vitest run --coverage",
+    "bench": "node scripts/bench.mjs",
+    "bench:doc": "node scripts/bench.mjs --runs 5 --json docs/performance-baseline.json --doc",
+    "bench:compare": "node scripts/bench.mjs --runs 5 --compare docs/performance-baseline.json",
     "test:e2e": "npm run build && node -e \"require('fs').copyFileSync('dist/formajs-runtime.global.js','e2e/fixtures/formajs-runtime.global.js')\" && npx playwright test",
     "docs": "typedoc",
     "prepublishOnly": "npm run build"

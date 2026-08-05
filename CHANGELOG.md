@@ -75,6 +75,22 @@ promise rather than the other way round.
 
 ### Added
 
+- **A hot-path benchmark suite** — `bench/*.bench.ts`, run with `npm run bench`
+  (`bench:doc` regenerates the table, `bench:compare` diffs against the committed
+  `docs/performance-baseline.json`). It covers signal-write → effect-flush,
+  `h()` attribute writes split by which guards they pay for, `createList` render
+  and keyed reconciliation, SSR adoption, island activation through both props
+  channels, `renderToString`, and the CSP-safe interpreter against the
+  `new Function` path it replaced. Every row reports median, p95 and run-to-run
+  spread, so a later comparison can tell a regression from noise. Results,
+  method, and a per-guard A/B against the pre-hardening tree are in
+  [docs/PERFORMANCE.md](docs/PERFORMANCE.md).
+- **Two regressions the hardening introduced are now measured and documented**
+  rather than suspected: routing every list-row removal through
+  `deactivateIslandsIn` costs ~15 µs per removed row (a `querySelectorAll` per
+  row, +206% on a 1000-row teardown), and `handleGenericAttr` running the URL
+  scheme check *before* its identity cache costs +50 ns on every no-op reactive
+  URL write. Both have named fixes in the doc that keep the safety.
 - **`sanitizePropsDeep(props)`** (root entry): strips `__proto__` /
   `constructor` / `prototype` at every depth, iteratively and cycle-safe. Island
   props remain **shallow-sanitized by default** — call this yourself before

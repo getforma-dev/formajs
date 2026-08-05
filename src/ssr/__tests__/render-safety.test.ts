@@ -12,13 +12,13 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderToString, renderAttr, sh } from '../render.js';
-import { renderToStreamNew } from '../stream.js';
+import { renderToStream } from '../stream.js';
 
 const SVG_PAYLOAD = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>';
 
 async function stream(node: unknown): Promise<string> {
   const chunks: string[] = [];
-  for await (const chunk of renderToStreamNew(node, { injectSwapScript: false })) {
+  for await (const chunk of renderToStream(node, { injectSwapScript: false })) {
     chunks.push(chunk);
   }
   return chunks.join('');

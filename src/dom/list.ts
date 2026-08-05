@@ -62,7 +62,11 @@ export interface CreateListOptions {
 /**
  * Find the longest increasing subsequence.
  * Returns indices into the input array.
- * O(n log n) time, O(n) space.
+ * O(n log n) time, O(n) space — patience sorting with a binary search for each
+ * insertion point.
+ *
+ * Verified by: src/dom/__tests__/list-lis.test.ts > "agrees with a brute-force LIS on random inputs"
+ * Verified by: src/dom/__tests__/list-lis.test.ts > "runs in O(n log n), not O(n²)"
  */
 export function longestIncreasingSubsequence(arr: number[]): number[] {
   const n = arr.length;

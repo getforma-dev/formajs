@@ -154,6 +154,7 @@ function loadSharedProps(root: ParentNode): Record<string, unknown> | null {
  *                  shadow subtree can share the page-level block.
  *
  * Verified by: src/dom/__tests__/activate-isolation.test.ts > "activates islands inside a shadow root when one is passed as root"
+ * Verified by: src/dom/__tests__/activate.test.ts > "error in island 0 does not prevent island 1 from activating"
  */
 export function activateIslands(
   registry: Record<string, IslandHydrateFn>,
@@ -170,6 +171,10 @@ export function activateIslands(
     // double-hydrate, double-bind handlers, or double-register observers. A
     // freshly re-rendered island (status reset to 'pending', no scheduled
     // marker) re-activates.
+    // Verified by: src/dom/__tests__/activate-reactivate.test.ts > "does not re-run a load island when activateIslands is called twice"
+    // Verified by: src/dom/__tests__/activate-reactivate.test.ts > "does not attach duplicate handlers on re-activation"
+    // Verified by: src/dom/__tests__/activate-reactivate.test.ts > "does not double-register a visible-trigger observer on re-invocation"
+    // Verified by: src/dom/__tests__/activate-reactivate.test.ts > "re-activates a freshly re-rendered island (status reset to pending)"
     const status = island.getAttribute('data-forma-status');
     if (status === 'active' || status === 'hydrating' || status === 'disposed' || status === 'error') continue;
     if ((island as any).__formaScheduled) continue;
@@ -245,12 +250,16 @@ export function activateIslands(
  *
  * Safe to call multiple times (idempotent). Sets `data-forma-status` to
  * `"disposed"` so the island can be distinguished from active/error states.
+ *
+ * Verified by: src/dom/__tests__/deactivate.test.ts > "is idempotent — double disposal does not throw"
+ * Verified by: src/dom/__tests__/deactivate.test.ts > "stops effects from running after disposal"
  */
 export function deactivateIsland(el: HTMLElement): void {
   // Tear down any pending deferred-trigger work so it does not leak when the
   // island is torn down before it ever ran: the visible-trigger observer, and
   // the interaction-trigger pointerdown/focusin listeners (whose only other
   // removal path is inside a hydrate that may never fire).
+  // Verified by: src/dom/__tests__/activate-visible-leak.test.ts > "disconnects the observer when the island is deactivated before intersecting"
   const observer = (el as any).__formaObserver as { disconnect: () => void } | undefined;
   if (observer) {
     observer.disconnect();
@@ -270,6 +279,7 @@ export function deactivateIsland(el: HTMLElement): void {
   delete (el as any).__formaScheduled;
   // Mark disposed so any deferred callback that still fires (e.g. a timer that
   // could not be cancelled) cannot resurrect a torn-down island.
+  // Verified by: src/dom/__tests__/activate-visible-leak.test.ts > "a deferred callback that fires after disposal cannot resurrect the island"
   (el as any).__formaDisposed = true;
 
   const dispose = (el as any).__formaDispose;

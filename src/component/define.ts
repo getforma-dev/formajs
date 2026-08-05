@@ -21,7 +21,11 @@ export type SetupFn = () => HTMLElement | DocumentFragment;
 export interface ComponentDef {
   /** The setup function that builds the component's DOM and reactive bindings. */
   setup: SetupFn;
-  /** Optional debug name for devtools inspection. */
+  /**
+   * Optional debug name. It prefixes the `source` of any error reported from
+   * this component's lifecycle (`onMount`, `onUnmount`, disposers), so an
+   * onError handler can say which component failed.
+   */
   name?: string;
 }
 
@@ -120,8 +124,14 @@ export function defineComponent(
 ): () => HTMLElement | DocumentFragment {
   const setup: SetupFn =
     typeof setupOrDef === 'function' ? setupOrDef : setupOrDef.setup;
+  // `name` exists to make a lifecycle failure identifiable. It was read here
+  // and then never used, so the "optional debug name" in ComponentDef bought a
+  // caller nothing at all; it is now the prefix on every reportError source
+  // below, which is the only place a component identity is ever needed.
+  // Verified by: src/component/__tests__/define.test.ts > "names the component in a lifecycle error report"
   const name: string | undefined =
     typeof setupOrDef === 'function' ? undefined : setupOrDef.name;
+  const where = (phase: string): string => (name ? `${name}: ${phase}` : phase);
 
   return function componentFactory(): HTMLElement | DocumentFragment {
     // Create a fresh lifecycle context for this component instance
@@ -153,6 +163,7 @@ export function defineComponent(
     // Build the dispose function that tears down the entire component.
     // Idempotent: a fragment stamps DISPOSE_KEY on multiple children, all sharing
     // this one function, so it must run at most once.
+    // Verified by: src/component/__tests__/component-lifecycle.test.ts > "is idempotent across multiple stamped children"
     let disposed = false;
     const dispose = (): void => {
       if (disposed) return;
@@ -163,7 +174,7 @@ export function defineComponent(
         try {
           cb();
         } catch (e) {
-          reportError(e, 'onUnmount');
+          reportError(e, where('onUnmount'));
         }
       }
 
@@ -172,7 +183,7 @@ export function defineComponent(
         try {
           d();
         } catch (e) {
-          reportError(e, 'component disposer');
+          reportError(e, where('component disposer'));
         }
       }
 
@@ -181,7 +192,7 @@ export function defineComponent(
         try {
           ctx.contextDisposers[i]!();
         } catch (e) {
-          reportError(e, 'context disposer');
+          reportError(e, where('context disposer'));
         }
       }
 
@@ -216,7 +227,7 @@ export function defineComponent(
             ctx.unmountCallbacks.push(cleanup);
           }
         } catch (e) {
-          reportError(e, 'onMount');
+          reportError(e, where('onMount'));
         }
       }
     } finally {

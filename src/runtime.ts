@@ -43,12 +43,13 @@
  * signals, h(), mount, stores, etc. The main entry has zero network code.
  * HTTP/storage/server are at @getforma/core/http, /storage, /server.
  *
- * Usage (CDN):
- *   <script src="https://unpkg.com/@getforma/core@1.0.1/dist/formajs-runtime.global.js"></script>
+ * Usage (CDN — the pin below tracks the published package version):
+ *   <script src="https://unpkg.com/@getforma/core@1.5.0/dist/formajs-runtime.global.js"></script>
  *   <div data-forma-state='{"count": 0}'>
  *     <p data-text="{count}"></p>
  *     <button data-on:click="{count++}">+1</button>
  *   </div>
+ * Verified by: src/__tests__/docs-truth.test.ts > "the runtime header's CDN pin is the current package version"
  *
  * Build outputs from this source file:
  *   dist/runtime.js                        ESM (import '@getforma/core/runtime')
@@ -59,20 +60,40 @@
  *
  * ── FILE MAP ──────────────────────────────────────────────────────────
  *
- *   Line ~140-200   Attribute safety, core types & scope (Scope, createChildScope)
- *   Line ~202-470   Configuration & diagnostics (debug, unsafe-eval policy, config)
- *   Line ~471-576   Performance utilities (yieldToMain, containment hints)
- *   Line ~578-710   Regexes, caches, security blocklist (findBlockedMethod)
- *   Line ~711-1230  Parsing utilities (splitCallArgs, readBalancedSegment, if-handler)
- *   Line ~1231-1330 Template compilation (data-list templates)
- *   Line ~1331-1682 CSS Transitions (parse, run, enter/leave phases)
- *   Line ~1683-2095 CSP-safe expression parser (chained access, operators, literals)
- *   Line ~2096-2475 Evaluator & handler builder (CSP path + opt-in eval fallback)
- *   Line ~2476-2568 State initialization & safe $el proxy
- *   Line ~2569-3107 bindElement() — the central directive processor
- *   Line ~3108-3399 MutationObserver, directive map, mountScope/unmountScope
- *   Line ~3400-3529 Init/destroy, mount/unmount, public API setters
- *   Line ~3530-3650 DevTools API, reconciler bridge, exports
+ * Search for the marker, not a line number. This map used to carry line
+ * ranges; they were four sections out of date by the time anyone read them,
+ * which is the failure mode of every hand-maintained line index. The names
+ * below are the literal `// ── … ──` markers in this file, in order, and a
+ * test fails if one is renamed, removed, or moved out of order.
+ *
+ *   Attribute safety & scope                  isUnsafeAttrBinding, Scope, createChildScope
+ *   $refetch registry                         imperative data-fetch triggers
+ *   Debug logger                              dbg(), window.__FORMA_DEBUG
+ *   Configuration & diagnostics               unsafe-eval policy, RuntimeDiagnostic
+ *   Performance utilities                     yieldToMain, applyContainmentHints
+ *   Pre-compiled regexes                      hot-path RegExp literals
+ *   Expression factory cache                  parseExpression memoization
+ *   Compiled template cache                   data-list template compilation
+ *   Security blocklist                        UNSAFE_METHOD_NAMES, findBlockedMethod
+ *   Parsing utilities                         splitCallArgs, readBalancedSegment
+ *   Template text caching for data-list       clone + interpolate list rows
+ *   CSS Transitions                           parse spec, enter/leave phases
+ *   Chained access / optional chaining parser  parseChainedAccess
+ *   CSP-safe expression parser                operators, literals, member access
+ *   Expression evaluator                      buildEvaluator (+ opt-in eval fallback)
+ *   CSP-safe handler parser                   parseHandler, buildHandler
+ *   State initialization                      parseState, initScope
+ *   DOM scanner                               directive discovery
+ *   Safe $el proxy                            SAFE_EL_PROPS allowlist
+ *   Element binding                           bindElement — the directive processor
+ *   Scope mounting / unmounting               mountScope, unmountScope
+ *   Pre-compiled Directive Map                server-supplied directive sidecar
+ *   MutationObserver                          auto-discovery of new scopes
+ *   Main init                                 initRuntime/destroyRuntime, mount/unmount
+ *   DevTools API — State Inspector            getScopes, setScopeValue, resetScope
+ *   Reconciler                                createReconciler bridge, exports
+ *
+ * Verified by: src/__tests__/docs-truth.test.ts > "the runtime file map names every section marker, in order"
  *
  * ── SUPPORTED DIRECTIVES ──────────────────────────────────────────────
  *
@@ -138,6 +159,8 @@ import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 
+// ── Attribute safety & scope ──
+
 /**
  * True if writing `value` to attribute `name` on a `<tag>` element via
  * setAttribute would create an XSS sink: an `on*` inline event handler, or a
@@ -201,6 +224,8 @@ function createChildScope(parent: Scope, locals: Record<string, unknown>): Scope
 
 // ── Debug logger — enable via FormaRuntime.debug = true or window.__FORMA_DEBUG = true ──
 let _debug = false;
+
+// ── Configuration & diagnostics ──
 
 /**
  * Policy for the `new Function()` fallback that runs when the CSP-safe parser
@@ -487,6 +512,8 @@ if (typeof runtimeConfig.diagnostics === 'boolean') {
 }
 const _autoContainment = runtimeConfig.autoContainment === true;
 
+// ── Performance utilities ──
+
 interface SchedulerLike {
   yield?: () => Promise<unknown>;
   postTask?: (
@@ -584,7 +611,6 @@ const RE_STRING_DOUBLE = /^"[^"]*"$/;
 const RE_NUMBER = /^-?\d+(\.\d+)?$/;
 const RE_IDENTIFIER = /^[a-zA-Z_$]\w*$/;
 const RE_DOT_ACCESS = /^(\w+)\.(\w+)$/;
-const RE_DEEP_DOT = /^(\w+)\.(\w+)\.(\w+)(?:\.(\w+))?$/;
 const RE_BRACKET = /^(\w+)\[(\d+|'[^']*'|"[^"]*")\]$/;
 const RE_TERNARY = /^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$/;
 const RE_NULLISH = /^(.+?)\s*\?\?\s*(.+)$/;
@@ -650,10 +676,8 @@ function matchBinaryOp(
 }
 const RE_TEMPLATE_LIT = /^`([^`]*)`$/;
 const RE_TEMPLATE_INTERP = /\$\{([^}]+)\}/g;
-const RE_METHOD_CALL = /^(\w+)\.(\w+)\((.*)\)$/;
 const RE_GROUP_METHOD_CALL = /^\((.+)\)\.(\w+)\((.*)\)$/;
 const RE_STRIP_BRACES = /^\{|\}$/g;
-const RE_ITEM_TEMPLATE = /\{item\.?(\w*)\}/g;
 const RE_DIGIT_ONLY = /^\d+$/;
 const RE_POST_INCR = /^(\w+)(\+\+|--)$/;
 const RE_PRE_INCR = /^(\+\+|--)(\w+)$/;
@@ -728,6 +752,8 @@ function cacheCompiledTemplate(key: string, template: CompiledTemplate): void {
   }
   compiledTemplateCache.set(key, template);
 }
+// ── Security blocklist ──
+
 const UNSAFE_METHOD_NAMES = new Set([
   'constructor', '__proto__', 'prototype',
   '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
@@ -865,6 +891,8 @@ function setElementTextFast(el: Element, next: string): void {
   cache.last = next;
   cache.initialized = true;
 }
+
+// ── Parsing utilities ──
 
 function splitCallArgs(raw: string): string[] {
   const out: string[] = [];
@@ -1236,15 +1264,6 @@ function compileTemplate(text: string): CompiledTemplate {
 const templateTexts = new WeakMap<Node, CompiledTemplate>();
 
 /**
- * Resolve template placeholders in a text string using pre-compiled template.
- * Concatenates static segments with evaluated dynamic segments.
- */
-function resolveTemplate(text: string, item: unknown): string {
-  const compiled = compileTemplate(text);
-  return evaluateCompiledTemplate(compiled, item);
-}
-
-/**
  * Evaluate a pre-compiled template against an item.
  * Only evaluates dynamic parts and concatenates with static segments.
  */
@@ -1329,6 +1348,8 @@ function splitClassTokens(raw: string | null): string[] {
     .map((t) => t.trim())
     .filter(Boolean);
 }
+
+// ── CSS Transitions ──
 
 function parseDurationTokenMs(token: string): number | null {
   const t = token.trim().toLowerCase();
@@ -2479,8 +2500,22 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
 
 const FORBIDDEN_STATE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+/**
+ * Parse a `data-forma-state` attribute into the plain object a scope is built
+ * from. Anything else — invalid JSON, but equally the *valid* JSON values
+ * `null`, `7`, `"str"` and `[1,2]` — yields `{}`.
+ *
+ * Rejecting the valid-but-wrong-shape values is not tidiness. `initScope` feeds
+ * the result to `Object.entries`, and the pollution sweep below uses `in`,
+ * which throws a TypeError on a primitive: `data-forma-state='null'` on ONE
+ * element used to throw out of parseState, out of `mount()`, and leave every
+ * other scope on the page unbound.
+ *
+ * Verified by: src/__tests__/runtime-state-parsing.test.ts > "a JSON scalar in data-forma-state does not stop the rest of the page from binding"
+ * Verified by: src/__tests__/runtime-state-parsing.test.ts > "treats every non-object JSON value as empty state"
+ */
 function parseState(raw: string): Record<string, unknown> {
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
@@ -2489,11 +2524,21 @@ function parseState(raw: string): Record<string, unknown> {
     }
     return {};
   }
-  // Strip prototype-pollution keys
-  for (const key of FORBIDDEN_STATE_KEYS) {
-    if (key in parsed) delete parsed[key];
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    if (_debug) {
+      dbg('parseState: data-forma-state must be a JSON object. Got:', raw.slice(0, 200));
+    }
+    return {};
   }
-  return parsed;
+  const state = parsed as Record<string, unknown>;
+  // Strip prototype-pollution keys. JSON.parse materializes `"__proto__"` as a
+  // real own property, so this delete is not a no-op the way it would be for an
+  // object literal.
+  // Verified by: src/__tests__/runtime-state-parsing.test.ts > "a __proto__ key in data-forma-state never reaches Object.prototype"
+  for (const key of FORBIDDEN_STATE_KEYS) {
+    if (Object.hasOwn(state, key)) delete state[key];
+  }
+  return state;
 }
 
 // ── DOM scanner ──
@@ -2508,8 +2553,16 @@ function initScope(stateEl: Element): Scope {
       dbg('initScope: WARNING — empty state! Raw attribute:', raw.slice(0, 200));
     }
   }
-  const getters: Record<string, Getter> = {};
-  const setters: Record<string, Setter> = {};
+  // Null-prototype, so an expression naming a member of Object.prototype does
+  // not resolve to one. With a `{}` literal here, `data-text="{constructor}"`
+  // read `Object` off the prototype chain and the parser's `getters[expr]?.()`
+  // CALLED it — the same reach applied to `toString`, `valueOf` and
+  // `hasOwnProperty`. That is the sandbox escape the FORBIDDEN_STATE_KEYS sweep
+  // in parseState only looked like it closed: it strips the keys from the
+  // parsed state, but inheritance put them back on the scope.
+  // Verified by: src/__tests__/runtime-state-parsing.test.ts > "an expression naming an Object.prototype member reads undefined, not the prototype"
+  const getters: Record<string, Getter> = Object.create(null);
+  const setters: Record<string, Setter> = Object.create(null);
 
   for (const [key, initial] of Object.entries(state)) {
     const [get, set] = createSignal(initial);
@@ -2567,6 +2620,8 @@ function createSafeElProxy(el: Element): Element {
     },
   });
 }
+
+// ── Element binding ──
 
 function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void {
   // Inject per-element magics: $el and $dispatch
@@ -3110,21 +3165,15 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
 // ── Scope mounting / unmounting (single data-forma-state element) ──
 
 /**
- * Mount a single `data-forma-state` element — creates signals, binds
- * all descendants, stores disposers on the element for cleanup.
- * Idempotent: skips elements that are already mounted.
+ * Fast check: does this element have any Forma directive attribute?
+ *
+ * This is the fallback scan, used when the server sent no directive map. It
+ * replaced a `DIRECTIVE_SELECTOR` constant that claimed to "avoid scanning
+ * every descendant" while being referenced by nothing: mountScope has always
+ * called querySelectorAll('*') and filtered with this predicate. The targeted
+ * selector the claim described is the one buildDirectiveSelector() constructs
+ * from the server's map.
  */
-/** CSS selector matching elements with at least one Forma directive.
- *  Avoids scanning every descendant — only visits directive-bearing elements. */
-const DIRECTIVE_SELECTOR = [
-  '[data-text]', '[data-show]', '[data-if]', '[data-model]',
-  '[data-computed]', '[data-persist]', '[data-list]', '[data-fetch]',
-  '[data-bind\\:*]', '[data-class\\:*]', '[data-on\\:*]',
-  // Catch-all for colon-prefixed data attrs that the escaped selectors miss in some engines
-  '[data-transition]',
-].join(',');
-
-/** Fast check: does this element have any Forma directive attribute? */
 function hasDirective(el: Element): boolean {
   const attrs = el.attributes;
   for (let i = 0; i < attrs.length; i++) {
