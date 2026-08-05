@@ -103,7 +103,10 @@
  *     data-fetch-id="name"               Register for $refetch('name')
  *
  *   Configuration (on <script> tag):
- *     data-forma-unsafe-eval="true"      Enable new Function() fallback
+ *     data-forma-unsafe-eval="false"     Disable the new Function() fallback
+ *                                        (the standard build ships with it
+ *                                        ENABLED by default; only the hardened
+ *                                        build compiles it out entirely)
  *     data-forma-diagnostics="true"      Enable expression diagnostics
  *     data-forma-auto-containment="true" Enable CSS containment hints
  *
@@ -2039,7 +2042,12 @@ function buildEvaluator(expr: string, scope: Scope): () => unknown {
   if (blockedMethod) {
     const msg = `Blocked unsafe method "${blockedMethod}" in expression`;
     reportDiagnostic('expression-unsupported', cleaned, msg);
-    throw new Error(`[FormaJS] ${msg}: ${cleaned}`);
+    // Degrade to a noop (matching the CSP-unsupported path above) instead of
+    // throwing — a throw here would propagate out of initRuntime and prevent
+    // every other directive on the page from binding.
+    const blocked = () => undefined;
+    cache.set(cleaned, blocked);
+    return blocked;
   }
 
   try {
@@ -2222,7 +2230,15 @@ function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
   if (blockedMethod) {
     const msg = `Blocked unsafe method "${blockedMethod}" in handler`;
     reportDiagnostic('handler-unsupported', cleaned, msg);
-    throw new Error(`[FormaJS] ${msg}: ${cleaned}`);
+    // Degrade to a noop (matching the CSP-unsupported path above) instead of
+    // throwing — a throw here would propagate out of initRuntime and prevent
+    // every other directive on the page from binding.
+    const result: HandlerBuildResult = {
+      handler: () => {},
+      supported: false,
+    };
+    cache.set(cleaned, result);
+    return result;
   }
 
   try {

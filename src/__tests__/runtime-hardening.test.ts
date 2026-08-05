@@ -70,84 +70,79 @@ describe('runtime unsafe-eval hardening', () => {
     expect(container.querySelector('#out')?.textContent).toBe('0');
   });
 
-  it('blocks constructor in new Function path', () => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
-
+  // A blocked expression must not execute, and it must not take the rest of the
+  // page down with it: every case below asserts the neutered handler AND that a
+  // sibling directive on the same scope still binds. `data-text` rendering "0"
+  // is the proof that mount() finished instead of aborting on the first throw.
+  async function mountWithBlockedHandler(clickExpr: string): Promise<HTMLDivElement> {
     // Build container off-document to avoid MutationObserver auto-mount race
     const offscreen = document.createElement('div');
     offscreen.innerHTML = `
       <div data-forma-state='{"x":0}'>
-        <button id="btn" data-on:click="{x.constructor('alert(1)')()}">hack</button>
+        <button id="btn" data-on:click="${clickExpr}">hack</button>
+        <p id="out" data-text="{x}"></p>
       </div>
     `;
 
     expect(() => {
       mount(offscreen);
-    }).toThrow(/Blocked unsafe method "constructor"/);
-  });
+    }).not.toThrow();
+    await waitForEffects();
 
-  it('catches template literal bracket access bypass attempt', () => {
+    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
+    (offscreen.querySelector('#btn') as HTMLButtonElement).click();
+    await waitForEffects();
+
+    return offscreen;
+  }
+
+  it('blocks constructor in new Function path', async () => {
     setUnsafeEvalMode('mutable');
     setUnsafeEval(true);
 
-    const offscreen = document.createElement('div');
-    offscreen.innerHTML = `
-      <div data-forma-state='{"x":0}'>
-        <button id="btn" data-on:click="{x[\`constructor\`]('alert(1)')()}">hack</button>
-      </div>
-    `;
+    const offscreen = await mountWithBlockedHandler("{x.constructor('alert(1)')()}");
 
-    expect(() => {
-      mount(offscreen);
-    }).toThrow(/Blocked unsafe method "constructor"/);
+    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
+    unmount(offscreen);
   });
 
-  it('catches comment injection bypass attempt', () => {
+  it('catches template literal bracket access bypass attempt', async () => {
     setUnsafeEvalMode('mutable');
     setUnsafeEval(true);
 
-    const offscreen = document.createElement('div');
-    offscreen.innerHTML = `
-      <div data-forma-state='{"x":0}'>
-        <button id="btn" data-on:click="{x./**/constructor('alert(1)')()}">hack</button>
-      </div>
-    `;
+    const offscreen = await mountWithBlockedHandler("{x[\`constructor\`]('alert(1)')()}");
 
-    expect(() => {
-      mount(offscreen);
-    }).toThrow(/Blocked unsafe method "constructor"/);
+    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
+    unmount(offscreen);
   });
 
-  it('blocks .Function() access in handler', () => {
+  it('catches comment injection bypass attempt', async () => {
     setUnsafeEvalMode('mutable');
     setUnsafeEval(true);
 
-    const offscreen = document.createElement('div');
-    offscreen.innerHTML = `
-      <div data-forma-state='{"x": 0}'>
-        <button id="btn" data-on:click="x.Function('return 1')()">go</button>
-      </div>
-    `;
+    const offscreen = await mountWithBlockedHandler("{x./**/constructor('alert(1)')()}");
 
-    expect(() => {
-      mount(offscreen);
-    }).toThrow(/Blocked unsafe method "Function"/);
+    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
+    unmount(offscreen);
   });
 
-  it('blocks .__proto__ access in handler', () => {
+  it('blocks .Function() access in handler', async () => {
     setUnsafeEvalMode('mutable');
     setUnsafeEval(true);
 
-    const offscreen = document.createElement('div');
-    offscreen.innerHTML = `
-      <div data-forma-state='{"x": 0}'>
-        <button id="btn" data-on:click="x.__proto__.polluted = true">go</button>
-      </div>
-    `;
+    const offscreen = await mountWithBlockedHandler("x.Function('return 1')()");
 
-    expect(() => {
-      mount(offscreen);
-    }).toThrow(/Blocked unsafe method "__proto__"/);
+    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
+    unmount(offscreen);
+  });
+
+  it('blocks .__proto__ access in handler', async () => {
+    setUnsafeEvalMode('mutable');
+    setUnsafeEval(true);
+
+    const offscreen = await mountWithBlockedHandler('x.__proto__.polluted = true');
+
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+    unmount(offscreen);
   });
 });
