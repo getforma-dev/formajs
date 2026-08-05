@@ -365,6 +365,10 @@ Everything above works without the Rust compiler. You can build a complete appli
 | Standard JS bundle shipped to the client | Components compile to FMIR (Forma Module IR), a compact binary format sent over the wire |
 | Islands hydrate from HTML + JS | Islands hydrate from FMIR binary — smaller payload, faster parse |
 
+> **Supported pattern — per-item dynamic attributes.** Inside a `createList` item body, an attribute value that is a bare member read of the item parameter (`src: item.art`, or `String(item.art)`) compiles to a *named* per-item dyn-attr slot: SSR emits the attribute from the injected data, and the client re-derives it per item. Any other computed expression (e.g. `item.art + "?w=300"`) compiles to an `attr:<key>` slot with **no SSR value**: the attribute renders empty on the server, and because adoption skips non-function props, adopted rows keep that empty attribute — it only resolves on client-rendered rows. If you need a per-item attribute visible in SSR output, use a bare member read or precompute the derived field server-side (e.g. inject `item.artUrl`).
+
+> **Slot naming for server-side injection.** Slots are named after the binding that feeds them: a list bound to a signal `padTiles` becomes `list:padTiles:array`; a show bound to a condition `visible()` becomes `show:visible`. When the same binding feeds multiple slots, repeats get `#2`, `#3`, … suffixes in document order. Literal or computed sources with no single named binding fall back to derived or positional names. This is the `@getforma/compiler` naming contract — the authoritative reference lives in the `forma-tools` repo.
+
 ### When to add it
 
 You don't need the compiler to get started, prototype, or even ship to production. Add it when:
@@ -483,16 +487,21 @@ createSwitch(
 import { createSignal, createList, h } from "@getforma/core";
 
 const [items, setItems] = createSignal([
-  { id: 1, name: "Alice" },
-  { id: 2, name: "Bob" },
+  { id: 1, name: "Alice", art: "/covers/alice.jpg" },
+  { id: 2, name: "Bob", art: "/covers/bob.jpg" },
 ]);
 
 createList(
   items,
   (item) => item.id,
-  (item) => h("li", null, item.name),
+  (item) => h("li", null,
+    h("img", { src: item.art, alt: item.name }),
+    item.name,
+  ),
 );
 ```
+
+Static item fields (`src: item.art`) bake into the element when the row renders — the row is re-created when its key changes. Function props (`src: () => coverUrl()`) are reactive and update the attribute in place.
 
 ### Store (Deep Reactivity)
 
@@ -664,6 +673,94 @@ activateIslands({
 ```
 
 Each island runs in its own `createRoot` scope with error isolation — a broken island never takes down its siblings.
+
+### SSR with Server Data
+
+When the server renders an island with real data, the island's signals **must initialize from the `props` argument** — `createSignal(props?.x ?? fallback)` — never from a bare client-side default. That is why the Counter above seeds `createSignal(props?.initial ?? 0)` instead of `createSignal(0)`.
+
+The reason is mechanical: adoption binds server-rendered text to your signals through effects, and an effect's first run **writes the current client signal value over the server-rendered text**. List adoption goes further — SSR rows whose keys are missing from the client array are **removed**. Seed a signal with an empty client default and the hydrated page silently erases the server's data on load.
+
+In dev builds this mismatch is loud. Grep your console for these warnings:
+
+```
+[FormaJS] Hydration: list item key "…" not found in SSR — rendering fresh
+[FormaJS] Hydration: removing extra SSR list item with key "…"
+```
+
+#### Getting props to the island
+
+**Mode 1 — inline attribute** (small props, < 1KB). JSON in `data-forma-props` on the island root:
+
+```html
+<div data-forma-island="0" data-forma-component="Counter" data-forma-props='{"initial": 5}'>
+  <span>5</span>
+  <button>+1</button>
+</div>
+```
+
+**Mode 2 — shared script block** (larger props, or many islands on one page). A single JSON block for the whole page, keyed by each island's id (the `data-forma-island` value) as a decimal string:
+
+```html
+<div data-forma-island="0" data-forma-component="TrackList">
+  <!-- server-rendered rows -->
+</div>
+
+<script id="__forma_islands" type="application/json">
+{"0": {"items": [{"id": 1, "name": "Track 1"}, {"id": 2, "name": "Track 2"}]}}
+</script>
+```
+
+Because the block is `type="application/json"`, the browser treats it as inert data and never executes it — no `unsafe-inline` script needed, CSP-friendly. Both channels sanitize top-level `__proto__` / `constructor` / `prototype` keys before your island sees the props (the check is shallow — keys nested inside child objects pass through). An island with an inline `data-forma-props` attribute ignores the script block.
+
+#### Server-rendered lists
+
+Server rows carry `data-forma-key` matching the `keyFn` output, wrapped in a `<!--f:l0-->` / `<!--/f:l0-->` marker pair that delimits the list region:
+
+```html
+<div data-forma-island="0" data-forma-component="TrackList">
+  <ul>
+    <!--f:l0-->
+    <li data-forma-key="1">Track 1</li>
+    <li data-forma-key="2">Track 2</li>
+    <!--/f:l0-->
+  </ul>
+</div>
+
+<script id="__forma_islands" type="application/json">
+{"0": {"items": [{"id": 1, "name": "Track 1"}, {"id": 2, "name": "Track 2"}]}}
+</script>
+```
+
+The client island seeds a signal from `props.items` and passes it to `createList`:
+
+```ts
+import { activateIslands, createSignal, createList, h } from "@getforma/core";
+
+activateIslands({
+  TrackList: (el, props) => {
+    // Seed from server data — NOT createSignal([])
+    const [items, setItems] = createSignal(props?.items ?? []);
+
+    // Root must match the island root (<div data-forma-island="0">) —
+    // a tag mismatch makes adoption bail and re-render fresh.
+    return h("div", null,
+      h("ul", null,
+        createList(
+          items,
+          (item) => item.id,
+          (item) => h("li", null, item.name),
+        ),
+      ),
+    );
+  },
+});
+```
+
+Keys are compared as strings — `data-forma-key="1"` matches `(item) => item.id` for `id: 1`. Matched rows are adopted in place without re-rendering; unmatched client items render fresh, and unmatched SSR rows are removed (the two warnings above). If **no** row carries `data-forma-key`, adoption falls back to index-based matching — fine for lists that never reorder, but keyed rows survive reorders.
+
+#### Server data flow
+
+The server renders the HTML and emits the matching props (inline or script block) from the same data. On the client, `activateIslands` parses the props *before* your island callback runs; the callback seeds signals from them, and adoption then binds that already-correct state onto the existing DOM — when the first effects run, they write the same values the server rendered, so nothing visibly changes. Live updates after hydration (polling, websockets, user input) flow through the same signals — `setItems(fresh)` reconciles rows in place — zero clobber.
 
 ### Hydration Triggers
 
