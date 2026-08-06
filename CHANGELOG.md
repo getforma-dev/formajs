@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0] - 2026-08-06
+
 A hardening release. A five-lens audit of 1.5.0 (docs-vs-behaviour, security,
 reactive-core correctness, packaging, downstream contract) produced 38 confirmed
 findings; this entry is the result of fixing them. The theme is that several

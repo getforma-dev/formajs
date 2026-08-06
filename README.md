@@ -52,11 +52,11 @@ Or use a CDN — no build step, no bundler:
 <script src="https://unpkg.com/@getforma/core/dist/formajs-runtime.global.js"></script>
 ```
 
-> **Production:** Pin the version (e.g., `@getforma/core@1.5.0`) instead of `@latest`.
+> **Production:** Pin the version (e.g., `@getforma/core@2.0.0`) instead of `@latest`.
 
 Any bundler works — Vite, esbuild, tsup, webpack, Rollup. FormaJS ships standard ESM and CJS via `package.json` exports. No plugins, no special config. For JSX, set `jsx: "react"`, `jsxFactory: "h"`, `jsxFragmentFactory: "Fragment"`.
 
-Gzipped sizes, measured by `npm run check:size` on the 1.5.0 build on 2026-08-06 (that script walks the real ESM import graph, so shared chunks are weighed, and CI fails the build if any entry exceeds its limit):
+Gzipped sizes, measured by `npm run check:size` on the 2.0.0 build on 2026-08-06 (that script walks the real ESM import graph, so shared chunks are weighed, and CI fails the build if any entry exceeds its limit):
 
 | Artifact | Gzipped | CI limit |
 |---|---|---|
@@ -84,7 +84,7 @@ All three share the same signal graph and reactive engine. Pick one, or mix them
 JSX compiles to `h()` — same function, no JSX-specific runtime. The HTML runtime reads `data-*` attributes out of the page and wires them to the same signals.
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.0/dist/formajs-runtime.global.js"></script>
 
 <div data-forma-state='{ "count": 0 }'>
   <p data-text="{count}"></p>

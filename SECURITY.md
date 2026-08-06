@@ -152,7 +152,7 @@ All dist output is syntax-minified only: constant folding and dead-branch remova
 
 Verified by: `src/__tests__/build-config.test.ts` > "enables syntax minification everywhere so the build-time flags fold"
 
-## Security Hardening (v0.5.0 – 1.5.0)
+## Security Hardening (v0.5.0 – 2.0.0)
 
 - **`$el` safe proxy** (0.7.0, superseded): allowlisted `$el` reads through a Proxy. Superseded by the host-wrapper model above, which applies the same discipline to `$event` and `$refs` — the two the Proxy did not cover.
 - **`findBlockedMethod`** (0.7.0, removed): a static scan for `constructor`, `__proto__`, `eval` and `Function` in expression text, including bracket concatenation. Removed with the evaluator it guarded; a string scan cannot see `items[k]` where `k` arrives from server JSON, and the allowlist interpreter checks the evaluated key instead.
@@ -219,7 +219,8 @@ Stated here rather than left for a reader to discover:
 
 | Version | Supported |
 |---------|-----------|
-| 1.5.x | Yes |
-| 1.1.x – 1.4.x | Security fixes only |
-| 1.0.x | No — upgrade for the 1.1–1.5 correctness and RPC hardening |
+| 2.0.x | Yes |
+| 1.5.x | Security fixes only |
+| 1.1.x – 1.4.x | No — upgrade to 2.0 |
+| 1.0.x | No — upgrade for the 1.1–2.0 correctness, security and RPC hardening |
 | < 1.0 | No |

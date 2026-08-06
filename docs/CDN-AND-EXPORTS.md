@@ -2,7 +2,7 @@
 
 Which file to load, and what each entry point contains.
 
-> Every `@getforma/core@1.5.0` below is a real pin against the current release.
+> Every `@getforma/core@2.0.0` below is a real pin against the current release.
 > Pin a version in production rather than `@latest`; a CDN URL is a
 > dependency, and `@latest` is an unpinned one.
 
@@ -12,10 +12,10 @@ Which file to load, and what each entry point contains.
 
 ```html
 <!-- jsDelivr (recommended) -->
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.0/dist/formajs-runtime.global.js"></script>
 
 <!-- unpkg -->
-<script src="https://unpkg.com/@getforma/core@1.5.0/dist/formajs-runtime.global.js"></script>
+<script src="https://unpkg.com/@getforma/core@2.0.0/dist/formajs-runtime.global.js"></script>
 ```
 
 This is the HTML runtime: it scans the document for `data-*` directives and
@@ -31,14 +31,14 @@ are no bare specifiers and no code-split chunks for the browser to resolve.
 
 ```html
 <script type="module">
-  import { createSignal, h, mount } from "https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/forma.esm.js";
+  import { createSignal, h, mount } from "https://cdn.jsdelivr.net/npm/@getforma/core@2.0.0/dist/forma.esm.js";
 
   const [count, setCount] = createSignal(0);
   mount(() => h("button", { onClick: () => setCount((c) => c + 1) }, () => `${count()}`), "#app");
 </script>
 ```
 
-unpkg equivalent: `https://unpkg.com/@getforma/core@1.5.0/dist/forma.esm.js`
+unpkg equivalent: `https://unpkg.com/@getforma/core@2.0.0/dist/forma.esm.js`
 
 > **Do not mix `forma.esm.js` with the npm entry in one app.** It carries its
 > own private copy of the reactive core, so signals, the owner tree and the
