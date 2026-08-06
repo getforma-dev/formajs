@@ -46,7 +46,18 @@ describe('runtime performance utilities', () => {
     expect(section.style.getPropertyValue('contain-intrinsic-size')).toBe('');
   });
 
-  it('yields to main loop without throwing', async () => {
-    await expect(yieldToMain()).resolves.toBeUndefined();
+  it('yields the task, so work queued before it runs first', async () => {
+    // `await expect(yieldToMain()).resolves.toBeUndefined()` was the whole test.
+    // That passes for any `async () => {}` — including one that never yields,
+    // which is the entire point of the function. A yield is observable: a
+    // macrotask already on the queue must run BEFORE the code after the await.
+    const order: string[] = [];
+    setTimeout(() => order.push('macrotask'), 0);
+    Promise.resolve().then(() => order.push('microtask'));
+
+    await yieldToMain();
+    order.push('after-yield');
+
+    expect(order).toEqual(['microtask', 'macrotask', 'after-yield']);
   });
 });

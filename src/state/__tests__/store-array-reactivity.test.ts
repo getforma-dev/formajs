@@ -119,3 +119,51 @@ describe('createStore array reactivity (1.2.0)', () => {
     expect(state.todos.length).toBe(2);
   });
 });
+// ---------------------------------------------------------------------------
+// The full mutator allowlist, exercised through an OWN-PATH read
+// ---------------------------------------------------------------------------
+
+describe('createStore array mutator allowlist', () => {
+  // ARRAY_MUTATORS has nine entries; only six were exercised, and all through
+  // an inline index read (`state.items[0]`), which incidentally subscribes to
+  // the index signal. Deleting 'reverse'/'fill'/'copyWithin' from the list was
+  // therefore invisible. An effect that reads the array as a WHOLE — .join(),
+  // .map(), spread — subscribes to the array-version signal instead, and that
+  // is the signal the patch exists to bump.
+  const MUTATORS: Array<[name: string, apply: (a: number[]) => void, after: string]> = [
+    ['push', (a) => { a.push(9); }, '1,2,3,9'],
+    ['pop', (a) => { a.pop(); }, '1,2'],
+    ['shift', (a) => { a.shift(); }, '2,3'],
+    ['unshift', (a) => { a.unshift(0); }, '0,1,2,3'],
+    ['splice', (a) => { a.splice(1, 1); }, '1,3'],
+    ['sort', (a) => { a.sort((x, y) => y - x); }, '3,2,1'],
+    ['reverse', (a) => { a.reverse(); }, '3,2,1'],
+    ['fill', (a) => { a.fill(7, 1); }, '1,7,7'],
+    ['copyWithin', (a) => { a.copyWithin(0, 2); }, '3,2,3'],
+  ];
+
+  it.each(MUTATORS)('%s re-runs an effect that reads the whole array', (_name, apply, after) => {
+    const [state] = createStore({ items: [1, 2, 3] });
+    const seen: string[] = [];
+    internalEffect(() => { seen.push(state.items.join(',')); });
+
+    apply(state.items as unknown as number[]);
+
+    expect(seen).toEqual(['1,2,3', after]);
+    expect(state.items.join(',')).toBe(after);
+  });
+
+  it('a non-mutating array method does NOT re-run the effect', () => {
+    // The negative half: if every method call bumped the version, the guard
+    // would be doing nothing and this table would prove nothing.
+    const [state] = createStore({ items: [1, 2, 3] });
+    const seen: string[] = [];
+    internalEffect(() => { seen.push(state.items.join(',')); });
+
+    (state.items as unknown as number[]).slice(1);
+    (state.items as unknown as number[]).indexOf(2);
+    (state.items as unknown as number[]).concat([4]);
+
+    expect(seen).toEqual(['1,2,3']);
+  });
+});

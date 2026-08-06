@@ -10,7 +10,7 @@
  * FAIL until the reconciler is implemented (Task 4).
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mount, unmount, setUnsafeEval, reconcile, setDirectiveMap } from '../runtime';
+import { mount, unmount, reconcile, setDirectiveMap } from '../runtime';
 
 function waitForEffects(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -20,7 +20,6 @@ describe('reconciler', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
-    setUnsafeEval(true);
     container = document.createElement('div');
     document.body.appendChild(container);
   });
@@ -704,8 +703,13 @@ describe('reconciler', () => {
       `);
       await waitForEffects();
 
-      // Leaving element should still be in DOM (transition owns its removal)
-      expect(leavingEl.parentElement).not.toBeNull();
+      // Leaving element should still be in DOM (transition owns its removal),
+      // in place, with its content and its marker intact — "has a parent" is
+      // also true of an element re-parented into a detached fragment.
+      expect(leavingEl.parentElement).toBe(container.querySelector('[data-forma-state]'));
+      expect(leavingEl.textContent).toBe('Animating out');
+      expect(leavingEl.hasAttribute('data-forma-leaving')).toBe(true);
+      expect(container.querySelector('[data-forma-id="a1"]')?.textContent).toBe('Keep');
     });
   });
 });

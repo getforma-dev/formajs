@@ -9,7 +9,7 @@
  * ALL 6 TESTS ARE EXPECTED TO FAIL until child scope binding is implemented.
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mount, unmount, setUnsafeEval } from '../runtime';
+import { mount, unmount } from '../runtime';
 
 function waitForEffects(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -19,7 +19,6 @@ describe('data-list child binding', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
-    setUnsafeEval(true);
     container = document.createElement('div');
     document.body.appendChild(container);
   });
@@ -207,7 +206,6 @@ describe('data-list transitions', () => {
 
   beforeEach(() => {
     vi.useFakeTimers();
-    setUnsafeEval(true);
     container = document.createElement('div');
     document.body.appendChild(container);
   });

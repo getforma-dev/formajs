@@ -1,177 +1,225 @@
-import { describe, it, expect, afterEach, beforeEach } from 'vitest';
-import {
-  mount,
-  unmount,
-  setUnsafeEval,
-  setUnsafeEvalMode,
-} from '../../runtime';
+/**
+ * `$el`, `$refs` and `$event` through the real directive pipeline.
+ *
+ * These cases existed before, and every one of them called `setUnsafeEval(true)`
+ * first — so the property they claimed to prove (that the `$el` allowlist blocks
+ * DOM escape) was only ever exercised on the `new Function` path, and was
+ * untested on the build that ships. They also asserted denial as
+ * `typeof $el.ownerDocument === 'undefined'`, which is indistinguishable from
+ * the property simply being absent.
+ *
+ * Both are fixed here: there is no eval path left to opt into, and a denial is
+ * asserted as a denial — the binding writes nothing, the element is marked, and
+ * a diagnostic carries the reason.
+ */
+import { describe, it, expect, afterEach, beforeEach, vi } from 'vitest';
+import { mount, unmount, getDiagnostics, clearDiagnostics, setDiagnostics } from '../../runtime';
 
-function waitForEffects(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+function tick(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0));
 }
 
 describe('$el safe proxy', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
-    // These expressions require unsafe-eval (e.g. typeof, method calls).
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
+    setDiagnostics(true);
+    clearDiagnostics();
     container = document.createElement('div');
     document.body.appendChild(container);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
     unmount(container);
     container.remove();
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(false);
+    setDiagnostics(false);
+    clearDiagnostics();
+    vi.restoreAllMocks();
   });
 
-  it('blocks access to ownerDocument', async () => {
+  /** Mount one `data-text` binding and report what the element ended up with. */
+  async function bindText(expr: string): Promise<Element> {
     container.innerHTML = `
       <div data-forma-state='{"r": ""}'>
-        <p data-text="{typeof $el.ownerDocument}"></p>
+        <p id="p" data-text="${expr}">kept</p>
       </div>
     `;
     mount(container);
-    await waitForEffects();
+    await tick();
+    return container.querySelector('#p')!;
+  }
 
-    const p = container.querySelector('p')!;
-    expect(p.textContent).toBe('undefined');
+  it.each([
+    ['ownerDocument', '{$el.ownerDocument}'],
+    ['parentNode', '{$el.parentNode}'],
+    ['innerHTML', '{$el.innerHTML}'],
+    ['outerHTML', '{$el.outerHTML}'],
+    ['ownerDocument behind typeof', '{typeof $el.ownerDocument}'],
+  ])('denies $el.%s with a diagnostic, not an undefined', async (_label, expr) => {
+    const p = await bindText(expr);
+    expect(p.textContent).toBe('kept');
+    expect(p.getAttribute('data-forma-expr-error')).toBe('unsupported');
+    expect(getDiagnostics().map((d) => d.code)).toContain('FORMA_E_PROPERTY_DENIED');
   });
 
-  it('blocks access to parentNode', async () => {
+  it('allows the element properties on the read list', async () => {
     container.innerHTML = `
       <div data-forma-state='{"r": ""}'>
-        <p data-text="{typeof $el.parentNode}"></p>
+        <span id="s" data-custom="hello" data-text="{$el.dataset.custom}"></span>
+        <b id="b" data-text="{$el.id}"></b>
+        <i id="i" class="a b" data-text="{$el.className}"></i>
       </div>
     `;
     mount(container);
-    await waitForEffects();
+    await tick();
 
-    const p = container.querySelector('p')!;
-    expect(p.textContent).toBe('undefined');
+    expect(container.querySelector('#s')!.textContent).toBe('hello');
+    expect(container.querySelector('#b')!.textContent).toBe('b');
+    expect(container.querySelector('#i')!.textContent).toBe('a b');
+    expect(getDiagnostics()).toEqual([]);
   });
 
-  it('allows classList.add', async () => {
+  it('allows classList mutation from a handler', async () => {
     container.innerHTML = `
       <div data-forma-state='{"x": 0}'>
-        <button data-on:click="{$el.classList.add('active')}">Go</button>
+        <button id="add" data-on:click="{$el.classList.add('active')}">Add</button>
+        <button id="toggle" data-on:click="{$el.classList.toggle('on')}">Toggle</button>
       </div>
     `;
     mount(container);
-    await waitForEffects();
+    await tick();
 
-    const btn = container.querySelector('button')!;
-    btn.click();
-    await waitForEffects();
+    const add = container.querySelector('#add') as HTMLButtonElement;
+    const toggle = container.querySelector('#toggle') as HTMLButtonElement;
+    add.click();
+    await tick();
+    expect(add.classList.contains('active')).toBe(true);
 
-    expect(btn.classList.contains('active')).toBe(true);
+    toggle.click();
+    await tick();
+    expect(toggle.classList.contains('on')).toBe(true);
+    toggle.click();
+    await tick();
+    expect(toggle.classList.contains('on')).toBe(false);
+    expect(getDiagnostics()).toEqual([]);
   });
 
-  it('allows classList.toggle', async () => {
+  it('allows a CSSOM style write but never a cssText string', async () => {
     container.innerHTML = `
       <div data-forma-state='{"x": 0}'>
-        <button data-on:click="{$el.classList.toggle('on')}">Toggle</button>
+        <div id="ok" data-on:click="{$el.style.color = 'red'}">Color</div>
+        <div id="bad" data-on:click="{$el.style.cssText = 'color:red'}">Bulk</div>
       </div>
     `;
     mount(container);
-    await waitForEffects();
+    await tick();
 
-    const btn = container.querySelector('button')!;
-    btn.click();
-    await waitForEffects();
-    expect(btn.classList.contains('on')).toBe(true);
+    const ok = container.querySelector('#ok') as HTMLElement;
+    const bad = container.querySelector('#bad') as HTMLElement;
+    ok.click();
+    bad.click();
+    await tick();
 
-    btn.click();
-    await waitForEffects();
-    expect(btn.classList.contains('on')).toBe(false);
+    expect(ok.style.color).toBe('red');
+    // `cssText` is a whole-declaration string assignment — the sink a strict
+    // `style-src` blocks, and the one CSP.md promises FormaJS does not use.
+    expect(bad.style.color).toBe('');
+    expect(bad.getAttribute('data-forma-handler-error')).toBe('unsupported');
   });
 
-  it('allows dataset access', async () => {
-    container.innerHTML = `
-      <div data-forma-state='{"r": ""}'>
-        <span data-custom="hello" data-text="{$el.dataset.custom}"></span>
-      </div>
-    `;
-    mount(container);
-    await waitForEffects();
-
-    const span = container.querySelector('span')!;
-    expect(span.textContent).toBe('hello');
-  });
-
-  it('allows id access', async () => {
-    container.innerHTML = `
-      <div data-forma-state='{"r": ""}'>
-        <span id="myspan" data-text="{$el.id}"></span>
-      </div>
-    `;
-    mount(container);
-    await waitForEffects();
-
-    const span = container.querySelector('span')!;
-    expect(span.textContent).toBe('myspan');
-  });
-
-  it('allows style access', async () => {
+  it('allows focus() and querySelector() on the element itself', async () => {
     container.innerHTML = `
       <div data-forma-state='{"x": 0}'>
-        <div id="styled" data-on:click="{$el.style.color = 'red'}">Color</div>
-      </div>
-    `;
-    mount(container);
-    await waitForEffects();
-
-    const div = container.querySelector('#styled') as HTMLElement;
-    div.click();
-    await waitForEffects();
-
-    expect(div.style.color).toBe('red');
-  });
-
-  it('allows focus', async () => {
-    container.innerHTML = `
-      <div data-forma-state='{"x": 0}'>
-        <input data-on:click="{$el.focus()}">
-      </div>
-    `;
-    mount(container);
-    await waitForEffects();
-
-    const input = container.querySelector('input')!;
-    expect(() => input.click()).not.toThrow();
-  });
-
-  it('allows querySelector for safe traversal', async () => {
-    container.innerHTML = `
-      <div data-forma-state='{"r": ""}'>
-        <div id="container">
+        <input id="in" data-on:click="{$el.focus()}">
+        <div id="wrap">
           <span class="target">found</span>
-          <p data-text="{$el.querySelector('.target')?.textContent ?? 'not found'}"></p>
+          <p id="p" data-text="{$el.querySelector('.target')?.textContent ?? 'not found'}"></p>
         </div>
       </div>
     `;
     mount(container);
-    await waitForEffects();
+    await tick();
 
-    // $el is the <p> itself, so querySelector('.target') on <p> won't find the span
-    // This tests that querySelector is allowed, not that it finds the right element
-    const p = container.querySelector('p')!;
-    expect(p.textContent).toBe('not found');
+    const input = container.querySelector('#in') as HTMLInputElement;
+    input.click();
+    await tick();
+    expect(document.activeElement).toBe(input);
+
+    // `$el` is the <p>, which has no descendant matching `.target` — the point
+    // is that querySelector is permitted and returns a WRAPPED element, so the
+    // optional chain and `?? ` fallback both behave.
+    expect(container.querySelector('#p')!.textContent).toBe('not found');
+    expect(getDiagnostics()).toEqual([]);
   });
 
-  it('blocks innerHTML (could be used for script injection)', async () => {
+  it('a wrapped element stays wrapped across every traversal hop', async () => {
+    // The allowlist would guard only the first hop if `closest()` or
+    // `querySelector()` handed back a raw node. Both return element hosts, so
+    // the escape is denied one step further out too.
     container.innerHTML = `
-      <div data-forma-state='{"r": ""}'>
-        <p data-text="{typeof $el.innerHTML}"></p>
+      <div data-forma-state='{"r": ""}' id="scope">
+        <div id="wrap">
+          <p id="leak" data-text="{$el.closest('div').ownerDocument}">kept</p>
+          <p id="ok" data-text="{$el.closest('div').id}"></p>
+        </div>
       </div>
     `;
     mount(container);
-    await waitForEffects();
+    await tick();
 
-    const p = container.querySelector('p')!;
-    expect(p.textContent).toBe('undefined');
+    expect(container.querySelector('#ok')!.textContent).toBe('wrap');
+    expect(container.querySelector('#leak')!.textContent).toBe('kept');
+    expect(container.querySelector('#leak')!.getAttribute('data-forma-expr-error'))
+      .toBe('unsupported');
+  });
+
+  it('$refs hands back a wrapped element, not the live node', async () => {
+    // Before the wrapper, `$refs.r` was the raw element and
+    // `$refs.r.ownerDocument.location.href` read the page URL from inside a
+    // "CSP-safe" expression, with no diagnostic at all.
+    container.innerHTML = `
+      <div data-forma-state='{"r": ""}'>
+        <input data-ref="myInput">
+        <p id="leak" data-text="{$refs.myInput.ownerDocument.location.href}">kept</p>
+        <p id="ok" data-text="{$refs.myInput.tagName}"></p>
+      </div>
+    `;
+    mount(container);
+    await tick();
+
+    expect(container.querySelector('#leak')!.textContent).toBe('kept');
+    expect(container.querySelector('#leak')!.getAttribute('data-forma-expr-error'))
+      .toBe('unsupported');
+    expect(container.querySelector('#ok')!.textContent).toBe('INPUT');
+  });
+
+  it('$event exposes the allowlisted properties and nothing beyond them', async () => {
+    container.innerHTML = `
+      <div data-forma-state='{"q":"","k":"","leak":"kept"}'>
+        <input id="in" data-on:input="{q = $event.target.value}"
+               data-on:keydown="{k = $event.key}">
+        <button id="escape" data-on:click="{leak = $event.view}">escape</button>
+        <p id="q" data-text="{q}"></p>
+        <p id="k" data-text="{k}"></p>
+        <p id="leak" data-text="{leak}"></p>
+      </div>
+    `;
+    mount(container);
+    await tick();
+
+    const input = container.querySelector('#in') as HTMLInputElement;
+    input.value = 'typed';
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', bubbles: true }));
+    (container.querySelector('#escape') as HTMLButtonElement).click();
+    await tick();
+
+    expect(container.querySelector('#q')!.textContent).toBe('typed');
+    expect(container.querySelector('#k')!.textContent).toBe('Enter');
+    expect(container.querySelector('#leak')!.textContent).toBe('kept');
+    expect(container.querySelector('#escape')!.getAttribute('data-forma-handler-error'))
+      .toBe('unsupported');
   });
 });

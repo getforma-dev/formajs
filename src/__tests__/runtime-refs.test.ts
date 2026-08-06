@@ -5,7 +5,7 @@
  * similar to Alpine.js's x-ref / $refs pattern.
  */
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mount, unmount, setUnsafeEvalMode, setUnsafeEval } from '../runtime';
+import { mount, unmount } from '../runtime';
 
 describe('$refs magic', () => {
   let container: HTMLDivElement;
@@ -70,12 +70,12 @@ describe('$refs magic', () => {
     expect(container.querySelector('#out2')!.textContent).toBe('B');
   });
 
-  it('works with classList on ref element (unsafe-eval path)', () => {
-    // Deep chained calls like $refs.panel.classList.toggle('open') require
-    // the unsafe-eval path since the CSP-safe parser has limits on chain depth.
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
-
+  it('works with classList on a ref element', () => {
+    // `$refs.panel.classList.toggle('open')` is three hops and a call, which
+    // the regex parser could not reach — this test used to be labelled
+    // "(unsafe-eval path)" and only passed with the fallback on. Every hop is
+    // now a wrapped host, so the chain works with no eval and the allowlist
+    // still applies at each step.
     container.innerHTML = `
       <div data-forma-state='{"x": 0}'>
         <div data-ref="panel" class="panel">Content</div>
@@ -92,7 +92,6 @@ describe('$refs magic', () => {
     btn.click();
     expect(panel.classList.contains('open')).toBe(false);
 
-    setUnsafeEval(false);
   });
 
   it('works with reading dataset from ref', () => {

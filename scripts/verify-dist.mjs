@@ -36,6 +36,19 @@ function jsArtifacts(dir = resolve(ROOT, 'dist'), out = []) {
   return out;
 }
 
+const SCRIPT_SRC = /<script[^>]+src=(?:"([^"]+)"|'([^']+)')/g;
+
+/** Every .html file under examples/. */
+function exampleHtmlFiles(dir = resolve(ROOT, 'examples'), out = []) {
+  if (!existsSync(dir)) return out;
+  for (const name of readdirSync(dir)) {
+    const abs = join(dir, name);
+    if (statSync(abs).isDirectory()) exampleHtmlFiles(abs, out);
+    else if (name.endsWith('.html')) out.push(abs);
+  }
+  return out;
+}
+
 /** Collect every "./..." leaf from a nested exports/conditions object. */
 function collectPaths(node, out = []) {
   if (typeof node === 'string') {
@@ -144,16 +157,37 @@ for (const rel of jsArtifacts()) {
 }
 
 // ---------------------------------------------------------------------------
-// 4. The hardened builds really contain no eval
+// 4. NO artifact contains a dynamic-code path
 // ---------------------------------------------------------------------------
-for (const rel of [
-  'dist/runtime-hardened.js',
-  'dist/runtime-hardened.cjs',
-  'dist/formajs-runtime-hardened.global.js',
-  'dist/forma-runtime-csp.js',
-]) {
-  if (/new Function\s*\(/.test(read(rel))) {
-    fail(`${rel} contains \`new Function(\`; the hardened build must not emit it at all`);
+// This used to check the two hardened runtime files. It now checks all of them:
+// the `new Function` fallback and its `with (__scope)` wrapper were deleted
+// from the source, so their absence is a property of every shipped byte rather
+// than of one build's defines.
+for (const rel of jsArtifacts()) {
+  const code = read(rel);
+  if (/new Function\s*\(/.test(code)) {
+    fail(`${rel} contains \`new Function(\`; no build may emit dynamic code`);
+  }
+  if (/\bwith\s*\(\s*__scope\b/.test(code)) {
+    fail(`${rel} still wraps expressions in \`with (__scope)\`; that sandbox is gone`);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// 4b. Every <script src> in examples/ resolves to an emitted artifact
+// ---------------------------------------------------------------------------
+// examples/csp/index.html loaded dist/forma-runtime-csp.js while no build
+// target emitted that name, so the one example whose whole point is CSP was
+// dead on arrival.
+for (const html of exampleHtmlFiles()) {
+  const source = readFileSync(html, 'utf8');
+  const rel = relative(ROOT, html).replace(/\\/g, '/');
+  for (const m of source.matchAll(SCRIPT_SRC)) {
+    const src = m[1];
+    if (/^[a-z]+:/i.test(src) || src.startsWith('//')) continue;
+    if (!existsSync(resolve(html, '..', src))) {
+      fail(`${rel} loads ${src}, which the build does not produce`);
+    }
   }
 }
 

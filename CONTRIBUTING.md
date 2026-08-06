@@ -140,6 +140,185 @@ Verified by: `src/__tests__/docs-truth.test.ts` > "every citation names a test f
 Verified by: `src/__tests__/docs-truth.test.ts` > "every code comment citation resolves to a test that exists"
 Verified by: `src/__tests__/docs-truth.test.ts` > "every benchmark citation names a benchmark the suite actually ran"
 
+## Writing a test that can fail
+
+The citation rule above says a claim must name its proof. This section says what
+makes something a proof.
+
+A 2026-08 audit mutation-probed this suite one surgical break at a time, against
+the 93-probe corpus now committed at `probes/corpus.json`. It detected **64%**
+of those defects overall, **72%** on security-relevant code and **33%** on the
+SSR renderer — the one component whose output goes straight into a browser. Two
+whole files named for security controls passed with the control deleted from
+production code. Every rule below is derived from a defect that shipped, not
+from general advice; `docs/TEST-SUITE-AUDIT.md` records which one, and what the
+same corpus reports today.
+
+### The eight rules
+
+1. **Assert the guarantee, not the mechanism.** A spy count, a throw, or a
+   markup shape is evidence *about* the implementation. Every
+   `toHaveBeenCalled*` / `toThrow` / `not.toThrow` must be followed, in the same
+   test, by an assertion on rendered output, returned value, or observable
+   state. `expect(renderCount).toBe(1)` is satisfied by a cache that returns an
+   empty branch.
+
+2. **When N paths share a guarantee, the assertion lives in ONE shared table.**
+   This repo has six attribute sinks — SSR `renderToString`, `h()` static,
+   `h()` reactive, hydration adoption, the `data-bind:` binder, and
+   `$el.setAttribute()` in the expression grammar. Historically each guarantee
+   was asserted on exactly one of them, and that single habit produced 7 of the
+   25 code defects in the hardening ledger. The table is
+   `src/__tests__/renderer-contract.test.ts`. A new sink joins it, or that
+   file's own completeness test fails.
+
+3. **Two-sided assertions: absence AND presence.** `not.toContain('javascript:')`
+   is satisfied by a renderer that emits no attributes at all — a probe that
+   dropped *every* prop survived all four "blocks …" tests. Every "we block X"
+   test renders X alongside a benign sibling and asserts both halves. Prefer
+   exact-output `toBe` over fragment `toContain` for anything producing markup.
+
+4. **Depth floors.** State machines (show / switch / portal / hydrate branches):
+   **>= 3 transitions**, invariant asserted after *every* transition. Lists:
+   **>= 2 items** for every behaviour and **>= 40 items** for anything touching
+   the keyed algorithm (`SMALL_LIST_THRESHOLD` is 32 — both sides get
+   exercised). Islands: **>= 2 instances**, because cross-island isolation is
+   invisible with one. Recursive parsers: a fixture at **depth >= 10 000**.
+   And **branches must be distinguishable** — a `show` whose two branches both
+   render the text "Truthy" cannot detect a mislabelled cached fragment.
+
+5. **Adversarial input is mandatory for anything parsing untrusted data.** JSON,
+   URLs, attribute values, HTML strings, RPC bodies. Hostile keys
+   (`__proto__`, `constructor`, `prototype`) built with `JSON.parse`, not object
+   literals. Plus two corollaries that are easy to miss: every blocklist needs
+   an **allow-list** test (`DANGEROUS_SCHEME_RE` is anchored with `^`; removing
+   the anchor makes it a substring match and only
+   `https://example.com/guides/javascript` notices), and every allowlist is
+   tested for **completeness, not contents** — `describe.each(URL_ATTRS)`, never
+   a hand-picked `href` and `src`.
+
+6. **A test must be able to fail.** If deleting the feature does not turn the
+   test red, it is not a test. Three shapes that cannot fail: a body with no
+   `expect()`; an assertion true by construction (`toBeUndefined()` on a name
+   that was never exported passes with any typo); and reading a mock's own
+   configured return value back out.
+
+7. **No self-skipping tests.** No `existsSync` guard that returns, no `it.skip`,
+   no environment sniffing. Fixtures live in the repo. A check that genuinely
+   needs a build artifact is a separate CI job that fails loudly.
+
+8. **Mock almost nothing, and never the thing under test.** Legitimate: browser
+   APIs happy-dom does not implement (`ResizeObserver`, `IntersectionObserver`),
+   the network boundary, the clock, cross-process boundaries. Even then, assert
+   the *effect*, not the mock's arguments. If a function is private and that
+   pushes you toward simulating it, export it.
+
+### The reviewer's checklist
+
+1. Does every `toHaveBeenCalled*` / `toThrow` in this diff have an
+   observable-outcome assertion after it?
+2. Does this guarantee exist on a sibling path (SSR / `h()` / hydrate /
+   `data-bind` / `$el`)? If yes, is the assertion in the **shared table**?
+3. Does the "we block X" test also assert a benign sibling survives?
+4. State machine → >= 3 transitions? List → >= 2 items and a >= 40-item case?
+   Islands → >= 2 instances? Recursive parser → a >= 10 000-depth case?
+5. Are the fixture's branches/values **distinguishable** — could a swap of two
+   things pass?
+6. Does this parse untrusted input? Where are the hostile keys, the allow-list
+   (negative-space) cases, and the completeness test over the allowlist?
+7. **Did you break the feature and watch this test go red?** State the mutation
+   in the PR description, one line:
+   `Probe: deleted the isDangerousUrl call in renderAttr -> 5 tests failed.`
+8. Any `existsSync` guard, `it.skip`, or test with no `expect()`? Any new
+   `vi.mock` of a first-party module? Justify or remove.
+
+A `Verified by:` comment requires item 7 against **that specific test**, or it
+does not go in. A citation pointing at a test that cannot fail is strictly worse
+than no citation: no comment leaves a reader appropriately suspicious, while a
+false one converts suspicion into confidence at exactly the moment they are
+deciding whether to look harder.
+
+### It is enforced
+
+Rules 6, 7 and 8 are mechanical, so they are checked rather than reviewed.
+`src/__tests__/test-policy.test.ts` runs inside `npm test` in well under a
+second and fails the build on: a test with no `expect()`; a test file that
+touches no production code; `it.skip` / `describe.skip` / an `existsSync` guard
+that returns; a test whose only assertions are presence checks; a file that is
+90% one identical assertion; and `vi.mock` of a first-party module without
+`importOriginal`.
+
+Verified by: `src/__tests__/test-policy.test.ts` > "every test declaration contains at least one expect()"
+Verified by: `src/__tests__/test-policy.test.ts` > "no test skips itself"
+Verified by: `src/__tests__/test-policy.test.ts` > "no first-party module is replaced by vi.mock"
+
+### The mutation-probe corpus
+
+What a lint cannot check is whether a test that *can* fail *would* fail for the
+right reason. That is what `probes/corpus.json` is for: a committed corpus of
+surgical edits, each one a defect shape this repo has already been bitten by.
+
+```sh
+node scripts/run-probes.mjs --check            # anchors still apply (seconds)
+node scripts/run-probes.mjs                    # full run, ~15 min
+node scripts/run-probes.mjs --tag=security     # the security subset
+node scripts/run-probes.mjs --only=<id>,<id>   # one probe, for item 7 above
+```
+
+Each probe is applied, the whole suite runs, and the file is restored. A
+**survivor is always news**: it names a property nothing in the suite defends.
+This is deliberately not Stryker — Stryker generates thousands of mutants, most
+of them equivalent, and takes hours; this corpus runs in minutes and every
+mutant in it is real, so the score means something.
+
+Two rules keep it honest, both enforced by `test-policy.test.ts`: every probe's
+anchor must still apply (a rotted anchor silently stops being a mutant and the
+score climbs for free), and **no probe may be a no-op** — the corpus this file
+inherited had five entries whose `find` equalled their `replace`, permanently
+uncatchable and permanently dragging the measured rate down.
+
+**Every probe written during a bug investigation gets committed here.** That is
+the mechanism that makes an audit compound instead of expire.
+
+## The expression allowlist
+
+`src/expr/` is the HTML Runtime's expression language. It is an **allowlist by
+construction**, and it stays one under a single review rule:
+
+> **Any request to support X is answered by adding X to a table in
+> `src/expr/allowlist.ts`, never by widening dispatch. If X cannot be expressed
+> as a table entry, the answer is no.**
+
+This is not stylistic. The design it replaced was a blocklist of nine names over
+a full JavaScript evaluator, and it lost — `items[k]` with `k` from server JSON
+reached the `Function` constructor without the blocked name ever appearing in
+the source text. A table lookup has no equivalent hole, because `"constructor"`
+is not a key in any table.
+
+Three mechanisms hold the line, and all three are CI failures rather than review
+conventions:
+
+1. **`allowlist-snapshot.test.ts` pins the exact sorted list of every name the
+   language grants.** Widening any table fails the suite until the snapshot is
+   updated in the same change — which puts every capability grant in front of a
+   reviewer as a diff of a file whose only job is to say what this language can
+   reach. If the snapshot feels annoying, it is working.
+2. **`no-escape-hatch.test.ts` reads the source of `src/expr/**`** and rejects
+   `new Function`, `eval(`, `import(`, `globalThis`, `window`, `document`,
+   `setTimeout`, the identifier `constructor` outside the deny list, any `class`
+   body, any swallowing `catch`, and — the rule that carries the security model —
+   any computed member read `recv[key]` outside the two audited helpers.
+3. **The AST is a closed discriminated union.** A new node kind without both a
+   validator case and an interpreter case does not compile.
+
+If you are adding a method, a property or a global: add the row, run the
+snapshot test, and put the new name in the PR description. If you are adding a
+node kind or a call form, say in the PR why the existing tables could not
+express it.
+
+Verified by: `src/expr/__tests__/allowlist-snapshot.test.ts` > "the allowlist is exactly this set of names"
+Verified by: `src/expr/__tests__/no-escape-hatch.test.ts` > "src/expr contains no path to the Function constructor or a global"
+
 ## What must not change
 
 The hydration wire contract is shared byte-for-byte with the Rust walker in the

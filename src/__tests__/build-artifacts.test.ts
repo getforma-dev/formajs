@@ -20,7 +20,7 @@ import { mkdtempSync, rmSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import rawConfig from '../../tsup.config';
-import { EVAL_MODE_FLAG, BROWSER_ESM_OUTPUT } from '../../scripts/build-defines.mjs';
+import { BROWSER_ESM_OUTPUT } from '../../scripts/build-defines.mjs';
 import { parseImportSpecifiers } from '../../scripts/check-size.mjs';
 
 const configs = rawConfig as Options[];
@@ -43,6 +43,7 @@ function configFor(entryName: string): Options {
 async function buildEntry(entryName: string, overrides: Options = {}): Promise<string> {
   const base = configFor(entryName);
   const entrySource = (base.entry as Record<string, string>)[entryName];
+  const iife = base.format?.includes('iife') ?? false;
   const outDir = mkdtempSync(join(tmpdir(), 'forma-build-'));
   try {
     await build({
@@ -53,37 +54,50 @@ async function buildEntry(entryName: string, overrides: Options = {}): Promise<s
       // arbitrary member) and writes into the real dist/.
       config: false,
       entry: { [entryName]: entrySource },
-      format: base.format?.includes('iife') ? ['iife'] : ['esm'],
+      format: iife ? ['iife'] : ['esm'],
       dts: false,
       sourcemap: false,
       silent: true,
       outDir,
       ...overrides,
     });
-    return readFileSync(join(outDir, `${entryName}.js`), 'utf8');
+    // tsup suffixes the IIFE format, which is where the `.global.js` CDN names
+    // come from.
+    return readFileSync(join(outDir, `${entryName}${iife ? '.global' : ''}.js`), 'utf8');
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
 }
 
-describe('hardened runtime build', () => {
-  it('hardened builds emit no new Function at all', { timeout: 60_000 }, async () => {
-    // The hardened build promises more than "does not call eval at runtime":
-    // the call is not in the file, so static supply-chain analysis has nothing
-    // to flag. That holds only while the eval-capability constant is folded by
-    // the define AND the dead branch is removed.
-    const code = await buildEntry('runtime-hardened');
-    expect(code).not.toMatch(/new Function\s*\(/);
+describe('dynamic-code paths in the emitted bytes', () => {
+  /** Every runtime entry a consumer can load, by tsup entry name. */
+  const RUNTIME_ENTRIES = ['runtime', 'runtime-hardened', 'formajs-runtime', 'formajs-runtime-hardened'];
+
+  it('no build emits new Function or a with() scope wrapper', { timeout: 120_000 }, async () => {
+    // This used to be a pair of tests: "the hardened build has no new Function"
+    // plus a control asserting the STANDARD build still had one, because the
+    // difference between them was an esbuild define folding away an opt-in
+    // fallback. The fallback is gone from the source, so the property belongs
+    // to every artifact and there is no build left to hold the control.
+    //
+    // The claim is stronger than "eval is not called at runtime": the call is
+    // not in the file, so static supply-chain analysis has nothing to flag.
+    for (const entry of RUNTIME_ENTRIES) {
+      const code = await buildEntry(entry);
+      expect(code, `${entry} must not construct functions`).not.toMatch(/new Function\s*\(/);
+      expect(code, `${entry} must not use a with() scope`).not.toMatch(/\bwith\s*\(/);
+      expect(code, `${entry} must not call eval`).not.toMatch(/[^.\w]eval\s*\(/);
+    }
   });
 
-  it('the standard runtime build still contains the opt-in fallback', { timeout: 60_000 }, async () => {
-    // Guards the assertion above against passing for the wrong reason — e.g.
-    // the fallback having been removed from the source altogether, which would
-    // make the hardened build trivially clean and the claim meaningless.
-    const code = await buildEntry('runtime-hardened', {
-      define: { ...configFor('runtime-hardened').define, [EVAL_MODE_FLAG]: '"mutable"' },
-    });
-    expect(code).toMatch(/new Function\s*\(/);
+  it('the allowlist interpreter is actually in the bundle', { timeout: 60_000 }, async () => {
+    // The control for the test above: an artifact with no expression engine at
+    // all would pass it trivially. These strings come from src/expr and would
+    // vanish if the engine were tree-shaken out or replaced.
+    const code = await buildEntry('runtime-hardened');
+    expect(code).toContain('FORMA_E_KEY_DENIED');
+    expect(code).toContain('FORMA_E_UNRESOLVED');
+    expect(code).toContain('cannot reach globals');
   });
 });
 

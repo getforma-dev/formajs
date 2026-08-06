@@ -22,11 +22,25 @@ import { fileURLToPath } from 'node:url';
 const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
 
 /**
- * Gate definitions. Limits are set roughly 20% above the measured size at the
- * time they were last touched, so ordinary growth is visible in review before
- * it trips the gate.
+ * Gate definitions.
+ *
+ * The two entries that carry no HTML runtime keep the historical policy —
+ * roughly 20% above the measured size, so ordinary growth is visible in review
+ * before it trips.
+ *
+ * The two RUNTIME bundles are deliberately tighter (~7%). They just absorbed
+ * the largest single size change this package has taken: replacing the regex
+ * expression parser and the `new Function` fallback with the allowlist AST
+ * interpreter moved `formajs-runtime.global.js` from 26,194 to 31,763 B gzipped
+ * (+5,569, +21%) and the hardened IIFE from 24,570 to 30,764 (+6,194, +25%).
+ * The design note that costed this work projected roughly break-even from a
+ * prototype that had no positional diagnostics, no DOM-host wrapping and no
+ * handler statements; the shipped engine has all three, and it is twice the
+ * prototype's size. A loose gate on top of that is how the next 5 KB arrives
+ * unremarked, so these two are set close to the measurement on purpose.
+ * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
-const GATES = [
+export const GATES = [
   {
     entry: 'dist/index.js',
     limit: 30000,
@@ -34,13 +48,21 @@ const GATES = [
   },
   {
     entry: 'dist/formajs-runtime.global.js',
-    limit: 31000,
+    limit: 34000,
     note: 'CDN runtime bundle (single self-contained IIFE)',
   },
   {
     entry: 'dist/forma.esm.js',
     limit: 29000,
     note: 'CDN browser ESM bundle (self-contained, inlines alien-signals)',
+  },
+  {
+    // This artifact was gated NOWHERE — not here, not in ci.yml, not in
+    // release.yml — while being the build the docs pointed CSP-strict users at
+    // and the target of the `runtime-csp` exports subpath.
+    entry: 'dist/formajs-runtime-hardened.global.js',
+    limit: 33000,
+    note: 'CDN hardened runtime bundle (single self-contained IIFE)',
   },
 ];
 
@@ -112,9 +134,16 @@ export function gzipTotal(files, root = ROOT) {
   return total;
 }
 
-function measure(gate, root = ROOT) {
+/**
+ * Weigh one gate. `over` is the verdict the CI step acts on, computed here
+ * rather than at the call site so the comparison itself is testable.
+ *
+ * Verified by: src/__tests__/check-size.test.ts > "a gate reports over when its graph exceeds the limit"
+ */
+export function measure(gate, root = ROOT) {
   const { files, external } = collectGraph(gate.entry, root);
-  return { ...gate, files, external, bytes: gzipTotal(files, root) };
+  const bytes = gzipTotal(files, root);
+  return { ...gate, files, external, bytes, over: bytes > gate.limit };
 }
 
 function main() {
@@ -137,7 +166,7 @@ function main() {
   }
 
   for (const r of results) {
-    if (r.bytes > r.limit) {
+    if (r.over) {
       failed = true;
       console.error(`::error::${r.entry} is ${r.bytes} B gzipped, over the ${r.limit} B limit`);
     }

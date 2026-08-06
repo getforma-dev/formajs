@@ -85,8 +85,8 @@ type InstanceHost = Record<symbol, InstanceRegistry | undefined>;
  *      ESM and CJS outputs are independent full implementations.
  *   2. Loading `@getforma/core` together with `@getforma/core/runtime-hardened`
  *      or `@getforma/core/browser`, both of which bundle their own private copy
- *      of the core (they must: the hardened build compiles with a different
- *      unsafe-eval define, and the browser build inlines its dependencies).
+ *      of the core (they must: the hardened build does not code-split, and the
+ *      browser build inlines its dependencies).
  *
  * Deliberately NOT gated on `__DEV__`: this is a packaging mistake that only
  * manifests in built consumption, where `__DEV__` is `false`. It fires at most

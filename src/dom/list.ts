@@ -16,7 +16,7 @@
 
 import { createSignal, internalEffect, untrack, createRoot, registerDisposer, __DEV__ } from '../reactive';
 import { hydrating } from './hydrate.js';
-import { deactivateIsland } from './activate.js';
+import { deactivateIsland, hasScheduledOrActiveIslands } from './activate.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -125,9 +125,18 @@ const DYNAMIC_CHILD_SYM = Symbol.for('forma-dynamic-child');
  * detached DOM — plus its IntersectionObserver / interaction listeners if it
  * had not hydrated yet — for the lifetime of the page.
  *
+ * The subtree scan is guarded by an integer compare, because almost no list
+ * anywhere contains an island and the scan otherwise costs ~19 µs per removed
+ * six-node row (docs/PERFORMANCE.md). An island only becomes something worth
+ * tearing down by going through activateIslands / hydrateIslandRoot, and those
+ * count it, so a zero count is proof that no row can contain one — not a
+ * heuristic.
+ *
  * Verified by: src/dom/__tests__/list-disposal.test.ts > "deactivates an island inside a removed row"
+ * Verified by: src/dom/__tests__/list-disposal.test.ts > "does not scan a removed row when no island has ever been activated"
  */
 function deactivateIslandsIn(node: Node): void {
+  if (!hasScheduledOrActiveIslands()) return;
   if (!(node instanceof Element)) return;
   if (node.hasAttribute('data-forma-island')) {
     deactivateIsland(node as HTMLElement);

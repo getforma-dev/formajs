@@ -11,11 +11,14 @@ Gzipped sizes, measured by `npm run check:size` on the 1.5.0 build (that script 
 
 | Artifact | Gzipped | CI limit |
 |---|---|---|
-| `@getforma/core` entry + every chunk it imports | 24.7 KB (25,262 B) | 30,000 B |
-| CDN HTML runtime (`formajs-runtime.global.js`) | 25.6 KB (26,257 B) | 31,000 B |
-| CDN browser ESM (`forma.esm.js`, inlines alien-signals) | 23.5 KB (24,030 B) | 29,000 B |
+| `@getforma/core` entry + every chunk it imports | 24.8 KB (25,394 B) | 30,000 B |
+| CDN HTML runtime (`formajs-runtime.global.js`) | 31.0 KB (31,763 B) | 34,000 B |
+| CDN HTML runtime, hardened (`formajs-runtime-hardened.global.js`) | 30.0 KB (30,764 B) | 33,000 B |
+| CDN browser ESM (`forma.esm.js`, inlines alien-signals) | 23.6 KB (24,171 B) | 29,000 B |
 
 The core figure is **untree-shaken** — it is everything `dist/index.js` pulls in. A bundler that drops what your app does not import ships less.
+
+The two HTML-runtime figures grew by 5.6 and 6.2 KB when the regex expression parser and the `new Function` fallback were replaced with the allowlist AST interpreter described below. That is the price of the CSP guarantee, stated rather than smoothed: the engine that makes it true is ~12 KB gzipped, and what it replaced was ~6 KB. The core entry and the browser ESM bundle carry no HTML runtime and did not move (+81 B and +82 B).
 
 ```tsx
 import { createSignal, h, mount } from "@getforma/core";
@@ -204,36 +207,33 @@ That's a working reactive counter. No JavaScript file. No build step. Just HTML.
 <script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/formajs-runtime.global.js"></script>
 
 <div data-forma-state='{
-  "name": "",
-  "qty": 1,
-  "price": 12.5,
-  "toppings": ["Mushroom", "Olive", "Basil"],
+  "query": "",
+  "items": ["Apples", "Bananas", "Cherries", "Dates", "Elderberries"],
   "darkMode": false
 }'>
 
-  <!-- Two-way binding: type in the input, every binding below updates -->
-  <input data-model="{name}" placeholder="Your name">
-  <p data-text="`Order for ${name}`"></p>
+  <!-- Two-way binding: type in the input, the list filters instantly -->
+  <input data-model="{query}" placeholder="Search fruits...">
 
-  <!-- Computed value: derived from state, recomputed automatically -->
-  <p data-computed="total = qty * price"
-     data-text="`Total: $${total}`"></p>
-
-  <!-- Event handling: increment, decrement, toggle -->
-  <button data-on:click="{qty--}">-</button>
-  <button data-on:click="{qty++}">+</button>
+  <!-- Computed value: derived from query, updates automatically -->
+  <p data-computed="matchCount = items.filter(i => i.toLowerCase().includes(query.toLowerCase())).length"
+     data-text="{'Found ' + matchCount + ' results'}"></p>
 
   <!-- Conditional rendering: show/hide based on state -->
-  <p data-show="{qty >= 10}">Bulk discount applied.</p>
+  <p data-show="{query.length > 0 && matchCount === 0}">No matches found.</p>
 
   <!-- List rendering: keyed reconciliation, only changed items re-render -->
-  <ul data-list="{toppings}">
+  <ul data-list="{items.filter(i => i.toLowerCase().includes(query.toLowerCase()))}">
     <li>{item}</li>
   </ul>
 
+  <!-- Event handling: mutate state directly from the markup -->
+  <button data-on:click="{darkMode = !darkMode}">
+    Toggle Dark Mode
+  </button>
+
   <!-- Dynamic classes and attributes -->
   <div data-class:dark="{darkMode}" data-bind:data-theme="{darkMode ? 'dark' : 'light'}">
-    <button data-on:click="{darkMode = !darkMode}">Toggle theme</button>
     Theme is: <span data-text="{darkMode ? 'Dark' : 'Light'}"></span>
   </div>
 
@@ -242,40 +242,53 @@ That's a working reactive counter. No JavaScript file. No build step. Just HTML.
 </div>
 ```
 
-That single HTML file gives you: reactive state, two-way data binding, computed values, conditional rendering, list rendering, event handling, dynamic CSS classes, dynamic attributes, and localStorage persistence. **No JavaScript written. No build tools installed.**
+That single HTML file gives you: reactive state, two-way data binding, computed values, conditional rendering, list rendering with filtering, event handling, dynamic CSS classes, dynamic attributes, and localStorage persistence. **No JavaScript written. No build tools installed.**
 
-That block is not illustrative — the test below mounts this exact markup against the *hardened* build (the one with no `eval` fallback compiled in at all), asserts every binding renders and reacts, and fails if a single expression falls outside the CSP-safe grammar.
+That block is not illustrative. The test below **extracts it from this file at test time**, mounts it, and asserts the documented behaviour — the count text, the five rendered rows, that typing filters them, that `data-show` and `data-bind` react — and that `getDiagnostics()` is empty. Editing the block into something the grammar does not accept fails the suite; so does deleting it.
 
-Verified by `src/__tests__/readme-examples.test.ts` > "runs on the hardened build with no unsupported expression or handler"
-Verified by `src/__tests__/readme-examples.test.ts` > "renders every documented binding and updates them reactively"
+The same markup is served in Playwright under a real `Content-Security-Policy: script-src 'self'` response header, with the browser's own console watched for violations. No `unsafe-eval`, in any build.
 
-### The expression grammar is a real constraint
+Verified by `src/__tests__/readme-flagship.test.ts` > "the README block renders exactly what the README says it renders"
+Verified by `src/__tests__/readme-flagship.test.ts` > "typing in the data-model input filters the list and the count"
+Verified by `src/__tests__/readme-flagship.test.ts` > "binds every directive in the block with zero diagnostics"
 
-The expression parser is hand-written: **no `eval()` and no `new Function()` in any build**, unless you opt in with `setUnsafeEval(true)` or `data-forma-unsafe-eval="true"` on the script tag. That is the whole point, and it has a price — the grammar is a subset of JavaScript.
+### The expression grammar is an allowlist, not a blocklist
 
-**Value expressions** (`data-text`, `data-show`, `data-if`, `data-list`, `data-bind:*`, `data-class:*`, the right-hand side of `data-computed`) support: identifiers, `obj.a.b`, `obj?.a`, `obj['key']`, `arr[0]`, method calls **rooted at an identifier** whose arguments are themselves parseable (`name.trim()`, `tags.join(', ')`, `Math.round(x)`), `!x`, `? :`, `??`, `&&`, `||`, comparisons, `+ - * / %`, bare array literals, and template literals with `${…}` interpolation.
+Expressions are evaluated by an **allowlist AST interpreter** — lexer, precedence-climbing parser, validator, tree-walking interpreter — in every build. There is no `eval()`, no `new Function()` and no switch that could reach one, in any shipped artifact. This is not "eval with dangerous names filtered out"; it is a different language:
 
-**Handler statements** (`data-on:*`) support: `x++`, `++x`, `x--`, `x = expr`, `x = !x`, `x += expr` (and `-=`, `*=`, `/=`), `if (cond) { … }` with optional `else`, `$refetch('id')`, and `;`-separated sequences of those. `$event` and `event` resolve inside them, so `q = $event.target.value` and `if (event.key === 'Enter') { … }` compile with no eval.
+- **Identifier resolution never consults `globalThis`.** `document`, `fetch`, `window`, `localStorage` and `process` are not blocked — there is no lookup that could find them. Only arrow parameters, list-row locals, element magics, your declared state, and one frozen table of captured intrinsics resolve.
+- **A method is never obtained by reading a property of its receiver.** `items.filter(…)` invokes the `Array.prototype.filter` this library captured at module init, via `Reflect.apply`. A state object carrying its own `filter` never contributes it, and another script poisoning `Array.prototype.filter` later cannot change what runs.
+- **`constructor`, `__proto__`, `prototype`, `call`, `apply` and `bind` are denied at runtime on the *evaluated* key**, so `items.constructor`, `items['constructor']`, `items[k]` where server JSON supplied `k = "constructor"`, `items['cons' + 'tructor']` and `items[String.fromCharCode(…)]` are all the same case, and all dead.
+- **No loops, no recursion, no function values that escape their callback slot.** The language is *total*: every expression terminates by construction. Budgets bound cost, not hanging.
 
-Verified by `src/__tests__/readme-examples.test.ts` > "accepts every value-expression form the grammar section lists"
+**Value expressions** (`data-text`, `data-show`, `data-if`, `data-list`, `data-bind:*`, `data-class:*`, the right-hand side of `data-computed`) support: identifiers, `obj.a.b`, `obj?.a`, `obj['key']`, `arr[i + 1]`, allowlisted method calls (`name.trim()`, `tags.join(', ')`, `Math.round(x)`, `JSON.stringify(o)`, `Object.keys(o)`), **arrow-function callbacks** in `map` / `filter` / `find` / `findIndex` / `some` / `every` / `flatMap` / `reduce` / `sort`, `typeof x`, `!x`, unary `-x`, `? :`, `??`, `&&`, `||`, comparisons, `+ - * / %`, array literals, object literals, and template literals with `${…}` interpolation.
+
+**Handler statements** (`data-on:*`) support everything above plus: `x++`, `++x`, `x--`, `x = expr`, `x += expr` (and `-=`, `*=`, `/=`), the same on a property path (`item.done = !item.done`, `obj.n += 1`, `$el.style.color = 'red'`), bare method-call statements (`$el.classList.toggle('active')`, `$refs.myInput.focus()`, `$dispatch('selected', {id})`), `if (cond) { … }` with optional `else`, and `;`-separated sequences of those. `$event` and `event` resolve inside them, gated by an allowlist, so `q = $event.target.value` and `if (event.key === 'Enter') { … }` run with no eval.
+
+One caveat on property-path writes, because it is a reactivity boundary rather than a grammar one: `item.done = !item.done` **mutates in place**. The signal still holds the same object, so bindings that read it do not re-run — exactly what `data-model` already does for a member path. Reassign the root key when you need the DOM to follow: `item = { done: !item.done }`.
+
+Verified by `src/__tests__/readme-directive-table.test.ts` > "every Example cell in the directive table parses clean"
 Verified by `src/__tests__/readme-examples.test.ts` > "accepts every handler-statement form the grammar section lists"
+Verified by `src/expr/__tests__/handler-grammar.test.ts` > "a handler statement may be a bare method call"
+Verified by `src/expr/__tests__/adversarial.test.ts` > "no global is reachable by name"
+Verified by `src/expr/__tests__/adversarial.test.ts` > "every spelling of a constructor reach is denied"
 
-**Not supported:** arrow functions and any other function literal — so `items.filter(i => i.includes(query))` has no CSP-safe translation. Have the server (or the endpoint behind `data-fetch`) return the already-filtered array. Also unsupported: object literals, and a handler that is *only* a method call — which is the shape of the `$el`, `$refs` and `$dispatch` examples in the directive table below (`$el.classList.toggle('active')`, `$refs.myInput.focus()`, `$dispatch('selected', id)`, `$event.preventDefault()`). Those need the opt-in fallback.
+**Permanently unsupported**, because these are the properties that make it safe: statements inside expressions; `while` / `for` / `do`; `async` / `await`; named functions or arrows used as values (an arrow is legal *only* as the callback argument of one of the nine methods above); bare calls `f(x)` where `f` is a value held in state; `.call` / `.apply` / `.bind`; dynamic method lookup; `new`; `delete`; `in`; `instanceof`; regex literals; `this`; `\u` / `\x` / octal string escapes; destructuring; spread; and any global that is not a key in the frozen table. A request to support X is answered by adding X to a table, never by widening dispatch — see [CONTRIBUTING.md](./CONTRIBUTING.md).
 
-An expression outside the grammar is **not evaluated**. It logs a console warning, emits a `formajs:diagnostic` event, appears in `getDiagnostics()`, and marks its element `data-forma-expr-error="unsupported"` (handlers get `data-forma-handler-error="unsupported"`). It never silently renders a wrong value.
+An expression outside the grammar is **not evaluated, and it says so**. It logs a `console.error` naming the offending token and column, emits a `formajs:diagnostic` event, appears in `getDiagnostics()` with a stable code (`FORMA_E_METHOD_DENIED`, `FORMA_E_UNRESOLVED`, …), and marks its element `data-forma-expr-error="unsupported"` (handlers get `data-forma-handler-error="unsupported"`). The binding leaves whatever the DOM already had — it never writes the string `undefined`, and it never leaves the rest of the page unbound.
 
-Verified by `src/__tests__/readme-examples.test.ts` > "the arrow-function showcase this replaced does NOT run — why it was changed"
-Verified by `src/__tests__/readme-examples.test.ts` > "$event resolves in a handler on every build"
-Verified by `src/__tests__/readme-examples.test.ts` > "a bare method-call statement is NOT in the CSP-safe grammar — the opt-in note is real"
-Verified by `src/__tests__/runtime-csp-default.test.ts` > "never reaches new Function for an unparseable expression by default"
+Verified by `src/__tests__/failure-semantics.test.ts` > "a denied expression leaves the previous text in place and never renders undefined"
+Verified by `src/__tests__/failure-semantics.test.ts` > "reports one diagnostic per distinct expression, however many elements share it"
+Verified by `src/__tests__/failure-semantics.test.ts` > "a denied binding does not stop its siblings from binding"
 
-For a guarantee that comes from the artifact rather than from configuration, use the hardened build — it has the fallback removed at compile time, so no configuration can turn it on:
+Every build is equally eval-free, so the "hardened" URL is now only a second, tree-shaken bundling of the same runtime:
 
 ```html
 <script src="https://cdn.jsdelivr.net/npm/@getforma/core@1.5.0/dist/formajs-runtime-hardened.global.js"></script>
 ```
 
-Verified by `src/__tests__/runtime-csp-default.test.ts` > "a locked-off build cannot be talked into eval by any configuration"
+Verified by `src/__tests__/build-artifacts.test.ts` > "no build emits new Function or a with() scope wrapper"
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "no build can reach new Function, with any configuration"
 
 <details>
 <summary><strong>Full directive reference</strong></summary>
@@ -299,15 +312,17 @@ Verified by `src/__tests__/runtime-csp-default.test.ts` > "a locked-off build ca
 | `data-ref` | Register element for `$refs` access | `data-ref="myInput"` |
 | `$event` | The dispatched Event (also spelled `event`) | `data-on:input="{q = $event.target.value}"` |
 | `$refetch` | Re-run a `data-fetch` by its `data-fetch-id` | `data-on:click="{$refetch('items')}"` |
-| `$el` † | Current DOM element | `data-on:click="{$el.classList.toggle('active')}"` |
-| `$dispatch` † | Fire CustomEvent (bubbles, crosses Shadow DOM) | `data-on:click="{$dispatch('selected', id)}"` |
-| `$refs` † | Named element references | `data-on:click="{$refs.myInput.focus()}"` |
+| `$el` | Current DOM element (allowlisted properties only) | `data-on:click="{$el.classList.toggle('active')}"` |
+| `$dispatch` | Fire CustomEvent (bubbles, crosses Shadow DOM) | `data-on:click="{$dispatch('selected', {id})}"` |
+| `$refs` | Named element references | `data-on:click="{$refs.myInput.focus()}"` |
 
-† These three examples are handlers whose whole body is a method call — a shape the CSP-safe parser does not accept (see the grammar section above). On the default build they are dropped with a `data-forma-handler-error="unsupported"` marker; they run only after `setUnsafeEval(true)` / `data-forma-unsafe-eval="true"`.
+Every `Example` cell above is extracted from this table by the test suite and mounted. All 20 rows bind with no diagnostic — including the last three, which needed the eval fallback until the allowlist interpreter landed.
 
-Verified by `src/__tests__/readme-examples.test.ts` > "a bare method-call statement is NOT in the CSP-safe grammar — the opt-in note is real"
-Verified by `src/__tests__/readme-examples.test.ts` > "the same three examples do run once the fallback is opted in"
-Verified by `src/__tests__/readme-examples.test.ts` > "data-fetch loads into a state key and $refetch re-runs it, both without eval"
+`$el`, `$event` and `$refs` hand expressions a **wrapped** element, not the real node: reads are restricted to a fixed property list, so `$el.ownerDocument`, `$el.parentNode`, `$el.innerHTML` and `$refs.myInput.ownerDocument.location.href` are denied with a diagnostic rather than answered.
+
+Verified by `src/__tests__/readme-directive-table.test.ts` > "every Example cell in the directive table parses clean"
+Verified by `src/__tests__/readme-directive-table.test.ts` > "the three magic-variable rows actually do what the table says"
+Verified by `src/expr/__tests__/adversarial.test.ts` > "$refs.r.ownerDocument.location.href is denied"
 
 </details>
 
@@ -395,10 +410,10 @@ Most UI libraries force a choice: simple but limited (Alpine, htmx), or powerful
 
 **Islands over SPAs.** `activateIslands()` hydrates independent regions of server-rendered HTML. Each island is self-contained with error isolation, deferred hydration triggers (`visible`, `idle`, `interaction`), and disposal for module swaps.
 
-**CSP-safe.** The HTML Runtime includes a hand-written expression parser — no `eval()`, no `new Function()` by default, in any build, with an opt-in fallback for apps that want it. The hardened build removes the fallback at compile time so no configuration can enable it, and ships with zero `new Function` in the artifact — asserted by `scripts/verify-dist.mjs`, which greps the built files as the last step of `npm run build`.
+**CSP-safe.** The HTML Runtime evaluates expressions with an allowlist AST interpreter. **Zero `eval()`, zero `new Function()`, zero `with()` in every shipped artifact** — there is no opt-in fallback to leave switched on by mistake, because the fallback was deleted. The flagship example above, arrow-function callback and all, runs under `Content-Security-Policy: script-src 'self'`. Asserted by `scripts/verify-dist.mjs`, which greps the built files as the last step of `npm run build`, and by a Playwright spec that serves the fixture under a real CSP header and watches the browser console for violations.
 
-Verified by `src/__tests__/runtime-csp-default.test.ts` > "every build ships with the new Function fallback disabled"
-Verified by `src/__tests__/build-artifacts.test.ts` > "hardened builds emit no new Function at all"
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "no build can reach new Function, with any configuration"
+Verified by `src/__tests__/build-artifacts.test.ts` > "no build emits new Function or a with() scope wrapper"
 
 **What FormaJS is not:** It's not a framework with opinions about routing, data fetching, or state management. It's a reactive DOM library. You bring the architecture.
 
@@ -1022,7 +1037,7 @@ unpkg equivalent: `https://unpkg.com/@getforma/core@1.5.0/dist/forma.esm.js`
 | Build | Filename |
 |---|---|
 | HTML Runtime, standard (recommended) | `formajs-runtime.global.js` |
-| HTML Runtime, hardened — no `new Function` compiled in | `formajs-runtime-hardened.global.js` |
+| HTML Runtime, hardened — same runtime, tree-shaken, no code splitting | `formajs-runtime-hardened.global.js` |
 | HTML Runtime, standard (short alias) | `forma-runtime.js` |
 | HTML Runtime, hardened (short alias) | `forma-runtime-csp.js` |
 | Browser ESM — `h()` / signals / islands, no bundler | `forma.esm.js` |
@@ -1044,8 +1059,8 @@ The main entry point (`@getforma/core`) has **zero network code** — no fetch, 
 | `@getforma/core/http` | `createFetch`, `fetchJSON`, `createSSE`, `createWebSocket` |
 | `@getforma/core/storage` | `createLocalStorage`, `createSessionStorage`, `createIndexedDB` |
 | `@getforma/core/server` | `createAction`, `$$serverFunction`, `handleRPC`, `createRPCMiddleware`, `setRPCGuard` |
-| `@getforma/core/runtime` | HTML Runtime — `initRuntime()`, `mount()`, `unmount()`, `reconcile()`, `setUnsafeEval()`, `getDiagnostics()` |
-| `@getforma/core/runtime-hardened` | Same API, with the `new Function` fallback removed at compile time (alias: `@getforma/core/runtime-csp`) |
+| `@getforma/core/runtime` | HTML Runtime — `initRuntime()`, `mount()`, `unmount()`, `reconcile()`, `getDiagnostics()` |
+| `@getforma/core/runtime-hardened` | The same runtime, bundled without code splitting (alias: `@getforma/core/runtime-csp`) |
 | `@getforma/core/ssr` | Server-side rendering — `renderToString()`, `renderToStream()`, `sh()`, `shSuspense()`, `ssrSignal()`, `getSwapScript()` |
 | `@getforma/core/wasm` | `renderLocal()`, `renderIsland()` — render via the Rust FMIR walker compiled to WASM |
 | `@getforma/core/tc39` | TC39-shaped `State` and `Computed` classes |
@@ -1115,8 +1130,8 @@ See the [`examples/`](./examples) directory:
 | Reactive introspection (`isSignal`, `isComputed`, `trigger`, `getBatchDepth`) | **Stable** | alien-signals 3.x type guards |
 | `h()` / JSX rendering | **Stable** | Function components supported |
 | `mount()`, `createShow`, `createSwitch`, `createList` | **Stable** | |
-| HTML Runtime (`data-*` directives) | **Stable** | CSP-safe expression parser; grammar is a documented subset |
-| CSP-hardened runtime | **Stable** | No `new Function` in the artifact — asserted by `scripts/verify-dist.mjs` |
+| HTML Runtime (`data-*` directives) | **Stable** | Allowlist AST interpreter; grammar is a documented subset |
+| CSP-hardened runtime | **Stable** | No `new Function` in *any* artifact — asserted by `scripts/verify-dist.mjs` |
 | `createStore` (deep reactivity) | **Stable** | |
 | Components (`defineComponent`, lifecycle) | **Stable** | |
 | Context (`createContext`, `provide`, `inject`) | **Stable** | |

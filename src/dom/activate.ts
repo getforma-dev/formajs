@@ -26,6 +26,56 @@ export type IslandHydrateFn = (el: HTMLElement, props: Record<string, unknown> |
 
 const FORBIDDEN_PROP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+// ---------------------------------------------------------------------------
+// Scheduled-or-active island count
+// ---------------------------------------------------------------------------
+
+/**
+ * How many islands currently hold state that {@link deactivateIsland} would
+ * have to tear down: a deferred trigger's IntersectionObserver, idle timer or
+ * interaction listeners, or a hydrated island's reactive root.
+ *
+ * This exists so `deactivateIslandsIn` (src/dom/list.ts) can decide with an
+ * integer compare whether a departing list row can possibly contain an island,
+ * instead of running `querySelectorAll('[data-forma-island]')` over every
+ * removed row on every page. An island cannot acquire any of that state without
+ * going through {@link activateIslands} — which is the only caller of
+ * `hydrateIslandRoot` — so zero here means no element anywhere has anything to
+ * deactivate, and the scan is provably wasted work.
+ *
+ * The per-element `__formaTracked` marker is what keeps the count honest: both
+ * transitions are idempotent per element, so re-activating an island cannot
+ * inflate the count (which would silently restore the scan cost) and the
+ * deliberately-idempotent `deactivateIsland` cannot drive it below the number
+ * of islands still live (which would silently restore the leak).
+ *
+ * Verified by: src/dom/__tests__/list-disposal.test.ts > "does not scan a removed row when no island has ever been activated"
+ * Verified by: src/dom/__tests__/list-disposal.test.ts > "still deactivates a live island after a different island was deactivated"
+ * Verified by: src/dom/__tests__/list-disposal.test.ts > "still deactivates a live island after the same island was deactivated twice"
+ */
+let scheduledOrActiveIslands = 0;
+
+function trackIsland(el: Element): void {
+  if ((el as any).__formaTracked) return;
+  (el as any).__formaTracked = true;
+  scheduledOrActiveIslands++;
+}
+
+function untrackIsland(el: Element): void {
+  if (!(el as any).__formaTracked) return;
+  delete (el as any).__formaTracked;
+  scheduledOrActiveIslands--;
+}
+
+/**
+ * @internal — true when at least one island is scheduled or active anywhere.
+ *
+ * Verified by: src/dom/__tests__/list-disposal.test.ts > "stops scanning once every island has been deactivated with deactivateAllIslands"
+ */
+export function hasScheduledOrActiveIslands(): boolean {
+  return scheduledOrActiveIslands > 0;
+}
+
 function sanitizeProps(obj: Record<string, unknown>): Record<string, unknown> {
   for (const key of FORBIDDEN_PROP_KEYS) {
     if (key in obj) delete (obj as any)[key];
@@ -193,6 +243,12 @@ export function activateIslands(
       continue;
     }
 
+    // From here every branch either schedules deferred work or hydrates, so the
+    // island now has something to tear down and must be counted. Every exit —
+    // deactivateIsland, deactivateAllIslands, disposal of a row containing it,
+    // and the failed-hydration path below — untracks it again.
+    trackIsland(island);
+
     const trigger = island.getAttribute('data-forma-hydrate') || 'load';
 
     if (trigger === 'visible') {
@@ -277,6 +333,10 @@ export function deactivateIsland(el: HTMLElement): void {
     delete (el as any).__formaIdleCancel;
   }
   delete (el as any).__formaScheduled;
+  // Nothing above is left to tear down, so this island no longer forces list
+  // rows to be scanned. Marker-guarded, so the documented idempotence of this
+  // function cannot double-decrement and hide an island that is still live.
+  untrackIsland(el);
   // Mark disposed so any deferred callback that still fires (e.g. a timer that
   // could not be cancelled) cannot resurrect a torn-down island.
   // Verified by: src/dom/__tests__/activate-visible-leak.test.ts > "a deferred callback that fires after disposal cannot resurrect the island"
@@ -346,9 +406,14 @@ function hydrateIslandRoot(
       activeRoot = hydrateIsland(() => hydrateFn(root, props), root);
       if (activeRoot !== root) {
         // The shell was replaced — move the handle onto the element that is
-        // actually in the document, so deactivateIsland finds it there.
+        // actually in the document, so deactivateIsland finds it there. The
+        // tracking marker moves with the handle: it has to sit on the element
+        // deactivateIsland will be called with, or tearing the island down
+        // would never decrement the count.
         delete (root as any).__formaDispose;
         (activeRoot as any).__formaDispose = dispose;
+        untrackIsland(root);
+        trackIsland(activeRoot);
       }
     });
 
@@ -362,6 +427,10 @@ function hydrateIslandRoot(
       try { disposeRoot(); } catch { /* a broken disposer must not mask the original error */ }
       delete (root as any).__formaDispose;
     }
+    // A failed island has no live root and no scheduled trigger left, so it must
+    // stop forcing the row scan — otherwise one broken island on a page makes
+    // every list pay the subtree walk forever.
+    untrackIsland(root);
     root.setAttribute('data-forma-status', 'error');
   }
 }

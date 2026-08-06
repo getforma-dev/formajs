@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly, for the mutation-probe corpus only — it runs the whole suite once
+    # per probe, so it is minutes rather than seconds and does not belong on a PR.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -27,10 +32,49 @@ jobs:
       - run: npm run test:coverage
       # `build` ends in scripts/verify-dist.mjs, which asserts the properties
       # the docs claim about the shipped artifacts (self-contained CDN bundle,
-      # build-time __DEV__, no eval in the hardened builds, every exports target
+      # build-time __DEV__, no eval or new Function in ANY build, every exports target
       # present). A doc-breaking build fails here.
       - run: npm run build
       - run: npm run check:size
+
+  # The mutation-probe corpus (probes/corpus.json). Per-PR this is the cheap
+  # half: every probe's anchor must still apply to the file it names, which
+  # takes seconds and catches the failure mode where a refactor silently turns
+  # a mutant into a no-op and the detection rate climbs for free.
+  # The expensive half — actually applying each probe and running the suite —
+  # is the nightly job below.
+  # Verified by: src/__tests__/probe-corpus.test.ts > "every probe still applies to the file it names"
+  probes-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/run-probes.mjs --check
+
+  # Nightly mutation run with a detection floor. A survivor is a property
+  # nothing in the suite defends, so the floor is a ratchet: it may go up.
+  probes:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/run-probes.mjs --floor=85
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mutation-probe-results
+          path: probes/results.json
+          retention-days: 30
 
   # Packaging surface. Split out because it is Node-version independent and
   # would have caught the node10 / global-subpath / missing-package.json

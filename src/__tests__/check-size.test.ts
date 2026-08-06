@@ -10,7 +10,8 @@ import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { gzipSync } from 'node:zlib';
-import { parseImportSpecifiers, collectGraph, gzipTotal } from '../../scripts/check-size.mjs';
+import { parseImportSpecifiers, collectGraph, gzipTotal, GATES, measure } from '../../scripts/check-size.mjs';
+import { CDN_URL_ARTIFACTS } from '../../scripts/build-defines.mjs';
 
 /** Build a throwaway dist tree and hand its root to `fn`. */
 function withFixture(files: Record<string, string>, fn: (root: string) => void): void {
@@ -112,5 +113,63 @@ describe('collectGraph', () => {
       expect(total).toBe(gzipSync(entry).length + gzipSync(chunk).length);
       expect(total).toBeGreaterThan(gzipSync(entry).length);
     });
+  });
+});
+
+describe('the gate list', () => {
+  // `dist/formajs-runtime-hardened.global.js` — the artifact the docs point
+  // CSP-strict users at, and the one the exports map calls `runtime-csp` —
+  // was gated NOWHERE: not here, not in ci.yml, not in release.yml. It could
+  // have doubled in size between releases with nothing to say so.
+
+  it('gates every CDN runtime artifact the docs point at', () => {
+    const gated = new Set(GATES.map((g) => g.entry));
+    const runtimeCdnArtifacts = CDN_URL_ARTIFACTS.filter((a) => /runtime.*\.global\.js$/.test(a));
+    expect(runtimeCdnArtifacts.length, 'the CDN list should still name runtime IIFE bundles')
+      .toBeGreaterThan(1);
+    for (const artifact of runtimeCdnArtifacts) {
+      expect(gated, `${artifact} must have a size gate`).toContain(artifact);
+    }
+    // The two runtime bundles carry the expression engine, so their gates are
+    // set close to the measurement rather than at the +20% the other entries
+    // use. Anything looser than +10% over the recorded size is not a gate.
+    for (const [entry, measured] of [
+      ['dist/formajs-runtime.global.js', 31763],
+      ['dist/formajs-runtime-hardened.global.js', 30764],
+    ] as const) {
+      const gate = GATES.find((g) => g.entry === entry);
+      expect(gate, `${entry} needs its own gate`).toBeDefined();
+      expect(gate!.limit, `${entry} gate is too loose to catch a regression`)
+        .toBeLessThanOrEqual(Math.round(measured * 1.1));
+      expect(gate!.limit, `${entry} gate is below its own recorded size`)
+        .toBeGreaterThan(measured);
+    }
+  });
+
+  // The README size table is kept in step with these limits by
+  // docs-truth.test.ts > "the size table quotes the limits the CI gate actually
+  // enforces", which checks the count AND the values. Asserting it a second
+  // time here would be a weaker copy of the same claim.
+
+  it('a gate reports over when its graph exceeds the limit', () => {
+    // The gate's verdict, not just its measurement: a comparison written the
+    // wrong way round would satisfy every other case in this file. The chunk
+    // is incompressible so gzip cannot rescue it below the limit.
+    let seed = 12345;
+    const incompressible = Array.from({ length: 40_000 }, () => {
+      seed = (Math.imul(seed, 1103515245) + 12345) & 0x7fffffff;
+      return String.fromCharCode(33 + (seed % 90));
+    }).join('');
+    withFixture(
+      {
+        'dist/entry.js': 'export * from "./chunk.js";',
+        'dist/chunk.js': `export const x = ${JSON.stringify(incompressible)};`,
+      },
+      (root) => {
+        const gate = { entry: 'dist/entry.js', limit: 1000, note: 'fixture' };
+        expect(measure(gate, root).over).toBe(true);
+        expect(measure({ ...gate, limit: 10_000_000 }, root).over).toBe(false);
+      },
+    );
   });
 });

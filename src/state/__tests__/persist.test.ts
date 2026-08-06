@@ -179,3 +179,70 @@ describe('persist prototype-pollution safety (invariant)', () => {
     expect(({} as any).polluted).toBeUndefined();
   });
 });
+// ---------------------------------------------------------------------------
+// validate() — the guard that stops tampered storage reaching app state
+// ---------------------------------------------------------------------------
+
+describe('persist validate()', () => {
+  const isShape = (v: unknown): v is { n: number } =>
+    typeof v === 'object' && v !== null && typeof (v as { n?: unknown }).n === 'number';
+
+  it('refuses a stored value the validator rejects, leaving the signal at its default', () => {
+    // localStorage is attacker-writable from any XSS on the origin (and from
+    // the user, and from a previous version of the app). `validate` is the only
+    // thing standing between that and app state; replacing the check with
+    // `if (true)` used to change nothing that any test could see.
+    const storage = createMockStorage();
+    storage.setItem('k', JSON.stringify({ evil: true }));
+    const [get] = createSignal<{ n: number }>({ n: 0 });
+    const stop = persist([get, () => {}] as never, 'k', { storage, validate: isShape });
+
+    expect(get()).toEqual({ n: 0 });
+    expect(get()).not.toHaveProperty('evil');
+    stop();
+  });
+
+  it('accepts a stored value the validator approves', () => {
+    // The two-sided half: a validator that rejected everything would satisfy
+    // the test above on its own.
+    const storage = createMockStorage();
+    storage.setItem('k', JSON.stringify({ n: 42 }));
+    let current: { n: number } = { n: 0 };
+    const stop = persist(
+      [() => current, (v: { n: number }) => { current = v; }] as never,
+      'k',
+      { storage, validate: isShape },
+    );
+
+    expect(current).toEqual({ n: 42 });
+    stop();
+  });
+
+  it.each([
+    ['a JSON string where an object was stored', '"just a string"'],
+    ['a number', '7'],
+    ['null', 'null'],
+    ['an array', '[1,2,3]'],
+    ['an object with the wrong field type', '{"n":"not-a-number"}'],
+  ])('refuses %s', (_label, stored) => {
+    const storage = createMockStorage();
+    storage.setItem('k', stored);
+    let current: { n: number } = { n: -1 };
+    const stop = persist(
+      [() => current, (v: { n: number }) => { current = v; }] as never,
+      'k',
+      { storage, validate: isShape },
+    );
+    expect(current).toEqual({ n: -1 });
+    stop();
+  });
+
+  it('with no validator, any well-formed JSON hydrates — that is the documented default', () => {
+    const storage = createMockStorage();
+    storage.setItem('k', JSON.stringify({ anything: 1 }));
+    let current: unknown = { n: 0 };
+    const stop = persist([() => current, (v: unknown) => { current = v; }] as never, 'k', { storage });
+    expect(current).toEqual({ anything: 1 });
+    stop();
+  });
+});

@@ -1,17 +1,41 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self';">
+  <!--
+    A strict policy: no inline script, no eval, everything from this origin.
+    FormaJS needs nothing more than this in any build — see CSP.md.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self';">
   <title>FormaJS CSP Example</title>
 </head>
 <body>
   <script src="../../dist/forma-runtime-csp.js"></script>
-  <div data-forma-state='{ "count": 0 }'>
+
+  <div data-forma-state='{
+    "count": 0,
+    "query": "",
+    "items": ["Apples", "Bananas", "Cherries", "Dates", "Elderberries"]
+  }'>
     <h1>CSP-Safe Counter</h1>
-    <p data-text="count"></p>
-    <button data-on:click="count++">Increment</button>
-    <button data-on:click="count = 0">Reset</button>
+    <p data-text="{count}"></p>
+    <button data-on:click="{count++}">Increment</button>
+    <button data-on:click="{count = 0}">Reset</button>
+
+    <h2>…and a filter, with an arrow function</h2>
+    <!--
+      `items.filter(i => …)` is the expression that used to need 'unsafe-eval'.
+      It runs here under the policy above, on the allowlist AST interpreter.
+    -->
+    <input data-model="{query}" placeholder="Search fruits...">
+    <p data-computed="matchCount = items.filter(i => i.toLowerCase().includes(query.toLowerCase())).length"
+       data-text="{'Found ' + matchCount + ' results'}"></p>
+    <ul data-list="{items.filter(i => i.toLowerCase().includes(query.toLowerCase()))}">
+      <li>{item}</li>
+    </ul>
+
+    <h2>…and a handler whose whole body is a method call</h2>
+    <button data-on:click="{$el.classList.toggle('active')}">Toggle a class on myself</button>
   </div>
 </body>
 </html>

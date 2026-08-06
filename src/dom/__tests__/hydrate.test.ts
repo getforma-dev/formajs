@@ -749,7 +749,10 @@ describe('adoptNode', () => {
     warnSpy.mockRestore();
   });
 
-  it('skips static string children', () => {
+  it('adopts static string children without touching the server text node', () => {
+    // Static text is already in the SSR markup; adoption must leave the exact
+    // node the server produced in place. Creating a replacement would discard
+    // whatever the browser had already laid out and painted.
     const desc: HydrationDescriptor = {
       type: 'element',
       tag: 'div',
@@ -759,12 +762,19 @@ describe('adoptNode', () => {
 
     const ssrEl = document.createElement('div');
     ssrEl.textContent = 'static text';
+    const original = ssrEl.firstChild;
 
-    // Should not throw
     adoptNode(desc, ssrEl);
+
+    expect(ssrEl.childNodes).toHaveLength(1);
+    expect(ssrEl.firstChild).toBe(original); // same node, not a re-render
+    expect(ssrEl.textContent).toBe('static text');
   });
 
-  it('skips falsy children (false, null, undefined)', () => {
+  it('adopts falsy children (false, null, undefined) without creating nodes', () => {
+    // `cond && <p/>` renders nothing on the server, so adoption must not
+    // materialise a stray text node the server never emitted — that is a
+    // hydration mismatch the next diff would have to reconcile away.
     const desc: HydrationDescriptor = {
       type: 'element',
       tag: 'div',
@@ -774,8 +784,10 @@ describe('adoptNode', () => {
 
     const ssrEl = document.createElement('div');
 
-    // Should not throw
     adoptNode(desc, ssrEl);
+
+    expect(ssrEl.childNodes).toHaveLength(0);
+    expect(ssrEl.innerHTML).toBe('');
   });
 
   it('creates real DOM for island marker regions', () => {
@@ -905,8 +917,12 @@ describe('adoptNode', () => {
 
     adoptNode(desc, ssrEl);
 
-    expect(ssrEl.querySelector('.alert-error')).toBeTruthy();
-    expect(ssrEl.querySelector('.alert-info')).toBeTruthy();
+    // Two islands, not one: cross-island bleed is invisible with a single
+    // instance, and "an .alert-error exists somewhere" would also be satisfied
+    // by both markers adopting the same descriptor.
+    expect([...ssrEl.children].map((c) => c.className)).toEqual(['alert-error', 'alert-info']);
+    expect(ssrEl.querySelectorAll('.alert-error')).toHaveLength(1);
+    expect(ssrEl.querySelectorAll('.alert-info')).toHaveLength(1);
   });
 
   it('does not duplicate a nested island that already has an SSR shell', () => {
@@ -2086,7 +2102,7 @@ describe('adoptNode function child returning descriptor', () => {
       ssrSpan.textContent = 'existing';
       ssrEl.appendChild(ssrSpan);
 
-      const [msg] = createSignal('hello');
+      const [msg, setMsg] = createSignal('hello');
 
       const desc: HydrationDescriptor = {
         type: 'element',
@@ -2097,8 +2113,22 @@ describe('adoptNode function child returning descriptor', () => {
 
       adoptNode(desc, ssrEl);
 
-      // Function returned a string, not a descriptor — text handling
-      // The span is at cursor but function returns text, so it should not be adopted as element
+      // The function returned a string, not a descriptor, so the <span> at the
+      // cursor must NOT be adopted as that child's element — it survives
+      // untouched and the reactive text lands beside it.
+      expect(ssrEl.querySelector('span')).toBe(ssrSpan);
+      expect(ssrSpan.textContent).toBe('existing');
+      expect(ssrEl.textContent).toContain('hello');
+
+      // …and it stays a live binding across three updates, not a one-shot write.
+      setMsg('world');
+      expect(ssrEl.textContent).toContain('world');
+      expect(ssrEl.textContent).not.toContain('hello');
+      setMsg('third');
+      expect(ssrEl.textContent).toContain('third');
+      setMsg('');
+      expect(ssrEl.textContent).toBe('existing');
+      expect(ssrEl.querySelector('span')).toBe(ssrSpan);
     });
 
     dispose?.();

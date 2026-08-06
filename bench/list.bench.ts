@@ -21,7 +21,7 @@
  */
 
 import { bench, describe } from 'vitest';
-import { createSignal, createRoot } from 'forma/reactive';
+import { createSignal, createRoot, untrack } from 'forma/reactive';
 import { createList, reconcileList, h } from 'forma/dom';
 import {
   HEAVY,
@@ -61,6 +61,111 @@ describe('createList: initial render', () => {
     bench(`${n} rows: h() + appendChild by hand, no list (floor)`, () => {
       const parent = detachedContainer();
       for (let i = 0; i < n; i++) parent.appendChild(renderRow(rows[i]!));
+    }, preset);
+  }
+
+  /**
+   * The same nodes again, inserted before a trailing comment marker instead of
+   * appended. This isolates the ONE structural difference between `createList`
+   * and the appendChild floor above: the list delimits its range with comment
+   * markers (so it can live inside `<table>`/`<ul>`/`<select>`) and therefore
+   * inserts every row with `insertBefore(node, endMarker)`.
+   *
+   * It exists because the appendChild floor is linear (exactly 10× for 10× the
+   * rows) while `createList` is not, and the superlinearity had been attributed
+   * to Forma's per-row bookkeeping on suspicion alone. It is not: happy-dom's
+   * `insertBefore` runs `nodeArray.includes(referenceNode)` AND
+   * `nodeArray.indexOf(referenceNode)` on every call, which is two O(n) scans
+   * per inserted row and O(n²) over the render. A browser does this in O(1).
+   * See docs/PERFORMANCE.md § createList initial render.
+   */
+  for (const [n, preset] of [[1000, MACRO], [10_000, HEAVY]] as const) {
+    const rows = makeRows(n);
+    bench(`${n} rows: h() + insertBefore an end marker by hand, no list (floor)`, () => {
+      const parent = detachedContainer();
+      const endMarker = document.createComment('forma-list-end');
+      parent.appendChild(endMarker);
+      for (let i = 0; i < n; i++) parent.insertBefore(renderRow(rows[i]!), endMarker);
+    }, preset);
+  }
+
+  /**
+   * The other half: the per-row bookkeeping with NO DOM at all — one child root
+   * and one index signal per row, the keyed cache, and the re-index pass that
+   * runs after every reconcile. That is everything `createList` does around
+   * `renderFn`, and nothing else.
+   *
+   * With the insertBefore floor above, this splits the gap between `createList`
+   * and the appendChild floor into a DOM half and a reactive half, so the next
+   * person does not have to guess which one is not scaling.
+   */
+  interface RowState { setIndex: (v: number) => void; dispose: () => void }
+
+  for (const [n, preset] of [[1000, MACRO], [10_000, HEAVY]] as const) {
+    bench(`${n} rows: per-row root + index signal + cache, no DOM (floor)`, () => {
+      createRoot((dispose) => {
+        const cache = new Map<number, RowState>();
+        for (let i = 0; i < n; i++) {
+          const [, setIndex] = createSignal(0);
+          let rowDispose!: () => void;
+          createRoot((d) => { rowDispose = d; });
+          cache.set(i, { setIndex, dispose: rowDispose });
+        }
+        const rebuilt = new Map<number, RowState>();
+        for (let i = 0; i < n; i++) {
+          const cached = cache.get(i)!;
+          cached.setIndex(i);
+          rebuilt.set(i, cached);
+        }
+        dispose();
+      });
+    }, preset);
+  }
+
+  /**
+   * The whole shape by hand, with the reconciler taken out: the marker pair in a
+   * DocumentFragment, every row built inside its own child root with an index
+   * signal and a cache entry and inserted before the end marker, the fragment
+   * then mounted into the container, the cache rebuilt and re-indexed, and the
+   * parent root disposed. Byte for byte what `createList` does on a first
+   * render, minus `reconcileList` and the keyed bookkeeping around it.
+   *
+   * This is the benchmark that decides the question, because the two floors
+   * above do NOT add up to `createList`: if this one lands on `createList`'s
+   * number then nothing in the reconciler is superlinear and the growth belongs
+   * to the environment, and the ladder (append → insertBefore → +reactive →
+   * +fragment mount) says which step each millisecond came from.
+   */
+  for (const [n, preset] of [[1000, MACRO], [10_000, HEAVY]] as const) {
+    const rows = makeRows(n);
+    bench(`${n} rows: hand-rolled list, everything but the reconciler (floor)`, () => {
+      createRoot((dispose) => {
+        const container = detachedContainer();
+        const fragment = document.createDocumentFragment();
+        const startMarker = document.createComment('forma-list-start');
+        const endMarker = document.createComment('forma-list-end');
+        fragment.appendChild(startMarker);
+        fragment.appendChild(endMarker);
+
+        const cache = new Map<number, RowState>();
+        for (let i = 0; i < n; i++) {
+          const row = rows[i]!;
+          const [, setIndex] = createSignal(0);
+          let rowDispose!: () => void;
+          const el = createRoot((d) => { rowDispose = d; return untrack(() => renderRow(row)); });
+          fragment.insertBefore(el, endMarker);
+          cache.set(row.id, { setIndex, dispose: rowDispose });
+        }
+        container.appendChild(fragment);
+
+        const rebuilt = new Map<number, RowState>();
+        for (let i = 0; i < n; i++) {
+          const cached = cache.get(rows[i]!.id)!;
+          cached.setIndex(i);
+          rebuilt.set(rows[i]!.id, cached);
+        }
+        dispose();
+      });
     }, preset);
   }
 });

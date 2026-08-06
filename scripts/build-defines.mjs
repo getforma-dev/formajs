@@ -25,9 +25,6 @@ export const DEV_BUILD_FLAG = '__FORMA_DEV_BUILD__';
  */
 export const RAW_SOURCE_DEV_GLOBAL = '__FORMA_DEV__';
 
-/** Free identifier that selects the unsafe-eval posture of a runtime build. */
-export const EVAL_MODE_FLAG = '__FORMA_UNSAFE_EVAL_MODE__';
-
 /**
  * esbuild `define` entries applied to every shipped artifact. Values are source
  * text, per esbuild's contract.

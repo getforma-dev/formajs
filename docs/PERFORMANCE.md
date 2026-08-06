@@ -10,7 +10,9 @@ event-handler filter on every generic attribute write, changed effect-flush
 error isolation, added disposal work to hydrated list rows, hardened marker
 parsing, and made the CSP-safe interpreter the default expression engine — and
 nobody had measured whether any of it cost anything. Two of those changes turned
-out to cost a great deal. See [What the hardening cost](#what-the-hardening-cost).
+out to cost a great deal. **Both are fixed**, with the safety property intact in
+each case; the measurements that found them and the measurements that closed
+them are in [What the hardening cost](#what-the-hardening-cost).
 
 ## Running it
 
@@ -93,9 +95,16 @@ copied into both, dev diagnostics off in both, three runs each. Nothing in the
 working tree was touched. A row counts as a regression only when the change
 exceeds the larger of the two trees' spreads.
 
-### 1. List row removal — 4 µs → 23 µs per removed row
+The two regressions that were worth fixing have a **The fix** subsection with its
+own numbers. Those come from `npm run bench:compare` (5 runs) against the
+committed baseline — the hardened tree, measured on the same machine — so the
+before/after is produced by the same instrument that found the problem. Their
+"before" column is that baseline, not the `git archive` A/B above, which is why
+it does not match the A/B table row for row.
 
-`removeRow` → `deactivateIslandsIn` (`src/dom/list.ts`) now runs
+### 1. List row removal — 4 µs → 23 µs per removed row — **FIXED**
+
+`removeRow` → `deactivateIslandsIn` (`src/dom/list.ts`) ran
 `row.querySelectorAll('[data-forma-island]')` on **every departing row**, plus an
 `instanceof` and a `hasAttribute`. That is a full subtree scan per removal, in
 the one place the reconciler previously did a single `parent.removeChild`.
@@ -124,21 +133,70 @@ interaction listeners alive against detached DOM for the lifetime of the page.
 
 Verified by: `src/dom/__tests__/list-disposal.test.ts` > "deactivates an island inside a removed row"
 
-But the price is being paid by every list on every page, and
-almost none of them contain an island. **Not worth it as written.** The same
-guarantee is available for an integer compare: have `activateIslands` /
-`hydrateIslandRoot` maintain a count of scheduled-or-active islands and have
-`deactivateIslandsIn` return immediately when it is zero. An island cannot exist
-without having gone through one of those two paths, so nothing is weakened, and
-a page with no islands stops paying entirely.
+But the price was being paid by every list on every page, and almost none of them
+contain an island. It was **not worth it as written**, and it did not have to be:
+the same guarantee is available for an integer compare.
 
-### 2. The URL guard runs before the identity cache — +50 ns on every no-op reactive URL write
+#### The fix
 
-`handleGenericAttr` (`src/dom/element.ts`) checks `isDangerousUrl` *before* it
-checks whether the value it is about to write is the one already there.
+`activateIslands` and `hydrateIslandRoot` (`src/dom/activate.ts`) now maintain a
+count of scheduled-or-active islands, and `deactivateIslandsIn` returns
+immediately when it is zero. An island cannot acquire anything worth tearing down
+— a deferred trigger's observer, idle timer or interaction listeners, or a
+hydrated reactive root — without going through one of those two paths, so a zero
+count is *proof* that no row can contain one, not a heuristic. Nothing about the
+guarantee is weakened; a page with no islands stops paying entirely.
+
+The count is per-element and marker-guarded (`__formaTracked`), which is what
+keeps it honest in both directions: a count that drifts **up** silently restores
+the scan cost, and a count that drifts **down** silently restores the leak. Every
+teardown path decrements — `deactivateIsland`, `deactivateAllIslands`, disposal
+of a row containing one, and the failed-hydration path — and re-activating an
+island cannot double-count it.
+
+Verified by: `src/dom/__tests__/list-disposal.test.ts` > "does not scan a removed row when no island has ever been activated"
+Verified by: `src/dom/__tests__/list-disposal.test.ts` > "scans every removed row while an island is live"
+Verified by: `src/dom/__tests__/list-disposal.test.ts` > "still deactivates a live island after a different island was deactivated"
+Verified by: `src/dom/__tests__/list-disposal.test.ts` > "still deactivates a live island after the same island was deactivated twice"
+Verified by: `src/dom/__tests__/list-disposal.test.ts` > "stops scanning after an island whose hydrate function threw"
+Verified by: `src/dom/__tests__/list-disposal.test.ts` > "moves the count to the element that replaced an empty island shell"
+
+Measured with `npm run bench:compare` (5 runs) against the committed baseline,
+i.e. the same instrument and the same machine that found the regression:
+
+| benchmark | hardened (baseline) | fixed | change |
+| --- | ---: | ---: | ---: |
+| 1000 plain rows: build + reconcileList removes all | 22.368 ms | 7.249 ms | **−67.6%** |
+| 1000 6-node rows: build + reconcileList removes all | 63.630 ms | 45.665 ms | **−28.2%** |
+| append 100 + trim back to 1000 (round trip) | 2.558 ms | 963.4 µs | **−62.3%** |
+| prepend 100 + trim back to 1000 (round trip) | 2.575 ms | 996.5 µs | **−61.3%** |
+| remove first 100 + restore (round trip) | 2.543 ms | 955.4 µs | **−62.4%** |
+| 1000 rows → [] → 1000 rows (drain + refill) | 28.579 ms | 10.906 ms | **−61.8%** |
+| 1000 plain rows: build only *(control)* | 7.140 ms | 7.101 ms | −0.5% |
+| 1000 plain rows: build + removeChild by hand *(control)* | 7.187 ms | 7.292 ms | +1.5% |
+| 1000 6-node rows: build only *(control)* | 41.150 ms | 41.691 ms | +1.3% |
+| 1000 6-node rows: build + removeChild by hand *(control)* | 45.405 ms | 45.685 ms | +0.6% |
+
+Every control stayed put, which is what makes this attribution as airtight as the
+original one. Subtracting the build-only control again, per removed row:
+
+| row shape | pre-hardening | hardened | fixed | raw `removeChild` floor, same run |
+| --- | ---: | ---: | ---: | ---: |
+| 6-node row | 4.0 µs | 22.8 µs | **4.0 µs** | 4.0 µs |
+| flat `<li>` | <0.4 µs | 15.3 µs | **0.15 µs** | 0.19 µs |
+
+Removal is back on the floor: `reconcileList` removing 1000 six-node rows now
+costs 45.665 ms against 45.685 ms for the same removals done by hand with
+`parent.removeChild`, a 0.04% difference against a 3.2% noise floor. The guard's
+residual cost is one integer compare per removed row and is not resolvable.
+
+### 2. The URL guard runs before the identity cache — +50 ns on every no-op reactive URL write — **FIXED**
+
+`handleGenericAttr` (`src/dom/element.ts`) checked `isDangerousUrl` *before* it
+checked whether the value it was about to write is the one already there.
 `isDangerousUrl` allocates (`String.replace` over the whole value) and runs two
-regexes, so a `href` binding whose value never changes pays full price on every
-flush and then writes nothing.
+regexes, so a `href` binding whose value never changes paid full price on every
+flush and then wrote nothing.
 
 | benchmark | before | after | change |
 | --- | ---: | ---: | ---: |
@@ -147,10 +205,49 @@ flush and then writes nothing.
 Per write: **27 ns → 77 ns**.
 
 **Is it worth the safety it buys?** The safety is worth having and this cost is
-not needed to get it. Moving the `cache[key] === strVal` check ahead of the guard
-is safe by construction: an identical string on the same element was already
-accepted by the same guard on the write that populated the cache. That is a pure
-win, not a trade.
+not needed to get it.
+
+#### The fix
+
+The `cache[key] === strVal` check now runs ahead of the guard. That is safe by
+construction rather than a trade: an identical string on the same element was
+already accepted by the same guard on the write that populated the cache.
+
+Every path that can populate or invalidate that cache entry was checked, because
+one unguarded writer would turn the identity check into a bypass:
+
+- **The reject path stores `null`, never the refused string** (`cache[key] = null;
+  el.removeAttribute(key)`). A refused value therefore cannot leave an entry that
+  a later identical payload would match. This is the one that would have made the
+  reordering unsafe, and it is now pinned by a test.
+- **No other handler writes this key.** `applyProp` routes `class`/`className` to
+  `handleClass` (caches under `class`), `style` to `handleStyle` (`style`),
+  `dangerouslySetInnerHTML` to `handleInnerHTML` (`innerHTML`), every
+  `BOOLEAN_ATTRS` name to `handleBooleanAttr` (caches a boolean under its own
+  name), and `xlink:*` to `handleXLink` (which does not use the cache at all).
+  `BOOLEAN_ATTRS` and `URL_ATTRS` are disjoint, so none of those keys is
+  URL-bearing and none of them reaches `handleGenericAttr`.
+- **The cache object is per element and never reused.** `h()` allocates a fresh
+  `Object.create(null)` the first time an element gets a dynamic prop; nothing
+  clears or transplants one.
+- **Hydration adoption does not touch it.** `applyDynamicProps`
+  (`src/dom/hydrate.ts`) runs `isUnsafeAttrWrite` on every run and writes no cache
+  entry, so it cannot seed one the guard has not seen.
+- **`el.localName`, the guard's other input, cannot change** for the life of the
+  element, so a cache hit really is the same (element, attribute, value) triple.
+
+Verified by: `src/dom/__tests__/element-url-safety.test.ts` > "a refused URL leaves no cache entry that would let the same string through unchecked"
+Verified by: `src/dom/__tests__/element-url-safety.test.ts` > "runs the URL guard once per distinct value, not once per flush"
+
+| benchmark | hardened (baseline) | fixed | change |
+| --- | ---: | ---: | ---: |
+| href bound to an unchanging URL: write → cache hit (×500) | 37.9 µs | 13.9 µs | **−63.3%** |
+| 3 reactive attrs incl. href: signal write → attr writes (×500) *(changing values)* | 1.780 ms | 1.751 ms | −1.6% |
+| isDangerousUrl on a benign https URL (×20000) *(control)* | 1.026 ms | 1.034 ms | +0.8% |
+
+Per write: **76 ns → 28 ns**, against 27 ns on the pre-hardening tree — the whole
+regression is gone and the guard itself is untouched (a write whose value *does*
+change still pays for it, and did not move).
 
 ### 3. `isDangerousUrl` itself — +7 ns per call
 
@@ -236,6 +333,69 @@ descent is slower than V8's parser. Break-even is about **85 updates per
 expression**, after which the CSP-safe path is strictly cheaper — and it is the
 one that does not require `unsafe-eval` in the page's CSP.
 
+## `createList` initial render: where the superlinearity comes from
+
+The benchmark lane flagged this separately from the hardening, because it is on
+both trees: `createList`'s initial render is superlinear where the hand-built
+floor is linear. `h()` + `appendChild` over the same rows is *exactly* 10× for
+10× the rows; `createList` goes from 1.2× that floor at 1000 rows to 2.6× at
+10 000. The named suspects were the per-row root, the per-row index signal and
+the cache rebuild.
+
+**None of them. Nothing in the list code is superlinear — the environment is.**
+Three floors were added to `bench/list.bench.ts` to split the gap; all four rows
+below come from one 5-run pass — the same tight capture as the before/after
+tables above, not the noisier one in [Baseline](#baseline) — so they are
+comparable with each other and not with that table. Parenthesised figures are
+that row's run-to-run spread.
+
+| | 1000 rows | 10 000 rows | ×10 rows costs |
+| --- | ---: | ---: | ---: |
+| `h()` + `appendChild` by hand *(floor)* | 7.306 ms *(9.7%)* | 69.676 ms *(20.1%)* | **9.5×** — linear |
+| `h()` + `insertBefore` an end marker by hand | 7.615 ms *(6.6%)* | 93.640 ms *(4.7%)* | **12.3×** |
+| per-row root + index signal + cache, **no DOM** | 211.9 µs *(8.0%)* | 3.264 ms *(35.0%)* | 15.4× |
+| `createList` → mount → first reconcile | 8.947 ms *(1.8%)* | 179.156 ms *(2.0%)* | **20.0×** |
+
+At 10 000 rows `createList` is 109.5 ms above the `appendChild` floor. Inserting
+before a marker instead of appending accounts for **24.0 ms** of that (22%), and
+the per-row reactive bookkeeping — the thing that was suspected — accounts for
+**3.3 ms** (3%), which is 0.33 µs per row against a 179 ms render. It is not the
+answer.
+
+The answer is that `createList` delimits its range with comment markers instead
+of a wrapper `<div>` (so a list can live inside `<table>`/`<ul>`/`<select>`), and
+that shape is quadratic *in happy-dom*:
+
+- **`insertBefore(row, endMarker)`** runs `nodeArray.includes(referenceNode)` and
+  then `nodeArray.indexOf(referenceNode)` — two full scans of the parent's child
+  array, per inserted row (`happy-dom/lib/nodes/node/Node.js`). That is the 24 ms.
+- **`container.appendChild(fragment)`**, which mounts the finished list, drains
+  the fragment with `while (childNodes.length) this.appendChild(childNodes[0])`,
+  and each of those moves calls `removeChild`, which does `splice(index, 1)` on
+  the source's `nodeArray` *and* on its `elementArray` — shifting every remaining
+  node, n times. By subtraction that is most of the remaining ~82 ms; the fourth
+  floor below, which includes the fragment mount, is what confirms the total.
+
+A browser does both in O(1): a real DOM keeps sibling pointers rather than an
+array, and moving a `DocumentFragment` is one splice.
+
+The decisive check is the fourth floor: a **hand-rolled list, everything but the
+reconciler** — the marker pair in a fragment, one child root and one index signal
+per row, `insertBefore` before the end marker, the fragment mounted, the cache
+rebuilt and re-indexed, the root disposed. It contains no `reconcileList` and no
+keyed bookkeeping at all, and it lands *on* `createList`: 219.7 ms against
+186.6 ms in one 5-run pass and 229.4 ms against 232.9 ms in another, with both
+rows' spreads between 20% and 53% in those runs. Level, within a noise floor that
+wide. **The reconciler adds nothing measurable to a first render** — every loop on
+that path is a single pass (two Map builds, one array fill, one disposal sweep),
+which reading the code also says.
+
+So the row is a measurement artifact of happy-dom, not a defect, and the earlier
+note in this document — "something in the per-row bookkeeping … is not scaling
+with the reconciler" — was wrong. What would be worth measuring is the same
+sweep in a real browser, where both quadratic terms disappear; until someone does
+that, the 10 000-row number here says more about happy-dom than about Forma.
+
 ## What the numbers say about the thesis
 
 Figures in this section come from the table below (the hardened working tree,
@@ -260,14 +420,13 @@ switch.
 
 **Keyed reconciliation is cheap; building rows is what costs.** A full 1000-row
 reorder costs **2.6 ms** — LIS-minimal moves, no diffing — while the unchanged
-case costs 97 µs. Initial render: 100 rows 497 µs, 1000 rows 8.78 ms, 10 000 rows
-177 ms. That last step is superlinear where it should not be: `h()` +
-`appendChild` by hand over the same rows costs 7.25 ms and 68.9 ms, i.e. exactly
-10× for 10× the rows, so `createList` goes from 1.2× the hand-built floor at 1000
-rows to **2.6× at 10 000**. Something in the per-row bookkeeping (a root and an
-index signal per row, plus the cache rebuild) is not scaling with the reconciler.
-Worth a look; it is not caused by the hardening (the same ratio holds on the
-pre-hardening tree).
+case costs 97 µs. Removing rows is now back on the raw `removeChild` floor: 1000
+six-node rows leave in 45.7 ms against 45.7 ms by hand. Initial render: 100 rows
+497 µs, 1000 rows 8.78 ms, 10 000 rows 177 ms — and that last step is superlinear
+against the `h()` + `appendChild` floor, which is exactly linear. That is
+happy-dom's array-backed child lists, not Forma's per-row bookkeeping, and the
+floors that prove it are in
+[`createList` initial render](#createlist-initial-render-where-the-superlinearity-comes-from).
 
 **Adopting server-rendered DOM beats building it.** With the HTML parse
 subtracted from both sides (see the happy-dom caveat above), adopting 1000 keyed
@@ -291,232 +450,250 @@ noise floor).
 
 ## Baseline
 
+**Read this table's spread column before reading anything else in it.** This
+capture is noticeably noisier than the one it replaced: the median spread across
+all 101 rows is **14%** (40 rows above 20%), against 6% for the capture used for
+the before/after tables above, which ran earlier in the same session on the same
+machine. Three consecutive 5-run captures got 28%, 15% and 14% — the machine got
+worse and stayed worse — so this is machine state, not the code. Nothing was
+cherry-picked *within* a capture; the tightest of the three whole captures was
+kept. Rows whose spread is above ~20% here are worth re-measuring before they are
+believed, and `npm run bench:compare` against this baseline will be
+correspondingly less sensitive, because its verdict floor is the larger of the
+two spreads.
+
 <!-- BENCH:START -->
-_5 runs × 60–600 samples · node v20.16.0 · win32 x64 · fix/ksx-dogfood-findings@8dc2c1e + uncommitted changes · generated 2026-08-05 by `npm run bench:doc`_
+_5 runs × 60–600 samples · node v20.16.0 · win32 x64 · fix/ksx-dogfood-findings@686a5dc + uncommitted changes · generated 2026-08-06 by `npm run bench:doc`_
 
 #### bench/element.bench.ts — attribute-safety guards in isolation
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| isEventHandlerAttr on a non-event name (×20000) | 241.7 µs | 376.8 µs | 12 ns | 9.9% |
-| isUrlAttr on a non-URL name (×20000) | 218.5 µs | 286.0 µs | 11 ns | 6.1% |
-| isDangerousUrl on a benign https URL (×20000) | 1.026 ms | 1.112 ms | 51 ns | 3.4% |
-| isDangerousUrl on an obfuscated javascript: URL (×20000) | 2.303 ms | 2.541 ms | 115 ns | 5.2% |
-| isUnsafeAttrWrite on &lt;a href&gt; with a benign URL (×20000) | 1.372 ms | 1.628 ms | 69 ns | 8.6% |
+| isEventHandlerAttr on a non-event name (×20000) | 235.4 µs | 367.4 µs | 12 ns | 2.4% |
+| isUrlAttr on a non-URL name (×20000) | 243.7 µs | 313.1 µs | 12 ns | 12.4% |
+| isDangerousUrl on a benign https URL (×20000) | 1.036 ms | 1.168 ms | 52 ns | 3.1% |
+| isDangerousUrl on an obfuscated javascript: URL (×20000) | 2.234 ms | 3.104 ms | 112 ns | 4.8% |
+| isUnsafeAttrWrite on &lt;a href&gt; with a benign URL (×20000) | 1.404 ms | 2.928 ms | 70 ns | 15.6% |
 
 #### bench/element.bench.ts — h(): reactive attribute updates
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 3 reactive attrs incl. href: signal write → attr writes (×500) | 1.780 ms | 4.539 ms | 3.56 µs | 18.4% |
-| 3 reactive attrs, none URL-bearing (control): write (×500) | 1.267 ms | 3.696 ms | 2.53 µs | 25.4% |
-| href bound to an unchanging URL: write → cache hit (×500) | 37.9 µs | 41.3 µs | 76 ns | 5.1% |
+| 3 reactive attrs incl. href: signal write → attr writes (×500) | 1.823 ms | 8.270 ms | 3.65 µs | 103.1% |
+| 3 reactive attrs, none URL-bearing (control): write (×500) | 1.292 ms | 6.628 ms | 2.58 µs | 167.4% |
+| href bound to an unchanging URL: write → cache hit (×500) | 13.8 µs | 34.7 µs | 28 ns | 105.2% |
 
 #### bench/element.bench.ts — h(): realistic component subtree
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| card subtree: 6 elements, 11 attrs, 1 href, 2 handlers (×200) | 10.591 ms | 16.067 ms | 52.96 µs | 6.7% |
+| card subtree: 6 elements, 11 attrs, 1 href, 2 handlers (×200) | 12.300 ms | 21.723 ms | 61.50 µs | 25.5% |
 
 #### bench/element.bench.ts — h(): static attribute writes
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| h('div') with 4 static non-URL attrs (×500) | 2.089 ms | 6.699 ms | 4.18 µs | 60.3% |
-| document.createElement + 4 setAttribute, no library (×500) | 2.004 ms | 6.598 ms | 4.01 µs | 47.1% |
-| h('div') with no props (×500) | 737.5 µs | 4.117 ms | 1.48 µs | 15.3% |
+| h('div') with 4 static non-URL attrs (×500) | 2.191 ms | 9.234 ms | 4.38 µs | 147.6% |
+| document.createElement + 4 setAttribute, no library (×500) | 2.109 ms | 9.519 ms | 4.22 µs | 124.2% |
+| h('div') with no props (×500) | 750.9 µs | 5.513 ms | 1.50 µs | 103.0% |
 
 #### bench/element.bench.ts — h(): URL-bearing static attribute writes
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| h('a') with href + 3 static non-URL attrs (×500) | 2.645 ms | 10.201 ms | 5.29 µs | 54.9% |
-| h('a') with the same 4 attrs, none URL-bearing (control) (×500) | 2.093 ms | 7.716 ms | 4.19 µs | 62.5% |
-| h('img') with src + srcset + alt (×500) | 2.549 ms | 7.031 ms | 5.10 µs | 34.2% |
+| h('a') with href + 3 static non-URL attrs (×500) | 2.757 ms | 11.169 ms | 5.51 µs | 119.7% |
+| h('a') with the same 4 attrs, none URL-bearing (control) (×500) | 2.202 ms | 9.974 ms | 4.40 µs | 140.3% |
+| h('img') with src + srcset + alt (×500) | 2.641 ms | 11.569 ms | 5.28 µs | 84.5% |
 
 #### bench/expression.bench.ts — expression compile
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| new Function compile, unique expressions (×200) | 78.5 µs | 95.7 µs | 393 ns | 2.3% |
-| CSP parser: mount unique arithmetic expressions (×40) | 601.7 µs | 3.329 ms | 15.04 µs | 6.6% |
-| CSP parser: mount bare identifiers, plumbing control (×40) | 331.2 µs | 2.395 ms | 8.28 µs | 1.6% |
-| CSP parser: mount every supported grammar shape (×16) | 207.9 µs | 389.0 µs | 12.99 µs | 2.9% |
+| new Function compile, unique expressions (×200) | 80.7 µs | 102.6 µs | 404 ns | 7.2% |
+| CSP parser: mount unique arithmetic expressions (×40) | 591.8 µs | 3.329 ms | 14.80 µs | 14.1% |
+| CSP parser: mount bare identifiers, plumbing control (×40) | 344.7 µs | 2.785 ms | 8.62 µs | 13.1% |
+| CSP parser: mount every supported grammar shape (×16) | 222.3 µs | 682.7 µs | 13.89 µs | 14.0% |
 
 #### bench/expression.bench.ts — expression evaluate: CSP-safe interpreter (shipped)
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 8 count-dependent expressions: write → evaluate → text (×20) | 46.5 µs | 59.5 µs | 2.33 µs | 7.0% |
-| 8 × bare identifier, plumbing control: write → text (×20) | 39.3 µs | 44.0 µs | 1.97 µs | 3.9% |
+| 8 count-dependent expressions: write → evaluate → text (×20) | 48.7 µs | 58.0 µs | 2.43 µs | 9.3% |
+| 8 × bare identifier, plumbing control: write → text (×20) | 39.3 µs | 44.4 µs | 1.97 µs | 4.4% |
 
 #### bench/expression.bench.ts — expression evaluate: new Function path (reconstructed)
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 8 count-dependent expressions via new Function: write → evaluate → text (×20) | 85.2 µs | 96.3 µs | 4.26 µs | 3.1% |
-| 8 × bare identifier via new Function, plumbing control (×20) | 65.6 µs | 70.5 µs | 3.28 µs | 2.2% |
-| 8 count-dependent expressions as hand-written closures, floor (×20) | 23.3 µs | 28.9 µs | 1.17 µs | 7.2% |
+| 8 count-dependent expressions via new Function: write → evaluate → text (×20) | 85.2 µs | 182.1 µs | 4.26 µs | 6.7% |
+| 8 × bare identifier via new Function, plumbing control (×20) | 66.1 µs | 74.1 µs | 3.31 µs | 4.3% |
+| 8 count-dependent expressions as hand-written closures, floor (×20) | 22.9 µs | 31.3 µs | 1.14 µs | 6.7% |
 
 #### bench/hydrate.bench.ts — hydration: adopt an SSR keyed list
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 100 rows: parse markup only (control) | 567.1 µs | 1.039 ms | — | 2.8% |
-| 100 rows: parse + adopt by data-forma-key | 770.6 µs | 1.279 ms | — | 1.5% |
-| 100 rows: client-side createList, no SSR markup (comparison) | 634.3 µs | 1.114 ms | — | 3.1% |
-| 1000 rows: parse markup only (control) | 6.092 ms | 6.267 ms | — | 2.0% |
-| 1000 rows: parse + adopt by data-forma-key | 9.150 ms | 9.759 ms | — | 2.9% |
-| 1000 rows: client-side createList, no SSR markup (comparison) | 7.231 ms | 7.710 ms | — | 3.6% |
+| 100 rows: parse markup only (control) | 571.9 µs | 2.776 ms | — | 135.5% |
+| 100 rows: parse + adopt by data-forma-key | 792.0 µs | 2.555 ms | — | 126.1% |
+| 100 rows: client-side createList, no SSR markup (comparison) | 653.5 µs | 1.981 ms | — | 119.1% |
+| 1000 rows: parse markup only (control) | 6.160 ms | 14.951 ms | — | 64.8% |
+| 1000 rows: parse + adopt by data-forma-key | 9.186 ms | 22.487 ms | — | 97.3% |
+| 1000 rows: client-side createList, no SSR markup (comparison) | 7.576 ms | 14.401 ms | — | 8.2% |
 
 #### bench/hydrate.bench.ts — hydration: adopt an SSR page
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 5 sections × 4 slots (20 bindings): parse markup only (control) | 349.4 µs | 2.139 ms | — | 4.6% |
-| 5 sections × 4 slots (20 bindings): parse + hydrateIsland (adopt) | 394.0 µs | 2.346 ms | — | 9.2% |
-| 5 sections × 4 slots (20 bindings): client-side render, no SSR markup (comparison) | 326.1 µs | 2.043 ms | — | 10.0% |
-| 20 sections × 5 slots (100 bindings): parse markup only (control) | 1.474 ms | 4.543 ms | — | 9.3% |
-| 20 sections × 5 slots (100 bindings): parse + hydrateIsland (adopt) | 1.701 ms | 2.220 ms | — | 3.6% |
-| 20 sections × 5 slots (100 bindings): client-side render, no SSR markup (comparison) | 1.473 ms | 1.943 ms | — | 5.3% |
-| 60 sections × 8 slots (480 bindings): parse markup only (control) | 6.636 ms | 7.044 ms | — | 3.7% |
-| 60 sections × 8 slots (480 bindings): parse + hydrateIsland (adopt) | 10.911 ms | 17.164 ms | — | 2.8% |
-| 60 sections × 8 slots (480 bindings): client-side render, no SSR markup (comparison) | 7.068 ms | 7.647 ms | — | 5.8% |
+| 5 sections × 4 slots (20 bindings): parse markup only (control) | 366.0 µs | 2.350 ms | — | 6.4% |
+| 5 sections × 4 slots (20 bindings): parse + hydrateIsland (adopt) | 398.0 µs | 2.367 ms | — | 4.0% |
+| 5 sections × 4 slots (20 bindings): client-side render, no SSR markup (comparison) | 318.9 µs | 556.2 µs | — | 9.8% |
+| 20 sections × 5 slots (100 bindings): parse markup only (control) | 1.527 ms | 3.367 ms | — | 18.1% |
+| 20 sections × 5 slots (100 bindings): parse + hydrateIsland (adopt) | 1.755 ms | 3.787 ms | — | 19.7% |
+| 20 sections × 5 slots (100 bindings): client-side render, no SSR markup (comparison) | 1.501 ms | 3.519 ms | — | 48.9% |
+| 60 sections × 8 slots (480 bindings): parse markup only (control) | 6.733 ms | 15.078 ms | — | 106.0% |
+| 60 sections × 8 slots (480 bindings): parse + hydrateIsland (adopt) | 11.367 ms | 24.538 ms | — | 72.9% |
+| 60 sections × 8 slots (480 bindings): client-side render, no SSR markup (comparison) | 7.136 ms | 14.703 ms | — | 14.4% |
 
 #### bench/islands.bench.ts — island activation: inline vs shared props
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 10 islands, inline props: parse markup only (control) | 361.2 µs | 2.154 ms | — | 2.8% |
-| 10 islands, inline props: parse + activateIslands | 512.2 µs | 2.476 ms | — | 2.3% |
-| 10 islands, shared props: parse markup only (control) | 301.4 µs | 780.6 µs | — | 3.6% |
-| 10 islands, shared props: parse + activateIslands | 471.9 µs | 2.183 ms | — | 3.1% |
-| 100 islands, inline props: parse markup only (control) | 3.484 ms | 3.936 ms | — | 2.3% |
-| 100 islands, inline props: parse + activateIslands | 6.560 ms | 10.877 ms | — | 2.6% |
-| 100 islands, shared props: parse markup only (control) | 2.979 ms | 4.776 ms | — | 3.2% |
-| 100 islands, shared props: parse + activateIslands | 7.679 ms | 9.094 ms | — | 0.6% |
+| 10 islands, inline props: parse markup only (control) | 367.3 µs | 2.695 ms | — | 7.9% |
+| 10 islands, inline props: parse + activateIslands | 529.5 µs | 2.699 ms | — | 6.7% |
+| 10 islands, shared props: parse markup only (control) | 310.9 µs | 1.907 ms | — | 17.1% |
+| 10 islands, shared props: parse + activateIslands | 476.0 µs | 2.490 ms | — | 9.6% |
+| 100 islands, inline props: parse markup only (control) | 3.597 ms | 7.147 ms | — | 18.6% |
+| 100 islands, inline props: parse + activateIslands | 6.727 ms | 12.747 ms | — | 3.5% |
+| 100 islands, shared props: parse markup only (control) | 3.194 ms | 7.047 ms | — | 12.4% |
+| 100 islands, shared props: parse + activateIslands | 8.035 ms | 13.276 ms | — | 22.3% |
 
 #### bench/islands.bench.ts — island teardown
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 100 islands: activate + deactivateAllIslands (round trip) | 7.673 ms | 9.484 ms | — | 22.8% |
-| 100 islands: activate only (control) | 6.176 ms | 8.736 ms | — | 1.9% |
+| 100 islands: activate + deactivateAllIslands (round trip) | 6.920 ms | 15.009 ms | — | 11.7% |
+| 100 islands: activate only (control) | 7.525 ms | 14.526 ms | — | 52.6% |
 
 #### bench/list.bench.ts — createList: full teardown
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 1000 rows → [] → 1000 rows (drain + refill round trip) | 28.579 ms | 33.339 ms | — | 1.2% |
+| 1000 rows → [] → 1000 rows (drain + refill round trip) | 12.124 ms | 21.739 ms | — | 7.5% |
 
 #### bench/list.bench.ts — createList: initial render
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 100 rows: createList → mount → first reconcile | 496.9 µs | 2.574 ms | — | 3.1% |
-| 1000 rows: createList → mount → first reconcile | 8.779 ms | 13.775 ms | — | 1.4% |
-| 10000 rows: createList → mount → first reconcile | 177.388 ms | 210.328 ms | — | 1.1% |
-| 1000 rows: h() + appendChild by hand, no list (floor) | 7.254 ms | 12.769 ms | — | 2.3% |
-| 10000 rows: h() + appendChild by hand, no list (floor) | 68.943 ms | 99.450 ms | — | 2.1% |
+| 100 rows: createList → mount → first reconcile | 501.9 µs | 2.614 ms | — | 5.0% |
+| 1000 rows: createList → mount → first reconcile | 8.941 ms | 16.811 ms | — | 5.7% |
+| 10000 rows: createList → mount → first reconcile | 208.903 ms | 393.945 ms | — | 19.3% |
+| 1000 rows: h() + appendChild by hand, no list (floor) | 7.977 ms | 14.786 ms | — | 12.3% |
+| 10000 rows: h() + appendChild by hand, no list (floor) | 85.383 ms | 128.936 ms | — | 10.0% |
+| 1000 rows: h() + insertBefore an end marker by hand, no list (floor) | 8.524 ms | 16.671 ms | — | 21.9% |
+| 10000 rows: h() + insertBefore an end marker by hand, no list (floor) | 111.363 ms | 173.315 ms | — | 33.0% |
+| 1000 rows: per-row root + index signal + cache, no DOM (floor) | 216.2 µs | 620.9 µs | — | 5.7% |
+| 10000 rows: per-row root + index signal + cache, no DOM (floor) | 3.498 ms | 7.383 ms | — | 14.1% |
+| 1000 rows: hand-rolled list, everything but the reconciler (floor) | 9.839 ms | 17.255 ms | — | 10.9% |
+| 10000 rows: hand-rolled list, everything but the reconciler (floor) | 225.003 ms | 428.870 ms | — | 24.6% |
 
 #### bench/list.bench.ts — createList: keyed reconciliation on 100 rows (small-list path)
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| shuffle 20 rows (one full reorder) | 13.7 µs | 19.5 µs | — | 3.0% |
-| shuffle 100 rows (one full reorder) | 82.7 µs | 93.9 µs | — | 1.2% |
+| shuffle 20 rows (one full reorder) | 14.3 µs | 45.8 µs | — | 89.0% |
+| shuffle 100 rows (one full reorder) | 83.3 µs | 212.0 µs | — | 70.7% |
 
 #### bench/list.bench.ts — createList: keyed reconciliation on 1000 rows
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| append 100 + trim back to 1000 (round trip) | 2.558 ms | 4.408 ms | — | 2.1% |
-| prepend 100 + trim back to 1000 (round trip) | 2.575 ms | 4.474 ms | — | 1.7% |
-| remove first 100 + restore (round trip) | 2.543 ms | 4.420 ms | — | 1.3% |
-| shuffle 1000 rows (one full reorder) | 2.618 ms | 2.924 ms | — | 3.5% |
-| same keys, same order — reconciler fast path | 97.0 µs | 201.4 µs | — | 11.7% |
+| append 100 + trim back to 1000 (round trip) | 1.064 ms | 4.168 ms | — | 83.7% |
+| prepend 100 + trim back to 1000 (round trip) | 1.071 ms | 4.034 ms | — | 73.7% |
+| remove first 100 + restore (round trip) | 1.013 ms | 3.550 ms | — | 29.0% |
+| shuffle 1000 rows (one full reorder) | 2.659 ms | 5.780 ms | — | 6.5% |
+| same keys, same order — reconciler fast path | 98.5 µs | 361.4 µs | — | 9.4% |
 
 #### bench/list.bench.ts — reconcileList: row removal
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 1000 plain rows: build only (control) | 7.140 ms | 12.888 ms | — | 3.6% |
-| 1000 plain rows: build + reconcileList removes all | 22.368 ms | 24.961 ms | — | 1.9% |
-| 1000 plain rows: build + removeChild by hand (pre-hardening cost) | 7.187 ms | 13.138 ms | — | 2.3% |
-| 1000 6-node rows: build only (control) | 41.150 ms | 56.952 ms | — | 1.2% |
-| 1000 6-node rows: build + reconcileList removes all | 63.630 ms | 88.326 ms | — | 1.0% |
-| 1000 6-node rows: build + removeChild by hand (pre-hardening cost) | 45.405 ms | 61.185 ms | — | 1.3% |
+| 1000 plain rows: build only (control) | 7.973 ms | 15.602 ms | — | 18.1% |
+| 1000 plain rows: build + reconcileList removes all | 8.392 ms | 16.107 ms | — | 17.7% |
+| 1000 plain rows: build + removeChild by hand (pre-hardening cost) | 8.241 ms | 15.603 ms | — | 6.8% |
+| 1000 6-node rows: build only (control) | 48.433 ms | 75.181 ms | — | 5.0% |
+| 1000 6-node rows: build + reconcileList removes all | 51.601 ms | 82.450 ms | — | 13.2% |
+| 1000 6-node rows: build + removeChild by hand (pre-hardening cost) | 52.454 ms | 79.395 ms | — | 1.8% |
 
 #### bench/reactive.bench.ts — effect creation
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| createEffect + dispose (×500) | 117.3 µs | 306.3 µs | 235 ns | 2.7% |
-| internalEffect + dispose, the DOM-binding path (×500) | 61.6 µs | 263.5 µs | 123 ns | 4.3% |
+| createEffect + dispose (×500) | 124.0 µs | 600.4 µs | 248 ns | 63.8% |
+| internalEffect + dispose, the DOM-binding path (×500) | 65.9 µs | 268.4 µs | 132 ns | 175.9% |
 
 #### bench/reactive.bench.ts — internalEffect: flush-isolation overhead
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 1 internalEffect binding(s), as shipped: write (×5000) | 143.6 µs | 188.0 µs | 29 ns | 9.1% |
-| 1 rawEffect binding(s), pre-hardening shape: write (×5000) | 156.3 µs | 252.6 µs | 31 ns | 7.5% |
-| 100 internalEffect binding(s), as shipped: write (×50) | 121.5 µs | 133.1 µs | 2.43 µs | 15.3% |
-| 100 rawEffect binding(s), pre-hardening shape: write (×50) | 103.5 µs | 114.6 µs | 2.07 µs | 6.0% |
+| 1 internalEffect binding(s), as shipped: write (×5000) | 142.5 µs | 175.7 µs | 28 ns | 9.6% |
+| 1 rawEffect binding(s), pre-hardening shape: write (×5000) | 154.3 µs | 171.4 µs | 31 ns | 6.1% |
+| 100 internalEffect binding(s), as shipped: write (×50) | 109.0 µs | 226.1 µs | 2.18 µs | 3.7% |
+| 100 rawEffect binding(s), pre-hardening shape: write (×50) | 97.4 µs | 210.2 µs | 1.95 µs | 14.4% |
 
 #### bench/reactive.bench.ts — signal write → effect flush: batching
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 100 signals, one write each, unbatched (×30) | 281.6 µs | 320.7 µs | 9.39 µs | 7.0% |
-| 100 signals, one write each, batched (×30) | 270.0 µs | 286.8 µs | 9.00 µs | 7.2% |
-| one signal, 100 writes, unbatched (×30) | 236.8 µs | 275.5 µs | 7.89 µs | 10.8% |
-| one signal, 100 writes, batched (×30) | 19.4 µs | 20.8 µs | 647 ns | 21.1% |
+| 100 signals, one write each, unbatched (×30) | 272.5 µs | 620.6 µs | 9.08 µs | 11.2% |
+| 100 signals, one write each, batched (×30) | 263.1 µs | 355.5 µs | 8.77 µs | 10.1% |
+| one signal, 100 writes, unbatched (×30) | 234.6 µs | 288.8 µs | 7.82 µs | 8.9% |
+| one signal, 100 writes, batched (×30) | 16.0 µs | 22.2 µs | 533 ns | 31.8% |
 
 #### bench/reactive.bench.ts — signal write → effect flush: deep chain
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| computed depth 1: write → re-derive → effect (×500) | 47.1 µs | 51.1 µs | 94 ns | 4.8% |
-| computed depth 10: write → re-derive → effect (×500) | 138.6 µs | 153.8 µs | 277 ns | 7.3% |
-| computed depth 50: write → re-derive → effect (×500) | 550.4 µs | 604.0 µs | 1.10 µs | 5.3% |
+| computed depth 1: write → re-derive → effect (×500) | 46.3 µs | 51.7 µs | 93 ns | 8.5% |
+| computed depth 10: write → re-derive → effect (×500) | 138.5 µs | 258.6 µs | 277 ns | 6.1% |
+| computed depth 50: write → re-derive → effect (×500) | 559.1 µs | 615.0 µs | 1.12 µs | 5.6% |
 
 #### bench/reactive.bench.ts — signal write → effect flush: equal-value no-op
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| write the SAME value, no effect runs (×20000) | 24.7 µs | 69.3 µs | 1 ns | 142.9% |
-| write a CHANGING value, effect runs (×500) | 36.2 µs | 41.9 µs | 72 ns | 10.1% |
-| write suppressed by a custom equals (×20000) | 35.3 µs | 38.3 µs | 2 ns | 3.7% |
+| write the SAME value, no effect runs (×20000) | 62.0 µs | 71.7 µs | 3 ns | 156.3% |
+| write a CHANGING value, effect runs (×500) | 37.0 µs | 75.7 µs | 74 ns | 7.5% |
+| write suppressed by a custom equals (×20000) | 36.1 µs | 38.9 µs | 2 ns | 5.7% |
 
 #### bench/reactive.bench.ts — signal write → effect flush: wide fan-out
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 10 effects on one signal: write (×500) | 362.7 µs | 400.9 µs | 725 ns | 5.1% |
-| 100 effects on one signal: write (×50) | 389.8 µs | 418.2 µs | 7.80 µs | 3.4% |
-| 1000 effects on one signal: write (×5) | 404.2 µs | 484.7 µs | 80.85 µs | 5.7% |
+| 10 effects on one signal: write (×500) | 360.6 µs | 725.3 µs | 721 ns | 10.9% |
+| 100 effects on one signal: write (×50) | 384.0 µs | 457.4 µs | 7.68 µs | 11.4% |
+| 1000 effects on one signal: write (×5) | 416.2 µs | 603.0 µs | 83.24 µs | 8.3% |
 
 #### bench/ssr.bench.ts — renderToString: reactive props and children
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 500 list items, plain values | 395.3 µs | 617.7 µs | — | 2.8% |
-| 500 list items, every prop and child a getter | 400.3 µs | 670.5 µs | — | 0.9% |
+| 500 list items, plain values | 391.6 µs | 910.8 µs | — | 56.4% |
+| 500 list items, every prop and child a getter | 409.1 µs | 1.177 ms | — | 58.4% |
 
 #### bench/ssr.bench.ts — renderToString: tree size sweep
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 10 cards (~3 KB of HTML) | 46.0 µs | 53.6 µs | — | 0.7% |
-| 100 cards (~31 KB of HTML) | 447.9 µs | 679.0 µs | — | 0.9% |
-| 1000 cards (~316 KB of HTML) | 5.729 ms | 6.399 ms | — | 1.9% |
-| 5000 cards (~1597 KB of HTML) | 31.425 ms | 37.261 ms | — | 1.7% |
+| 10 cards (~3 KB of HTML) | 46.1 µs | 81.3 µs | — | 58.5% |
+| 100 cards (~31 KB of HTML) | 458.1 µs | 961.0 µs | — | 59.0% |
+| 1000 cards (~316 KB of HTML) | 6.028 ms | 9.253 ms | — | 53.0% |
+| 5000 cards (~1597 KB of HTML) | 32.220 ms | 68.418 ms | — | 49.9% |
 
 #### bench/ssr.bench.ts — renderToString: URL-attribute guard cost
 
 | benchmark | median | p95 | per op | run-to-run spread |
 | --- | ---: | ---: | ---: | ---: |
-| 1000 cards, one href each | 5.637 ms | 6.149 ms | — | 2.7% |
-| 1000 cards, same attrs, none URL-bearing (control) | 5.604 ms | 6.095 ms | — | 2.6% |
+| 1000 cards, one href each | 5.810 ms | 9.523 ms | — | 49.0% |
+| 1000 cards, same attrs, none URL-bearing (control) | 5.707 ms | 10.186 ms | — | 51.9% |
 
 <!-- BENCH:END -->

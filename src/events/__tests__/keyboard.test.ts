@@ -154,3 +154,52 @@ describe('onKey', () => {
     cleanup();
   });
 });
+
+// ---------------------------------------------------------------------------
+// Modifier completeness — every modifier must be checked in BOTH directions
+// ---------------------------------------------------------------------------
+
+describe('onKey modifier matching is exhaustive', () => {
+  // Each `matchesCombo` line is an independent guard. Every modifier had a
+  // positive test ("meta+k fires when metaKey is set") and none had the
+  // negative one, so deleting the metaKey line entirely left the suite green
+  // while `ctrl+s` started firing for `cmd+s` on macOS.
+  const MODIFIERS = [
+    ['ctrl', 'ctrlKey'],
+    ['shift', 'shiftKey'],
+    ['alt', 'altKey'],
+    ['meta', 'metaKey'],
+  ] as const;
+
+  it.each(MODIFIERS)('a bare combo does NOT fire when %s is held', (_name, flag) => {
+    const spy = vi.fn();
+    const cleanup = onKey('k', spy, { target: document });
+    fireKey(document, 'k', { [flag]: true });
+    expect(spy).not.toHaveBeenCalled();
+    // …and the same key with no modifier still fires, so the listener is live.
+    fireKey(document, 'k', {});
+    expect(spy).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it.each(MODIFIERS)('a %s combo does NOT fire when that modifier is absent', (name, flag) => {
+    const spy = vi.fn();
+    const cleanup = onKey(`${name}+k`, spy, { target: document });
+    fireKey(document, 'k', {});
+    expect(spy).not.toHaveBeenCalled();
+    fireKey(document, 'k', { [flag]: true });
+    expect(spy).toHaveBeenCalledTimes(1);
+    cleanup();
+  });
+
+  it.each(MODIFIERS)('a %s combo does NOT fire when a DIFFERENT modifier is also held', (name, flag) => {
+    const spy = vi.fn();
+    const cleanup = onKey(`${name}+k`, spy, { target: document });
+    for (const [, other] of MODIFIERS) {
+      if (other === flag) continue;
+      fireKey(document, 'k', { [flag]: true, [other]: true });
+    }
+    expect(spy).not.toHaveBeenCalled();
+    cleanup();
+  });
+});

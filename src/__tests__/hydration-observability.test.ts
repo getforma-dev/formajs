@@ -123,144 +123,124 @@ function renderShowDescriptorBranch(componentFn: () => unknown): string {
 // Tests
 // ---------------------------------------------------------------------------
 
-describe('Hydration Observability: SSR-vs-Client Diff', () => {
-
-  it('static element tree matches between client and descriptor render', () => {
-    const component = () => h('div', { class: 'container' },
-      h('h1', null, 'Title'),
-      h('p', null, 'Description'),
-    );
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('element with static props matches', () => {
-    const component = () => h('form', { class: 'login-form', method: 'post' },
+/**
+ * The client tree and the descriptor tree, both pinned to the EXACT markup.
+ *
+ * This table replaces 12 tests of the shape
+ * `expect(renderClient(c)).toBe(renderDescriptor(c))` plus three of the shape
+ * `expect(renderClient(a)).not.toBe(renderDescriptor(b))`. Neither shape can
+ * fail for the right reason: the equality ones compare one implementation's
+ * output to the same implementation's output (both paths end in `h()`), so a
+ * defect that breaks BOTH paths identically is invisible — and the inequality
+ * ones assert that two DIFFERENT components render differently, which is true
+ * by construction.
+ *
+ * Pinning the bytes keeps the original property (the two paths agree) and adds
+ * the half that was missing (they agree on the RIGHT markup).
+ */
+const CASES: Array<[name: string, component: () => unknown, html: string]> = [
+  [
+    'static element tree',
+    () => h('div', { class: 'container' }, h('h1', null, 'Title'), h('p', null, 'Description')),
+    '<div class="container"><h1>Title</h1><p>Description</p></div>',
+  ],
+  [
+    'element with static props',
+    () => h('form', { class: 'login-form', method: 'post' },
       h('input', { type: 'email', placeholder: 'Email' }),
       h('input', { type: 'password', placeholder: 'Password' }),
       h('button', { type: 'submit', class: 'btn primary' }, 'Login'),
-    );
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('nested elements with mixed children match', () => {
-    const component = () => h('div', { class: 'card' },
-      h('div', { class: 'card-header' },
-        h('h2', null, 'Card Title'),
-        h('span', { class: 'badge' }, 'Active'),
-      ),
-      h('div', { class: 'card-body' },
-        h('p', null, 'Some content here'),
-        h('ul', null,
-          h('li', null, 'Item 1'),
-          h('li', null, 'Item 2'),
-        ),
-      ),
-    );
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('void elements (input, br) match', () => {
-    const component = () => h('form', null,
+    ),
+    '<form class="login-form" method="post"><input type="email" placeholder="Email">'
+    + '<input type="password" placeholder="Password">'
+    + '<button type="submit" class="btn primary">Login</button></form>',
+  ],
+  [
+    'nested elements with mixed children',
+    () => h('div', { class: 'card' },
+      h('div', { class: 'card-header' }, h('h2', null, 'Card Title'), h('span', { class: 'badge' }, 'Active')),
+      h('div', { class: 'card-body' }, h('p', null, 'Some content here'),
+        h('ul', null, h('li', null, 'Item 1'), h('li', null, 'Item 2'))),
+    ),
+    '<div class="card"><div class="card-header"><h2>Card Title</h2>'
+    + '<span class="badge">Active</span></div><div class="card-body">'
+    + '<p>Some content here</p><ul><li>Item 1</li><li>Item 2</li></ul></div></div>',
+  ],
+  [
+    'void elements (input, br)',
+    () => h('form', null,
       h('input', { type: 'text', name: 'email' }),
       h('br', null),
       h('input', { type: 'password', name: 'password' }),
-    );
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('empty elements match', () => {
-    const component = () => h('div', { class: 'toast' });
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('SVG elements match', () => {
-    const component = () => h('svg', { viewBox: '0 0 24 24', fill: 'none' },
-      h('path', { d: 'M12 2L2 22h20L12 2z', stroke: 'currentColor' }),
-    );
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('deeply nested elements match', () => {
-    const component = () => h('section', { class: 'page' },
-      h('nav', { class: 'sidebar' },
-        h('ul', null,
-          h('li', null, h('a', { href: '/home' }, 'Home')),
-          h('li', null, h('a', { href: '/about' }, 'About')),
-        ),
-      ),
-      h('main', { class: 'content' },
-        h('article', null,
-          h('h1', null, 'Article Title'),
-          h('p', null, 'First paragraph.'),
-          h('p', null, 'Second paragraph.'),
-        ),
-      ),
-    );
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('element with data attributes matches', () => {
-    const component = () => h('div', {
-      'data-testid': 'my-widget',
-      'data-value': '42',
-      'data-active': 'true',
-    }, 'content');
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('element with aria attributes matches', () => {
-    const component = () => h('button', {
-      type: 'button',
-      'aria-label': 'Close dialog',
-      'aria-expanded': 'false',
-      role: 'button',
-    }, 'X');
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  // -------------------------------------------------------------------------
-  // Reactive signal tests
-  // -------------------------------------------------------------------------
-
-  it('reactive text signal produces equivalent structure', () => {
-    // Both render paths call the same componentFn, so the signal is read at
-    // the same initial value in both paths.  The descriptor path stores the
-    // getter function as a child; descriptorToElement calls h() outside
-    // hydration which then sets up a reactive text binding with the same
-    // initial value, giving identical innerHTML.
-    const component = () => {
+    ),
+    '<form><input type="text" name="email"><br><input type="password" name="password"></form>',
+  ],
+  ['empty elements', () => h('div', { class: 'toast' }), '<div class="toast"></div>'],
+  [
+    'SVG elements keep their case-sensitive attribute names',
+    () => h('svg', { viewBox: '0 0 24 24', fill: 'none' },
+      h('path', { d: 'M12 2L2 22h20L12 2z', stroke: 'currentColor' })),
+    '<svg viewBox="0 0 24 24" fill="none">'
+    + '<path d="M12 2L2 22h20L12 2z" stroke="currentColor"></path></svg>',
+  ],
+  [
+    'deeply nested elements',
+    () => h('section', { class: 'page' },
+      h('nav', { class: 'sidebar' }, h('ul', null,
+        h('li', null, h('a', { href: '/home' }, 'Home')),
+        h('li', null, h('a', { href: '/about' }, 'About')))),
+      h('main', { class: 'content' }, h('article', null,
+        h('h1', null, 'Article Title'),
+        h('p', null, 'First paragraph.'),
+        h('p', null, 'Second paragraph.'))),
+    ),
+    '<section class="page"><nav class="sidebar"><ul><li><a href="/home">Home</a></li>'
+    + '<li><a href="/about">About</a></li></ul></nav><main class="content"><article>'
+    + '<h1>Article Title</h1><p>First paragraph.</p><p>Second paragraph.</p></article></main></section>',
+  ],
+  [
+    'element with data attributes',
+    () => h('div', { 'data-testid': 'my-widget', 'data-value': '42', 'data-active': 'true' }, 'content'),
+    '<div data-testid="my-widget" data-value="42" data-active="true">content</div>',
+  ],
+  [
+    'element with aria attributes',
+    () => h('button', { type: 'button', 'aria-label': 'Close dialog', 'aria-expanded': 'false', role: 'button' }, 'X'),
+    '<button type="button" aria-label="Close dialog" aria-expanded="false" role="button">X</button>',
+  ],
+  [
+    'reactive text signal',
+    () => {
       const [name] = createSignal('World');
-      return h('div', null,
-        h('span', null, 'Hello, '),
-        h('span', null, name),
-      );
-    };
-
-    expect(renderClient(component)).toBe(renderDescriptor(component));
-  });
-
-  it('multiple reactive signals in one tree produce equivalent structure', () => {
-    const component = () => {
+      return h('div', null, h('span', null, 'Hello, '), h('span', null, name));
+    },
+    '<div><span>Hello, </span><span>World</span></div>',
+  ],
+  [
+    'multiple reactive signals in one tree',
+    () => {
       const [firstName] = createSignal('Jane');
       const [lastName] = createSignal('Doe');
       return h('div', { class: 'profile' },
         h('span', { class: 'first' }, firstName),
         h('span', { class: 'sep' }, ' '),
-        h('span', { class: 'last' }, lastName),
-      );
-    };
+        h('span', { class: 'last' }, lastName));
+    },
+    '<div class="profile"><span class="first">Jane</span><span class="sep"> </span>'
+    + '<span class="last">Doe</span></div>',
+  ],
+];
 
-    expect(renderClient(component)).toBe(renderDescriptor(component));
+describe.each([
+  ['client', renderClient],
+  ['descriptor', renderDescriptor],
+] as const)('Hydration Observability: the %s path renders', (_path, render) => {
+  it.each(CASES)('%s', (_name, component, html) => {
+    expect(render(component)).toBe(html);
   });
+});
+
+describe('Hydration Observability: SSR-vs-Client Diff', () => {
 
   // -------------------------------------------------------------------------
   // createShow tests
@@ -372,40 +352,4 @@ describe('Hydration Observability: SSR-vs-Client Diff', () => {
     });
   });
 
-  // -------------------------------------------------------------------------
-  // Mismatch detection smoke test
-  // -------------------------------------------------------------------------
-
-  it('detects structural difference when tag names differ', () => {
-    const clientComponent = () => h('div', null, 'Content');
-    const descriptorComponent = () => h('section', null, 'Content');
-
-    // These should produce different HTML — section vs div
-    const clientHtml = renderClient(clientComponent);
-    const descriptorHtml = renderDescriptor(descriptorComponent);
-
-    expect(clientHtml).not.toBe(descriptorHtml);
-    expect(clientHtml).toContain('<div>');
-    expect(descriptorHtml).toContain('<section>');
-  });
-
-  it('detects structural difference when class attributes differ', () => {
-    const clientComponent = () => h('div', { class: 'card-a' }, 'Text');
-    const descriptorComponent = () => h('div', { class: 'card-b' }, 'Text');
-
-    const clientHtml = renderClient(clientComponent);
-    const descriptorHtml = renderDescriptor(descriptorComponent);
-
-    expect(clientHtml).not.toBe(descriptorHtml);
-  });
-
-  it('detects structural difference when child text differs', () => {
-    const clientComponent = () => h('p', null, 'Hello');
-    const descriptorComponent = () => h('p', null, 'Goodbye');
-
-    const clientHtml = renderClient(clientComponent);
-    const descriptorHtml = renderDescriptor(descriptorComponent);
-
-    expect(clientHtml).not.toBe(descriptorHtml);
-  });
 });

@@ -1,6 +1,6 @@
 // CSP parser (1.3.0): operators inside string literals must not be mis-split.
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mount, unmount, setUnsafeEval, setUnsafeEvalMode, clearDiagnostics } from '../runtime';
+import { mount, unmount, clearDiagnostics } from '../runtime';
 
 function waitForEffects(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -9,8 +9,6 @@ function waitForEffects(): Promise<void> {
 describe('CSP parser: operators inside string literals (1.3.0)', () => {
   let container: HTMLDivElement;
   beforeEach(() => {
-    setUnsafeEvalMode('locked-off'); // no new Function fallback — parser must handle it
-    setUnsafeEval(false);
     clearDiagnostics();
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -18,8 +16,6 @@ describe('CSP parser: operators inside string literals (1.3.0)', () => {
   afterEach(() => {
     unmount(container);
     container.remove();
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(false);
   });
 
   it("'a' + '-' + 'b' evaluates to a-b (dash inside literal is not an operator)", async () => {

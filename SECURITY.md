@@ -11,8 +11,8 @@ FormaJS v1.0.0+ uses subpath exports to segment capabilities by trust level:
 | Import | Capabilities | Trust Level |
 |--------|-------------|-------------|
 | `@getforma/core` | Signals, DOM, components, state, events, islands | No network, no eval, no filesystem — but see *Unsanitized HTML sinks* below |
-| `@getforma/core/runtime` | HTML Runtime (data-* directives) | CSP-safe parser; `new Function` fallback present but **off** until opted in |
-| `@getforma/core/runtime-hardened` | HTML Runtime (locked) | **No `new Function` in the artifact** — grepped by `scripts/verify-dist.mjs` |
+| `@getforma/core/runtime` | HTML Runtime (data-* directives) | Allowlist AST interpreter. **No `eval`, no `new Function`, no `with()` in the artifact** — grepped by `scripts/verify-dist.mjs` |
+| `@getforma/core/runtime-hardened` | HTML Runtime (tree-shaken bundling) | Identical source and identical guarantee; a second bundling, kept because two documented CDN URLs point at it |
 | `@getforma/core/http` | `createFetch`, `createSSE`, `createWebSocket` | Network access (intentional) |
 | `@getforma/core/storage` | `createLocalStorage`, `createIndexedDB` | Browser storage access (intentional) |
 | `@getforma/core/server` | `$$serverFunction`, `handleRPC` | Network + `process.env` (server-side) |
@@ -20,9 +20,13 @@ FormaJS v1.0.0+ uses subpath exports to segment capabilities by trust level:
 
 The root entry's "no network" row is a real boundary, not a convention: `fetch`, `WebSocket` and the storage APIs live only behind their subpaths and are absent from the root barrel.
 
-Verified by: `src/__tests__/index-surface.test.ts` > "does NOT export HTTP primitives (moved to @getforma/core/http)"
-Verified by: `src/__tests__/index-surface.test.ts` > "does NOT export storage primitives (moved to @getforma/core/storage)"
-Verified by: `src/__tests__/index-surface.test.ts` > "does NOT export server primitives (moved to @getforma/core/server)"
+The proof is an EXACT export-surface pin per subpath, not a list of names asserted
+absent: `toBeUndefined()` on a name the barrel never had passes with any typo and
+can only fail if someone adds the export, whereas an exact set fails in both
+directions — a network primitive leaking into the root barrel, and a documented
+export silently disappearing from it.
+
+Verified by: `src/__tests__/index-surface.test.ts` > "%s exports exactly the documented names"
 
 ### Unsanitized HTML sinks
 
@@ -37,38 +41,102 @@ Verified by: `src/dom/__tests__/element-url-safety.test.ts` > "emits srcdoc but 
 
 ## Supply Chain Security Notes
 
-### `new Function` in the HTML Runtime
+### There is no `new Function` in the HTML Runtime
 
-The HTML Runtime ships a `new Function()` fallback for expressions the CSP-safe parser cannot compile. **In every build it starts disabled** — source, `dist/runtime.js`, `dist/runtime.cjs`, both IIFE globals, and SSR/Node. It is reached only after an explicit opt-in:
+Expressions in `data-*` attributes are evaluated by an **allowlist AST interpreter** (`src/expr/`): lexer, precedence-climbing parser, validator, tree-walking interpreter. Every shipped artifact — `dist/runtime.js`, `dist/runtime.cjs`, both IIFE globals, the hardened pair, and the SSR/Node path — contains **zero `eval`, zero `new Function` and zero `with()`**. There is no opt-in switch, because there is no fallback to switch on: `setUnsafeEval()`, `isUnsafeEvalAllowed()` and `data-forma-unsafe-eval` were removed along with the code they guarded.
 
-- `setUnsafeEval(true)`, or
-- `data-forma-unsafe-eval="true"` on the script tag that loads the runtime, or
-- `window.__FORMA_RUNTIME_CONFIG = { allowUnsafeEval: true }`.
+`scripts/verify-dist.mjs` greps every built artifact as the last step of `npm run build`, so this is asserted on the bytes that ship rather than inferred from the source.
 
-`isUnsafeEvalAllowed()` reports the live answer. Turning it on logs a one-time console warning, because the page then requires `'unsafe-eval'` in its CSP.
+Verified by: `src/__tests__/runtime-csp-default.test.ts` > "no build can reach new Function, with any configuration"
+Verified by: `src/__tests__/runtime-csp-default.test.ts` > "never constructs a function, not even one that would have succeeded"
+Verified by: `src/__tests__/build-artifacts.test.ts` > "no build emits new Function or a with() scope wrapper"
 
-Verified by: `src/__tests__/runtime-csp-default.test.ts` > "every build ships with the new Function fallback disabled"
+### Threat model
 
-- **Hardened build (`runtime-hardened`)**: no `new Function` call sites at all. The build defines `__FORMA_UNSAFE_EVAL_MODE__` as `"locked-off"` and esbuild's syntax minification plus tsup's tree-shaking pass fold the branch away. `scripts/verify-dist.mjs` greps the built artifacts as the last step of `npm run build`, so this is asserted on the bytes that ship, not inferred.
+Three models drive every rule below. They are written down because the design that preceded this one failed the first outright.
 
-  Verified by: `src/__tests__/build-artifacts.test.ts` > "hardened builds emit no new Function at all"
-  Verified by: `src/__tests__/runtime-csp-default.test.ts` > "a locked-off build cannot be talked into eval by any configuration"
+- **T1 — the attacker controls the expression SOURCE.** Any app that server-renders user content into markup, or has any HTML-injection sink, hands the attacker a `data-computed` or `data-on:click` string. Worse: the runtime's MutationObserver auto-binds *injected* elements, so **every HTML injection sink is also an expression sink**. This is the model the grammar has to survive.
+- **T2 — the attacker controls VALUES, not source:** `data-fetch` responses, `data-forma-state` attributes, `localStorage` via `data-persist`.
+- **T3 — resource exhaustion:** huge arrays or deeply nested callbacks from T2 data.
 
-- **Standard build (`runtime`)**: `new Function` is present but unreachable until opted in. If the page CSP then blocks it, the runtime reports an accurate `EvalError` diagnostic and disables the fallback rather than silently evaluating expressions to `undefined`.
+### Why an allowlist, and what the blocklist it replaced could not do
 
-  Verified by: `src/__tests__/runtime-csp-default.test.ts` > "reports a CSP diagnostic and stops using new Function when the page CSP blocks it"
+The previous design compiled the expression with `new Function` and ran it inside `with (proxy) { … }`, guarded by a nine-name blocklist. Two structural failures, both verified rather than theorised:
 
-### The `with()` + Proxy wrapper is a blocklist, not a sandbox
+1. **`with()` + `Proxy` is not a sandbox.** The proxy's `has` trap answered `key in scope.getters`. Returning `false` does not mean "undefined" — it means *"not mine, keep walking the scope chain"*, terminating at the global object. Every identifier that was not a declared state key resolved to the **real global**: `document`, `fetch`, `localStorage`, `window`.
+2. **A static string scan cannot see a computed key.** `items['constructor']`, `items[k]` with `k` from server JSON, `items['cons' + 'tructor']` and `items[String.fromCharCode(…)]` all reached `Array` → `Function`, and the blocked name never appeared in the source text. That chain worked in the *CSP-safe* path, in the hardened build, with no `new Function` in the library.
 
-Once the fallback is enabled, compiled expressions run inside `with (proxy) { … }`. **This does not confine them to your declared state.** The proxy's `has` trap answers `key in scope.getters`, so any identifier that is *not* a declared state key reports `false` and `with()` falls through to the real global scope: `document`, `fetch`, `localStorage`, `XMLHttpRequest` and everything else are reachable, and declared state can be passed to them.
+The replacement inverts the relationship. A blocklist over a full evaluator must enumerate every hostile input, and the evaluator's semantics are the attacker's toolkit. An allowlist over an AST makes the interpreter's semantics the *only* toolkit, and it contains nothing dangerous — there is no equivalent of (2) against a table lookup, because `"constructor"` is not a key in any table.
 
-What the wrapper *does* enforce is the `UNSAFE_METHOD_NAMES` blocklist — `constructor`, `__proto__`, `prototype`, `__defineGetter__`, `__defineSetter__`, `__lookupGetter__`, `__lookupSetter__`, `eval`, `Function` — at two layers: a static scan of the expression text before compilation (including computed bracket concatenation such as `x['constr' + 'uctor']`), and the proxy's `get` trap at runtime.
+### The five guarantees
 
-The correct threat model: **an expression in a `data-*` attribute is code, and must be treated exactly like a `<script>` you wrote yourself.** Never build one from user input. This unbounded reach is a second reason the fallback is opt-in, alongside the CSP requirement.
+- **G1 — closed token set.** The lexer never hands source to JavaScript. It recognises identifiers, decimal numbers, quoted strings, template literals and a fixed punctuator list; every other byte is a syntax error with a column. Only the eight simple escapes are decoded — `\u`, `\x` and octal are rejected at the lexer, which kills unicode-escaped-key bypasses before any semantics exist to bypass.
+- **G2 — total consumption.** The parser must end at EOF. Leftover tokens are an error, never a silent fallback. This is the direct fix for the "no branch matched, return null, fall through to eval" shape of the parser it replaces.
+- **G3 — exhaustive union.** AST nodes are a closed TypeScript discriminated union, and the validator and the interpreter both end their switch with `const never: never = node`. Adding a node kind without adding both cases is a compile error.
+- **G4 — the validator is not the interpreter.** Two independent passes. The validator asserts node kinds, shape constraints and budgets; the interpreter **re-asserts** every safety-critical invariant (key filter, receiver kind, call target) at evaluation time rather than trusting the validator.
+- **G5 — no escape hatch.** No path to `new Function`, `eval`, dynamic property dispatch, or a real intrinsic, enforced by a gate that reads the source of `src/expr/**`.
 
-Verified by: `src/__tests__/unsafe-eval-scope.test.ts` > "reads a real global that was never declared as state"
-Verified by: `src/__tests__/unsafe-eval-scope.test.ts` > "calls a real global function that was never declared as state"
-Verified by: `src/__tests__/unsafe-eval-scope.test.ts` > "still blocks the UNSAFE_METHOD_NAMES blocklist on the same path"
+Verified by: `src/expr/__tests__/no-escape-hatch.test.ts` > "src/expr contains no path to the Function constructor or a global"
+Verified by: `src/expr/__tests__/no-escape-hatch.test.ts` > "no property is read off a value with a computed key outside safeRead"
+Verified by: `src/expr/__tests__/validate.test.ts` > "every AST kind has a validator case and an interpreter case"
+
+### Identifier resolution never consults `globalThis`
+
+Names resolve against, in order: arrow-parameter frames, `data-list` row locals, element magics (`$el`, `$event`, `$refs`, `$dispatch`, `$refetch`), the scope's own state and computed getters, and one frozen null-prototype table of captured intrinsics (`Math`, `JSON`, `Object`, `Array`, `Date.now`, `Number`, `String`, `Boolean`, `parseInt`, `parseFloat`). Then it **fails**, with a reported `FORMA_E_UNRESOLVED`.
+
+`document`, `fetch`, `window`, `localStorage` and `process` are therefore not blocked — they are **unreachable**, because there is no code path that could find them. That is a property of the resolver's shape, not of a list someone has to keep current.
+
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "no global is reachable by name"
+
+### Method dispatch never reads a property of the receiver
+
+```
+kind = kindOf(recv)                // Array.isArray / typeof — never instanceof
+tbl  = METHODS[kind]
+if (!hasOwn(tbl, safeKey(m))) throw MethodDenied
+Reflect.apply(tbl[m], recv, args)  // captured intrinsic, frozen at module init
+```
+
+That one rule defeats, by construction: dynamic-key constructor access, prototype-pollution reach, receiver-supplied method impersonation (a T2 object carrying its own `filter` is not an Array, so `filter` is not offered — and even for a real Array the captured intrinsic runs, not the own property), `Array.prototype` poisoning by another page script, getter side effects on the method-lookup step, and `.call` / `.apply` / `.bind` escalation.
+
+Two audited helpers are the **only** places member access is implemented:
+
+- **`safeKey(k)`** — coerces to string, rejects symbols, rejects keys longer than 128 characters, and rejects `constructor`, `__proto__`, `prototype`, `__defineGetter__` / `__defineSetter__` / `__lookupGetter__` / `__lookupSetter__`, `eval`, `Function`, `call`, `apply`, `bind`, `caller`, `callee`, `arguments`. It runs on the **evaluated** key, whatever syntax produced it, which is what makes every spelling of a bypass the same case and all of them dead.
+- **`safeRead(recv, key)`** — a nullish base yields `undefined` (absent data, not a failure); host receivers dispatch by kind; `length` is allowed on arrays and strings; a plain object or array data key requires an **own** property whose descriptor is a **data** descriptor, so a poisoned getter never runs and the prototype chain is never walked; anything else is a reported denial.
+
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "every spelling of a constructor reach is denied"
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "a poisoned Array.prototype.filter is not what runs"
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "an accessor property is refused instead of invoked"
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "a receiver's own filter is never invoked"
+
+### The DOM is reachable only through a wrapper
+
+`$el`, `$event`, `$refs` and everything they hand back — `classList`, `style`, `dataset`, `closest()`, `querySelector()`, `event.target` — are **wrapped**, and the wrapper survives every hop. Reads, writes and calls are restricted to fixed per-kind tables. `$el.ownerDocument`, `$el.parentNode`, `$el.innerHTML`, `$el.style.cssText`, `$event.view` and `$refs.x.ownerDocument.location.href` are denials with a diagnostic, not answers.
+
+Before this, `$refs` returned the **raw** element, and `data-text="{$refs.r.ownerDocument.location.href}"` read the real page URL from inside a "CSP-safe" expression in the hardened build, with no diagnostic at all.
+
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "$refs.r.ownerDocument.location.href is denied"
+Verified by: `src/dom/__tests__/el-magic-safety.test.ts` > "$refs hands back a wrapped element, not the live node"
+
+### Termination and budgets
+
+The language has no loops, no recursion, no generators and no way to name or store a function, so **every expression terminates by construction** — an arrow is legal only in the callback slot of nine allowlisted array methods, and cannot be assigned, stored, returned or re-invoked. Budgets therefore bound *cost*, not hanging: 4,096 source characters, 512 AST nodes, depth 32, arrow nesting 2, four call arguments, and a 100,000-step evaluation budget configurable per page with `data-forma-expr-budget` on the script tag. Argument-driven allocations are capped before the call (`repeat` ≤ 10,000, `flat` depth ≤ 8, strings ≤ 1 MiB, arrays ≤ 1,000,000).
+
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "a nested callback over a large array trips the step budget"
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "an argument that would allocate hundreds of megabytes is refused"
+
+### Failure is always visible
+
+An expression that cannot be compiled or cannot be evaluated is **not evaluated, and says so**: a `console.error` naming the code, the message and the column, a `formajs:diagnostic` event, an entry in `getDiagnostics()`, and a `data-forma-expr-error` / `data-forma-handler-error` attribute on the element. The binding writes nothing — the DOM keeps what it had, and the string `undefined` is never rendered. `undefined` is a legitimate VALUE, so it can never double as an error signal.
+
+Verified by: `src/__tests__/failure-semantics.test.ts` > "a denied expression leaves the previous text in place and never renders undefined"
+Verified by: `src/__tests__/failure-semantics.test.ts` > "a genuine runtime bug is not swallowed as an expression denial"
+
+### Residual risks
+
+- **`toString` coercion.** Rendering a value as text, interpolating it into a template literal, or `Array#join`-ing it calls that value's `toString`. JSON data cannot supply one; an app that puts class instances into state can. The method is then the app's own code, not the attacker's, under T2.
+- **An expression is still code.** Under T1 the grammar bounds what an injected expression can *do* — no globals, no network, no DOM outside the allowlist, no non-termination — but it can still read and write the declared state of the scope it was injected into, and call the DOM methods on the allowlist. Never build a `data-*` attribute from user input.
+- **`data-forma-expr-budget`** is read from the script tag. Anyone who can add that attribute can already run script on the page, so it grants no new capability.
 
 ### `fetch` in the HTTP module
 
@@ -80,14 +148,15 @@ Verified by: `src/__tests__/unsafe-eval-scope.test.ts` > "still blocks the UNSAF
 
 ### Published bundles are readable
 
-All dist output is syntax-minified only: constant folding and dead-branch removal, with identifiers and line structure preserved. Nothing is mangled onto a single line, so supply-chain scanners do not see "obfuscated code". Syntax minification is what makes the build-time flags real — without it esbuild leaves `__DEV__` and the eval-capability constant as variables nothing folds, and the hardened artifact still contains `new Function`.
+All dist output is syntax-minified only: constant folding and dead-branch removal, with identifiers and line structure preserved. Nothing is mangled onto a single line, so supply-chain scanners do not see "obfuscated code". Syntax minification is what makes the build-time `__DEV__` flag real — without it esbuild leaves it as a variable nothing folds, and dev warnings survive into a production process.
 
 Verified by: `src/__tests__/build-config.test.ts` > "enables syntax minification everywhere so the build-time flags fold"
 
 ## Security Hardening (v0.5.0 – 1.5.0)
 
-- **`$el` safe proxy** (0.7.0): The `$el` magic in the HTML Runtime is wrapped in a Proxy that allowlists safe DOM properties. Chains like `$el.ownerDocument.defaultView.setTimeout` are blocked.
-- **`findBlockedMethod`** (0.7.0): Static analysis + runtime proxy defense-in-depth blocks `constructor`, `__proto__`, `eval`, `Function` access in expressions — including computed bracket concatenation (`x['constr' + 'uctor']`).
+- **`$el` safe proxy** (0.7.0, superseded): allowlisted `$el` reads through a Proxy. Superseded by the host-wrapper model above, which applies the same discipline to `$event` and `$refs` — the two the Proxy did not cover.
+- **`findBlockedMethod`** (0.7.0, removed): a static scan for `constructor`, `__proto__`, `eval` and `Function` in expression text, including bracket concatenation. Removed with the evaluator it guarded; a string scan cannot see `items[k]` where `k` arrives from server JSON, and the allowlist interpreter checks the evaluated key instead.
+- **Allowlist AST expression interpreter** (unreleased): replaced the regex parser and the `new Function` fallback outright — see *Supply Chain Security Notes* above.
 - **SSR `escapeAttr` + scheme detection** (1.0.10): Escapes `<`, `>`, `'`, `"`, `&`. `isDangerousUrl` blocks `javascript:`, `vbscript:` and `data:text/html` in URL-bearing attributes, **normalizing away the whitespace/control characters browsers ignore in a scheme**, so `java\tscript:` is caught too. Attribute names are validated and `on*` handler attributes are dropped case-insensitively. Applies to the `data-bind:*` and `data-list` runtime sinks in both builds.
 - **SSR swap script** (0.7.0): the JSON embedded in a Suspense swap script has `<`, `>`, U+2028 and U+2029 replaced with their unicode escapes, so a payload cannot close the script block.
 - **CSP parser operator precedence** (0.7.1): Fixed to match JavaScript semantics (addition before comparison, AND before OR).
@@ -144,7 +213,7 @@ Stated here rather than left for a reader to discover:
 
 - **Streaming SSR under strict CSP.** `renderToStream` / `getSwapScript` / `getSwapTag` emit Suspense swap scripts **without a `nonce`**, so a strict `script-src 'nonce-…'` policy blocks them and out-of-order content never swaps in. Use non-streaming SSR under strict CSP. Do not add `'unsafe-inline'` as a workaround.
 - **Island prop sanitization is shallow by default** — see above.
-- **The unsafe-eval fallback does not confine expressions to declared state** — see above.
+- **An expression is still code under T1** — the grammar bounds what it can reach, not the fact that it runs. See *Residual risks* above.
 
 ## Supported Versions
 

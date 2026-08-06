@@ -1,0 +1,864 @@
+[
+ {
+  "id": "activate/props-not-sanitized",
+  "file": "src/dom/activate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const FORBIDDEN_PROP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);",
+  "replace": "const FORBIDDEN_PROP_KEYS = new Set<string>([]);",
+  "note": "SECURITY.md 'Island props sanitized' — stripping removed"
+ },
+ {
+  "id": "batch/no-batching",
+  "file": "src/reactive/batch.ts",
+  "tags": [],
+  "find": "  startBatch();\n  try {\n    fn();\n  } finally {\n    endBatch();\n  }",
+  "replace": "  fn();",
+  "note": "batch() no longer batches — effects run per write"
+ },
+ {
+  "id": "bus/emit-no-snapshot",
+  "file": "src/events/bus.ts",
+  "tags": [],
+  "find": "      for (const handler of [...set]) {",
+  "replace": "      for (const handler of set) {",
+  "note": "bus emit iterates live Set — off() during emit corrupts iteration"
+ },
+ {
+  "id": "bus/once-no-off",
+  "file": "src/events/bus.ts",
+  "tags": [],
+  "find": "      off(event, wrapper);\n      handler(payload);",
+  "replace": "      handler(payload);",
+  "note": "once() fires on every emit"
+ },
+ {
+  "id": "el/attr-null-not-removed",
+  "file": "src/dom/element.ts",
+  "tags": [],
+  "find": "      const camel = prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());\n      obj[camel] = val;",
+  "replace": "      obj[prop] = val;",
+  "note": "duplicate of parseCss camel probe with body change"
+ },
+ {
+  "id": "el/generic-url-guard-off",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (!urlAttr || !isDangerousUrl(strVal, el.localName)) {",
+  "replace": "      if (true) {",
+  "note": "h() reactive attribute path writes javascript: URLs"
+ },
+ {
+  "id": "el/parseCss-drops-camel",
+  "file": "src/dom/element.ts",
+  "tags": [],
+  "find": "      const camel = prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());",
+  "replace": "      const camel = prop;",
+  "note": "kebab-case CSS props no longer camelised — string styles silently drop"
+ },
+ {
+  "id": "el/static-onattr-guard-off",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);\n\n  // true → empty string attribute, else stringified value",
+  "replace": "  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);\n\n  // true → empty string attribute, else stringified value",
+  "note": "h() static path writes ONCLICK as an inline handler"
+ },
+ {
+  "id": "el/static-true-as-string",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "  if (value === true) {\n    el.setAttribute(key, '');\n    return;\n  }",
+  "replace": "  if (value === true) {\n    el.setAttribute(key, 'true');\n    return;\n  }",
+  "note": "h() static true writes name=\"true\" instead of a bare attribute"
+ },
+ {
+  "id": "el/static-url-guard-off",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (isUrlAttr(key) && isDangerousUrl(strVal, el.localName)) {\n    if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n    return;\n  }\n  el.setAttribute(key, strVal);",
+  "replace": "  el.setAttribute(key, strVal);",
+  "note": "h() static attribute path writes javascript: URLs"
+ },
+ {
+  "id": "el/style-cssText-instead-of-cssom",
+  "file": "src/dom/element.ts",
+  "tags": [],
+  "find": "  Object.assign(style, obj);\n  return nextKeys;",
+  "replace": "  (style as any).cssText = nextKeys.map((k) => k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()) + ':' + obj[k]).join(';');\n  return nextKeys;",
+  "note": "CSP.md's central claim (never cssText) violated"
+ },
+ {
+  "id": "el/style-remove-stale-off",
+  "file": "src/dom/element.ts",
+  "tags": [],
+  "find": "  for (const k of prevKeys) {\n    if (!(k in obj)) {\n      style.removeProperty(k.replace(/[A-Z]/g, (c) => '-' + c.toLowerCase()));\n    }\n  }",
+  "replace": "",
+  "note": "stale style properties never removed on reactive style change"
+ },
+ {
+  "id": "el/xlink-guard-off",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (isUnsafeAttrWrite(el.localName, key, strVal)) {\n      if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n      el.removeAttributeNS(XLINK_NS, localName);\n      return;\n    }",
+  "replace": "",
+  "note": "reactive xlink:href writes javascript: URLs"
+ },
+ {
+  "id": "history/clone-identity",
+  "file": "src/state/history.ts",
+  "tags": [],
+  "find": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V {",
+  "replace": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V { if (v && typeof v === 'object') return v;",
+  "note": "history entries alias live objects — undo/redo returns mutated state"
+ },
+ {
+  "id": "hydrate/eventhandler-guard-off",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) — use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
+  "replace": "",
+  "note": "hydration writes ONCLICK as an inline handler"
+ },
+ {
+  "id": "hydrate/false-not-removed",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "      if (v === false || v == null) {\n        el.removeAttribute(attrKey);",
+  "replace": "      if (v == null) {\n        el.removeAttribute(attrKey);",
+  "note": "adoption leaves disabled=\"false\" on the element"
+ },
+ {
+  "id": "hydrate/true-as-string",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "      } else if (v === true) {\n        el.setAttribute(attrKey, '');",
+  "replace": "      } else if (v === true) {\n        el.setAttribute(attrKey, 'true');",
+  "note": "adoption writes name=\"true\" instead of a bare attribute"
+ },
+ {
+  "id": "hydrate/url-guard-off",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (isUnsafeAttrWrite(tag, attrKey, str)) {",
+  "replace": "        if (false) {",
+  "note": "hydration re-adds the payload SSR refused to emit"
+ },
+ {
+  "id": "keyboard/no-ctrl-check",
+  "file": "src/events/keyboard.ts",
+  "tags": [],
+  "find": "  if (e.ctrlKey !== parsed.ctrl) return false;",
+  "replace": "",
+  "note": "ctrl modifier ignored — 's' fires a 'ctrl+s' binding"
+ },
+ {
+  "id": "keyboard/no-meta-check",
+  "file": "src/events/keyboard.ts",
+  "tags": [],
+  "find": "  if (e.metaKey !== parsed.meta) return false;",
+  "replace": "",
+  "note": "meta/cmd modifier ignored"
+ },
+ {
+  "id": "list/dup-key-bucket-collapse",
+  "file": "src/dom/list.ts",
+  "tags": [],
+  "find": "    const bucket = oldKeyMap.get(k);\n    if (bucket) bucket.push(i);\n    else oldKeyMap.set(k, [i]);",
+  "replace": "    oldKeyMap.set(k, [i]);",
+  "note": "duplicate keys collapse in the LARGE-list path (the documented regression)"
+ },
+ {
+  "id": "list/dup-key-bucket-shift",
+  "file": "src/dom/list.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      const oldIdx = bucket.shift()!; // consume next unused occurrence (left-to-right)",
+  "replace": "      const oldIdx = bucket[0]!;",
+  "note": "duplicate keys all collapse onto the first occurrence"
+ },
+ {
+  "id": "list/lis-flag-inverted",
+  "file": "src/dom/list.ts",
+  "tags": [
+   "perf"
+  ],
+  "find": "      if (lisFlags[i]) {",
+  "replace": "      if (!lisFlags[i]) {",
+  "note": "the LIS rows are the ones skipped-as-in-place — final order corrupted",
+  "all": true
+ },
+ {
+  "id": "list/lis-flags-never-set",
+  "file": "src/dom/list.ts",
+  "tags": [
+   "perf"
+  ],
+  "find": "  for (const li of lisOfReused) {\n    lisFlags[reusedPositions[li]!] = 1;\n  }",
+  "replace": "",
+  "note": "every reused row is moved — LIS optimisation dead",
+  "all": true
+ },
+ {
+  "id": "list/lis-returns-empty",
+  "file": "src/dom/list.ts",
+  "tags": [],
+  "find": "export function longestIncreasingSubsequence(arr: number[]): number[] {",
+  "replace": "export function longestIncreasingSubsequence(arr: number[]): number[] { if (arr.length > 1) return [];",
+  "note": "LIS always empty — every keyed item moves (O(n) DOM churn, identity loss)"
+ },
+ {
+  "id": "list/no-onInsert-hook",
+  "file": "src/dom/list.ts",
+  "tags": [],
+  "find": "      hooks?.onInsert?.(node);\n      nodes[i] = node;",
+  "replace": "      nodes[i] = node;",
+  "note": "onInsert transition hook not fired on initial create-all"
+ },
+ {
+  "id": "list/removal-skipped",
+  "file": "src/dom/list.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  for (let i = 0; i < oldLen; i++) {\n    if (!oldUsed[i]) {\n      removeRow(parent, oldNodes[i]!, hooks);\n    }\n  }",
+  "replace": "",
+  "note": "rows dropped from the model stay in the DOM",
+  "all": true
+ },
+ {
+  "id": "list/small-threshold-1",
+  "file": "src/dom/list.ts",
+  "tags": [],
+  "find": "  if (oldLen < SMALL_LIST_THRESHOLD) {",
+  "replace": "  if (oldLen < 1) {",
+  "note": "small-list path never taken — all lists go through the Map path",
+  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+ },
+ {
+  "id": "list/small-threshold-huge",
+  "file": "src/dom/list.ts",
+  "tags": [],
+  "find": "  if (oldLen < SMALL_LIST_THRESHOLD) {",
+  "replace": "  if (oldLen < 100000) {",
+  "note": "large-list Map path never taken — all lists go through the flat scan",
+  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+ },
+ {
+  "id": "mutate/setAttr-true-branch",
+  "file": "src/dom-utils/mutate.ts",
+  "tags": [],
+  "find": "    } else if (value === true) {\n      el.setAttribute(name, '');",
+  "replace": "    } else if (value === true) {\n      el.setAttribute(name, 'true');",
+  "note": "boolean attr emitted as 'true' instead of ''"
+ },
+ {
+  "id": "mutate/setStyle-drop-undef-guard",
+  "file": "src/dom-utils/mutate.ts",
+  "tags": [],
+  "find": "    if (value !== undefined) {\n      (el.style as any)[key] = value;\n    }",
+  "replace": "    (el.style as any)[key] = value;",
+  "note": "undefined style values written through",
+  "equivalent": "CSSOM stringifies an assigned value, and \"undefined\" is not a valid declaration value, so the property is left unchanged either way. The guard saves a wasted assignment, not a wrong one — see the note on setStyle in src/dom-utils/mutate.ts."
+ },
+ {
+  "id": "mutate/setText-uses-innerHTML",
+  "file": "src/dom-utils/mutate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "export function setText(el: HTMLElement, text: string): void {\n  el.textContent = text;",
+  "replace": "export function setText(el: HTMLElement, text: string): void {\n  el.innerHTML = text;",
+  "note": "setText (documented safe for user content) becomes an XSS sink"
+ },
+ {
+  "id": "mutation/applyRevalidation-noop",
+  "file": "src/server/mutation.ts",
+  "tags": [],
+  "find": "      resource.mutate(freshData);",
+  "replace": "",
+  "note": "public applyRevalidation() never mutates the resource"
+ },
+ {
+  "id": "mutation/autoRevalidation-noop",
+  "file": "src/server/mutation.ts",
+  "tags": [],
+  "find": "  window.addEventListener('forma:revalidate', handler);",
+  "replace": "",
+  "note": "enableAutoRevalidation() never subscribes"
+ },
+ {
+  "id": "mutation/registerResource-noop",
+  "file": "src/server/mutation.ts",
+  "tags": [],
+  "find": "  resourceRegistry.set(key, resource);",
+  "replace": "",
+  "note": "public registerResource() does nothing"
+ },
+ {
+  "id": "observe/onIntersect-noop",
+  "file": "src/dom-utils/observe.ts",
+  "tags": [],
+  "find": "  }, options);\n  observer.observe(el);",
+  "replace": "  }, options);",
+  "note": "onIntersect never observes the element"
+ },
+ {
+  "id": "observe/onResize-noop",
+  "file": "src/dom-utils/observe.ts",
+  "tags": [],
+  "find": "  observer.observe(el);\n  return () => {\n    observer.disconnect();\n  };\n}\n\n/**\n * Observe element visibility",
+  "replace": "  return () => {\n    observer.disconnect();\n  };\n}\n\n/**\n * Observe element visibility",
+  "note": "onResize never observes the element"
+ },
+ {
+  "id": "persist/migrate-off",
+  "file": "src/state/persist.ts",
+  "tags": [],
+  "find": "      if (version !== undefined && storedVersion < version) {",
+  "replace": "      if (false) {",
+  "note": "persist version migration never runs"
+ },
+ {
+  "id": "persist/skip-validate",
+  "file": "src/state/persist.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (!validate || validate(value)) {",
+  "replace": "      if (true) {",
+  "note": "persist hydrate() ignores validate()"
+ },
+ {
+  "id": "portal/no-remove-prev",
+  "file": "src/dom/portal.ts",
+  "tags": [],
+  "find": "    return () => {\n      removeMountedNode();\n    };",
+  "replace": "    return () => { /* mutation: portal never detaches its node */ };",
+  "note": "portal never detaches the previous node — the target accumulates on every re-render and on dispose"
+ },
+ {
+  "id": "portal/target-string-ignored",
+  "file": "src/dom/portal.ts",
+  "tags": [],
+  "find": "  const resolvedTarget = typeof target === 'string'\n    ? document.querySelector(target)\n    : (target ?? document.body);",
+  "replace": "  const resolvedTarget = typeof target === 'string'\n    ? document.body\n    : (target ?? document.body);",
+  "note": "string portal selector ignored — always body"
+ },
+ {
+  "id": "reactive/untrack-noop",
+  "file": "src/reactive/untrack.ts",
+  "tags": [],
+  "find": "export function untrack",
+  "replace": "export function untrackDISABLED_UNUSED_SHIM_NOT_EXPORTED_PLACEHOLDER",
+  "note": "compile-break sentinel (expect CAUGHT — harness sanity check)"
+ },
+ {
+  "id": "reconcile/remove-all-skips-hook",
+  "file": "src/dom/list.ts",
+  "tags": [],
+  "find": "  if (hooks?.onBeforeRemove) {",
+  "replace": "  if (false && hooks?.onBeforeRemove) {",
+  "note": "onBeforeRemove exit transition skipped when clearing a list"
+ },
+ {
+  "id": "runtime/bind-false-not-removed",
+  "file": "src/runtime.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "        if (val == null || val === false) {\n          el.removeAttribute(attrName);",
+  "replace": "        if (val == null) {\n          el.removeAttribute(attrName);",
+  "note": "data-bind: leaves disabled=\"false\" on the element"
+ },
+ {
+  "id": "runtime/bind-guard-off",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (isUnsafeAttrBinding(attrName, str, el.tagName.toLowerCase())) {",
+  "replace": "        if (false) {",
+  "note": "data-bind:* writes javascript: URLs and inline handlers"
+ },
+ {
+  "id": "runtime/bind-no-eventhandler",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "function isUnsafeAttrBinding(name: string, value: string, tag: string): boolean {\n  if (isEventHandlerAttr(name)) return true;",
+  "replace": "function isUnsafeAttrBinding(name: string, value: string, tag: string): boolean {",
+  "note": "data-bind:onclick installs an inline handler"
+ },
+ {
+  "id": "runtime/bind-tag-not-forwarded",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (isUrlAttr(name) && isDangerousUrl(value, tag)) return true;",
+  "replace": "  if (isUrlAttr(name) && isDangerousUrl(value, 'img')) return true;",
+  "note": "data-bind: judges every sink as an image sink"
+ },
+ {
+  "id": "sec/attrname-allow-quote",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const SAFE_ATTR_NAME_RE = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;",
+  "replace": "const SAFE_ATTR_NAME_RE = /^[A-Za-z_:][^\\u0000]*$/;",
+  "note": "attribute-name breakout (quotes/space/=) now allowed"
+ },
+ {
+  "id": "sec/attrname-allows-slash",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const SAFE_ATTR_NAME_RE = /^[A-Za-z_:][-A-Za-z0-9_:.]*$/;",
+  "replace": "const SAFE_ATTR_NAME_RE = /^[A-Za-z_:][-A-Za-z0-9_:.\\/\"'= ]*$/;",
+  "note": "attribute/tag names may contain quote, space and = (breakout)"
+ },
+ {
+  "id": "sec/eventhandler-case-sensitive",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return /^on/i.test(name);",
+  "replace": "  return /^on/.test(name);",
+  "note": "ONCLICK/Onerror no longer detected as event-handler names"
+ },
+ {
+  "id": "sec/parsestate-no-proto-strip",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  for (const key of FORBIDDEN_STATE_KEYS) {\n    if (Object.hasOwn(state, key)) delete state[key];\n  }",
+  "replace": "",
+  "note": "data-forma-state prototype-pollution keys no longer stripped"
+ },
+ {
+  "id": "sec/rpc-no-arg-strip",
+  "file": "src/server/rpc-handler.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const FORBIDDEN_ARG_KEYS = ['__proto__', 'constructor', 'prototype'];",
+  "replace": "const FORBIDDEN_ARG_KEYS: string[] = [];",
+  "note": "RPC args no longer sanitized for prototype pollution"
+ },
+ {
+  "id": "sec/rpc-no-endpoint-guard",
+  "file": "src/server/rpc-handler.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);",
+  "replace": "const FORBIDDEN_KEYS = new Set<string>([]);",
+  "note": "endpoint-name prototype pollution guard removed"
+ },
+ {
+  "id": "sec/scheme-re-unanchored",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const DANGEROUS_SCHEME_RE = /^(?:javascript|vbscript|data:text\\/html)/i;",
+  "replace": "const DANGEROUS_SCHEME_RE = /(?:javascript|vbscript|data:text\\/html)/i;",
+  "note": "substring match — https://example.com/guides/javascript now blocked"
+ },
+ {
+  "id": "sec/svg-any-tag-is-image",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    return tag === undefined || !IMAGE_CONTEXT_TAGS.has(tag.toLowerCase());",
+  "replace": "    return tag === undefined;",
+  "note": "data:image/svg+xml accepted on <a>/<iframe> document sinks"
+ },
+ {
+  "id": "sec/unsafe-attr-write-url-off",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return isUrlAttr(name) && isDangerousUrl(value, tag);",
+  "replace": "  return false;",
+  "note": "the shared client-side URL predicate always allows"
+ },
+ {
+  "id": "sec/url-attrs-drop-action",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  'action',\n  'formaction',",
+  "replace": "  'formaction',",
+  "note": "action no longer scheme-checked"
+ },
+ {
+  "id": "sec/url-attrs-drop-background",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  'background',\n",
+  "replace": "",
+  "note": "background no longer scheme-checked"
+ },
+ {
+  "id": "sec/url-attrs-drop-data",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  'data',\n]);",
+  "replace": "]);",
+  "note": "<object data> no longer scheme-checked"
+ },
+ {
+  "id": "sec/url-attrs-drop-formaction",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  'formaction',\n",
+  "replace": "",
+  "note": "formaction no longer treated as a URL attr"
+ },
+ {
+  "id": "sec/url-attrs-drop-poster",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  'poster',\n",
+  "replace": "",
+  "note": "poster no longer scheme-checked"
+ },
+ {
+  "id": "sec/url-attrs-drop-xlink",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  'xlink:href',\n",
+  "replace": "",
+  "note": "xlink:href no longer scheme-checked"
+ },
+ {
+  "id": "sec/url-dangerous-off",
+  "file": "src/security/url-safety.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const normalized = value.replace(URL_IGNORED_CHARS_RE, '');",
+  "replace": "const normalized = value;",
+  "note": "control-char scheme smuggling no longer normalized (java\\tscript:)"
+ },
+ {
+  "id": "show/hydrating-branch-wrong",
+  "file": "src/dom/show.ts",
+  "tags": [],
+  "find": "    const branch = when() ? thenFn() : elseFn();",
+  "replace": "    const branch = elseFn();",
+  "note": "hydration always picks the else branch"
+ },
+ {
+  "id": "show/no-branch-dispose",
+  "file": "src/dom/show.ts",
+  "tags": [],
+  "find": "    if (currentDispose) {\n      currentDispose();\n      currentDispose = null;\n    }\n\n    // Remove current node.",
+  "replace": "    // Remove current node.",
+  "note": "previous show branch effects never disposed (leak across toggles)"
+ },
+ {
+  "id": "show/no-fragment-sweep",
+  "file": "src/dom/show.ts",
+  "tags": [],
+  "find": "        while (startMarker.nextSibling && startMarker.nextSibling !== endMarker) {\n          parent.removeChild(startMarker.nextSibling);\n        }",
+  "replace": "",
+  "note": "fragment branch content not cleared between markers (duplicate content)"
+ },
+ {
+  "id": "show/no-lasttruthy-guard",
+  "file": "src/dom/show.ts",
+  "tags": [],
+  "find": "    if (truthy === lastTruthy) {",
+  "replace": "    if (false && truthy === lastTruthy) {",
+  "note": "show re-renders branch on every effect run (identity churn)"
+ },
+ {
+  "id": "ssr/attr-false-emitted",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "  if (resolved === false || resolved == null) return null;",
+  "replace": "  if (resolved == null) return null;",
+  "note": "boolean false emitted as disabled=\"false\" (still disables the control)"
+ },
+ {
+  "id": "ssr/attr-no-eventhandler-guard",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (isEventHandlerAttr(attrName) || !isSafeAttrName(attrName)) return null;",
+  "replace": "  if (!isSafeAttrName(attrName)) return null;",
+  "note": "SSR emits on* attributes verbatim"
+ },
+ {
+  "id": "ssr/attr-no-name-guard",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (isEventHandlerAttr(attrName) || !isSafeAttrName(attrName)) return null;\n  if (resolved === true) return ' ' + attrName;",
+  "replace": "  if (isEventHandlerAttr(attrName)) return null;\n  if (resolved === true) return ' ' + attrName;",
+  "note": "SSR emits attribute names that break out of the attribute position"
+ },
+ {
+  "id": "ssr/attr-no-url-guard",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (isUrlAttr(attrName) && isDangerousUrl(str, tag)) return null;",
+  "replace": "",
+  "note": "SSR emits javascript: URLs"
+ },
+ {
+  "id": "ssr/attr-true-as-value",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "  if (resolved === true) return ' ' + attrName;",
+  "replace": "  if (resolved === true) return ' ' + attrName + '=\"true\"';",
+  "note": "boolean true no longer emits a bare attribute name"
+ },
+ {
+  "id": "ssr/escape-html-amp",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return str\n    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')",
+  "replace": "  return str\n    .replace(/</g, '&lt;')",
+  "note": "escapeHtml no longer escapes & (double-encode / entity smuggling)"
+ },
+ {
+  "id": "ssr/escapeAttr-drop-amp",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return str\n    .replace(/&/g, '&amp;')\n    .replace(/\"/g, '&quot;')",
+  "replace": "  return str\n    .replace(/\"/g, '&quot;')",
+  "note": "escapeAttr no longer escapes & (entity smuggling)"
+ },
+ {
+  "id": "ssr/escapeAttr-drop-dquote",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    .replace(/&/g, '&amp;')\n    .replace(/\"/g, '&quot;')\n    .replace(/</g, '&lt;')",
+  "replace": "    .replace(/</g, '&lt;')",
+  "note": "SSR attribute values no longer escape double quotes — attribute breakout"
+ },
+ {
+  "id": "ssr/escapeAttr-drop-lt",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/'/g, '&#39;');",
+  "replace": "    .replace(/>/g, '&gt;')\n    .replace(/'/g, '&#39;');",
+  "note": "escapeAttr no longer escapes <"
+ },
+ {
+  "id": "ssr/escapeHtml-drop-all-but-quote",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#x27;');",
+  "replace": "    .replace(/\"/g, '&quot;');",
+  "note": "SSR text nodes no longer escape < > & ' — raw XSS"
+ },
+ {
+  "id": "ssr/escapeHtml-drop-apos",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    .replace(/'/g, '&#x27;');",
+  "replace": "    ;",
+  "note": "escapeHtml no longer escapes single quote"
+ },
+ {
+  "id": "ssr/escapeHtml-drop-lt",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#x27;');",
+  "replace": "    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#x27;');",
+  "note": "escapeHtml no longer escapes < "
+ },
+ {
+  "id": "ssr/escapeHtml-drop-quot",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#x27;');",
+  "replace": "    .replace(/'/g, '&#x27;');",
+  "note": "escapeHtml no longer escapes double quote"
+ },
+ {
+  "id": "ssr/no-tagname-guard",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (!isSafeTagName(tag)) {",
+  "replace": "    if (isSafeTagName(tag) && false) {",
+  "note": "SSR interpolates an attacker-controlled tag name verbatim"
+ },
+ {
+  "id": "ssr/prop-to-attr-classname",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "export const PROP_TO_ATTR: Record<string, string> = {\n  className: 'class',",
+  "replace": "export const PROP_TO_ATTR: Record<string, string> = {\n  classNameXX: 'class',",
+  "note": "className no longer maps to class in SSR output"
+ },
+ {
+  "id": "ssr/ref-emitted-as-attr",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "        if (key === 'ref' || key === 'dangerouslySetInnerHTML') continue;",
+  "replace": "        if (key === 'dangerouslySetInnerHTML') continue;",
+  "note": "ref serialised into the SSR markup"
+ },
+ {
+  "id": "ssr/text-child-not-escaped",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (typeof node === 'string') { parts.push(escapeHtml(node)); return; }",
+  "replace": "  if (typeof node === 'string') { parts.push(node); return; }",
+  "note": "SSR text children emitted raw — live <script> in the page"
+ },
+ {
+  "id": "ssr/void-element-closed",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "    if (VOID_ELEMENTS.has(tag)) { parts.push(' />'); return; }",
+  "replace": "    if (VOID_ELEMENTS.has(tag) && false) { parts.push(' />'); return; }",
+  "note": "void elements get a closing tag"
+ },
+ {
+  "id": "storage/local-skip-validate",
+  "file": "src/storage/local.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (validate && !validate(value)) return null;",
+  "replace": "",
+  "note": "localStorage validate() option ignored"
+ },
+ {
+  "id": "store/array-version-not-subscribed",
+  "file": "src/state/store.ts",
+  "tags": [],
+  "find": "        if (Array.isArray(value)) {\n          getArrayVersion(childPath)[0]();\n        }",
+  "replace": "",
+  "note": "array reads no longer subscribe to the array-version signal"
+ },
+ {
+  "id": "store/arrays-not-wrapped",
+  "file": "src/state/store.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if ((v as any)[PROXY]) return false;\n  return true;\n}",
+  "replace": "  if ((v as any)[PROXY]) return false;\n  return !Array.isArray(v);\n}",
+  "note": "arrays no longer plain — array reactivity path dead"
+ },
+ {
+  "id": "store/deepClone-identity",
+  "file": "src/state/store.ts",
+  "tags": [],
+  "find": "function deepClone(obj: unknown, seen?: WeakSet<object>): unknown {",
+  "replace": "function deepClone(obj: unknown, seen?: WeakSet<object>): unknown { if (obj && typeof obj === 'object') return obj;",
+  "note": "store deepClone becomes identity — snapshots alias live state"
+ },
+ {
+  "id": "store/no-array-method-patch",
+  "file": "src/state/store.ts",
+  "tags": [],
+  "find": "  'reverse',\n  'fill',\n  'copyWithin',",
+  "replace": "",
+  "note": "reverse/fill/copyWithin no longer trigger array reactivity"
+ },
+ {
+  "id": "switch/cache-never-reused",
+  "file": "src/dom/switch.ts",
+  "tags": [],
+  "find": "      let entry = cache.get(val);",
+  "replace": "      let entry = undefined as any;",
+  "note": "switch branch cache disabled — new node identity each visit"
+ },
+ {
+  "id": "switch/no-scoop-back",
+  "file": "src/dom/switch.ts",
+  "tags": [],
+  "find": "        let scooped = 0;\n        while (startMarker.nextSibling && startMarker.nextSibling !== endMarker) {\n          currentNode.appendChild(startMarker.nextSibling);\n          scooped++;\n        }",
+  "replace": "        let scooped = 0;",
+  "note": "cached fragment branch not scooped back — 3rd visit renders empty/duplicated"
+ },
+ {
+  "id": "traverse/siblings-includes-self",
+  "file": "src/dom-utils/traverse.ts",
+  "tags": [],
+  "find": "!== el",
+  "replace": "!== null",
+  "note": "siblings() now includes the element itself"
+ }
+]

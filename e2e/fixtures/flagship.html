@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FormaJS flagship example under a strict CSP</title>
+</head>
+<body>
+
+<!--
+  The README's flagship block, verbatim apart from the script src.
+
+  src/__tests__/readme-flagship.test.ts extracts the same markup from README.md
+  and mounts it in happy-dom; this file is its counterpart in a real browser,
+  served under a real `Content-Security-Policy: script-src 'self'` response
+  header so the browser's own CSP engine — not a stub — decides whether the
+  runtime is allowed to run. e2e/csp.spec.ts asserts zero violations.
+-->
+<div data-forma-state='{
+  "query": "",
+  "items": ["Apples", "Bananas", "Cherries", "Dates", "Elderberries"],
+  "darkMode": false
+}'>
+
+  <input id="query" data-model="{query}" placeholder="Search fruits...">
+
+  <p id="count"
+     data-computed="matchCount = items.filter(i => i.toLowerCase().includes(query.toLowerCase())).length"
+     data-text="{'Found ' + matchCount + ' results'}"></p>
+
+  <p id="empty" data-show="{query.length > 0 && matchCount === 0}">No matches found.</p>
+
+  <ul id="list" data-list="{items.filter(i => i.toLowerCase().includes(query.toLowerCase()))}">
+    <li>{item}</li>
+  </ul>
+
+  <button id="toggle" data-on:click="{darkMode = !darkMode}">
+    Toggle Dark Mode
+  </button>
+
+  <div id="themed" data-class:dark="{darkMode}" data-bind:data-theme="{darkMode ? 'dark' : 'light'}">
+    Theme is: <span id="theme-label" data-text="{darkMode ? 'Dark' : 'Light'}"></span>
+  </div>
+
+  <div data-persist="{darkMode}"></div>
+</div>
+
+<script src="/formajs-runtime.global.js"></script>
+</body>
+</html>

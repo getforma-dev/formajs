@@ -1,211 +1,45 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+/**
+ * The security model, driven through `mount()` rather than through the
+ * interpreter's own API.
+ *
+ * src/expr/__tests__/adversarial.test.ts attacks the engine directly. This file
+ * attacks it the way a real page does — a `data-forma-state` attribute, a
+ * `data-on:click` handler, a click — because the wiring between them is its own
+ * surface: a payload that the interpreter denies but that the runtime evaluates
+ * through some other path would be just as exploitable.
+ *
+ * The suite this replaces tested a BLOCKLIST: nine names checked by a string
+ * scan over the source text, guarding a `new Function` fallback. Every case in
+ * it was written as "does this particular spelling get caught", which is the
+ * shape of a defence that can only ever enumerate what it has already seen —
+ * and four bypasses were found against it by assembling the blocked name at
+ * runtime. The engine is now an allowlist, so the cases below are written the
+ * other way round: what does the page get, and is it only what it declared?
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
   mount,
   unmount,
-  setUnsafeEval,
-  setUnsafeEvalMode,
-  getUnsafeEvalMode,
-  isUnsafeEvalAllowed,
   setDiagnostics,
   getDiagnostics,
   clearDiagnostics,
+  getScopes,
 } from '../runtime';
 
-function waitForEffects(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 0));
+function tick(): Promise<void> {
+  return new Promise((r) => setTimeout(r, 0));
 }
 
-describe('runtime unsafe-eval hardening', () => {
+describe('runtime expression hardening', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(false);
-    container = document.createElement('div');
-    document.body.appendChild(container);
-  });
-
-  afterEach(() => {
-    unmount(container);
-    container.remove();
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(false);
-  });
-
-  it("setUnsafeEvalMode('mutable') does not enable the fallback", () => {
-    // 'mutable' is the DEFAULT mode of every build, so it has to mean
-    // "off, but you may turn it on" — never "on". Coming back to it from a
-    // locked mode must not hand the page an eval it never asked for.
-    setUnsafeEvalMode('locked-off');
-    expect(isUnsafeEvalAllowed()).toBe(false);
-
-    setUnsafeEvalMode('mutable');
-    expect(getUnsafeEvalMode()).toBe('mutable');
-    expect(isUnsafeEvalAllowed()).toBe(false);
-
-    setUnsafeEvalMode('locked-on');
-    expect(isUnsafeEvalAllowed()).toBe(true);
-    setUnsafeEvalMode('mutable');
-    expect(isUnsafeEvalAllowed()).toBe(false);
-  });
-
-  it('allows unsafe fallback in mutable mode when explicitly enabled', async () => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
-
-    container.innerHTML = `
-      <div data-forma-state='{"count":0}'>
-        <button id="btn" data-on:click="{count = Number('4')}">set</button>
-        <p id="out" data-text="{count}"></p>
-      </div>
-    `;
-
-    mount(container);
-    await waitForEffects();
-
-    (container.querySelector('#btn') as HTMLButtonElement).click();
-    await waitForEffects();
-
-    expect(getUnsafeEvalMode()).toBe('mutable');
-    expect(container.querySelector('#out')?.textContent).toBe('4');
-  });
-
-  it('locks unsafe fallback off and ignores runtime toggles', async () => {
-    setUnsafeEvalMode('locked-off');
-    setUnsafeEval(true); // ignored by hardened mode
-
-    container.innerHTML = `
-      <div data-forma-state='{"count":0}'>
-        <button id="btn" data-on:click="{count = Number('4')}">set</button>
-        <p id="out" data-text="{count}"></p>
-      </div>
-    `;
-
-    mount(container);
-    await waitForEffects();
-
-    (container.querySelector('#btn') as HTMLButtonElement).click();
-    await waitForEffects();
-
-    expect(getUnsafeEvalMode()).toBe('locked-off');
-    expect(container.querySelector('#out')?.textContent).toBe('0');
-  });
-
-  // A blocked expression must not execute, and it must not take the rest of the
-  // page down with it: every case below asserts the neutered handler AND that a
-  // sibling directive on the same scope still binds. `data-text` rendering "0"
-  // is the proof that mount() finished instead of aborting on the first throw.
-  async function mountWithBlockedHandler(clickExpr: string): Promise<HTMLDivElement> {
-    // Build container off-document to avoid MutationObserver auto-mount race
-    const offscreen = document.createElement('div');
-    offscreen.innerHTML = `
-      <div data-forma-state='{"x":0}'>
-        <button id="btn" data-on:click="${clickExpr}">hack</button>
-        <p id="out" data-text="{x}"></p>
-      </div>
-    `;
-
-    expect(() => {
-      mount(offscreen);
-    }).not.toThrow();
-    await waitForEffects();
-
-    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
-    (offscreen.querySelector('#btn') as HTMLButtonElement).click();
-    await waitForEffects();
-
-    return offscreen;
-  }
-
-  it('blocks constructor in new Function path', async () => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
-
-    const offscreen = await mountWithBlockedHandler("{x.constructor('alert(1)')()}");
-
-    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
-    unmount(offscreen);
-  });
-
-  it('catches template literal bracket access bypass attempt', async () => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
-
-    const offscreen = await mountWithBlockedHandler("{x[\`constructor\`]('alert(1)')()}");
-
-    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
-    unmount(offscreen);
-  });
-
-  it('catches comment injection bypass attempt', async () => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
-
-    const offscreen = await mountWithBlockedHandler("{x./**/constructor('alert(1)')()}");
-
-    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
-    unmount(offscreen);
-  });
-
-  it('blocks .Function() access in handler', async () => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
-
-    const offscreen = await mountWithBlockedHandler("x.Function('return 1')()");
-
-    expect(offscreen.querySelector('#out')?.textContent).toBe('0');
-    unmount(offscreen);
-  });
-
-  it('blocks .__proto__ access in handler', async () => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true);
-
-    // `x` must be an OBJECT for this to mean anything: with the numeric `x` this
-    // test used to declare, `x.__proto__` was Number.prototype, so the payload
-    // succeeding would still have left `({}).polluted` undefined and the
-    // assertion passed whether or not the blocklist ran.
-    const offscreen = document.createElement('div');
-    offscreen.innerHTML = `
-      <div data-forma-state='{"x":{}}'>
-        <button id="btn" data-on:click="{x.__proto__.polluted = true}">hack</button>
-      </div>`;
-    try {
-      mount(offscreen);
-      await waitForEffects();
-      (offscreen.querySelector('#btn') as HTMLButtonElement).click();
-      await waitForEffects();
-
-      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-      expect(Object.prototype).not.toHaveProperty('polluted');
-    } finally {
-      delete (Object.prototype as Record<string, unknown>).polluted;
-      unmount(offscreen);
-    }
-  });
-});
-
-/**
- * The expression blocklist (`findBlockedMethod`), exercised through the runtime
- * rather than re-implemented beside it.
- *
- * This suite replaces src/__tests__/runtime-blocklist.test.ts, which pasted a
- * copy of the detection logic into the test file and asserted against the copy:
- * ten tests that passed with the real blocklist deleted. Each test below drives
- * a payload through `mount()` with the eval fallback switched on and reads a
- * binding, a diagnostic or `Object.prototype` — deleting either detection layer
- * fails them.
- */
-describe('expression blocklist', () => {
-  let container: HTMLDivElement;
-
-  beforeEach(() => {
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(true); // the blocklist only guards the eval fallback
     setDiagnostics(true);
     clearDiagnostics();
     container = document.createElement('div');
     document.body.appendChild(container);
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
   });
 
   afterEach(() => {
@@ -213,8 +47,7 @@ describe('expression blocklist', () => {
     container.remove();
     setDiagnostics(false);
     clearDiagnostics();
-    setUnsafeEval(false);
-    setUnsafeEvalMode('mutable');
+    vi.restoreAllMocks();
   });
 
   /** Click a handler and report what `data-text="{out}"` ended up showing. */
@@ -225,84 +58,143 @@ describe('expression blocklist', () => {
         <p id="out" data-text="{out}"></p>
       </div>`;
     mount(container);
-    await waitForEffects();
+    await tick();
     (container.querySelector('#btn') as HTMLButtonElement).click();
-    await waitForEffects();
+    await tick();
     return container.querySelector('#out')?.textContent ?? '';
   }
 
-  function blockedReasons(): string[] {
-    return getDiagnostics()
-      .map((d) => d.reason)
-      .filter((r) => r.startsWith('Blocked unsafe method'));
+  function codes(): string[] {
+    return getDiagnostics().map((d) => d.code);
   }
 
-  it('blocks a bracket name assembled by string concatenation', async () => {
-    // Layer 1 sees no `.constructor` and no `['constructor']`; only the
-    // fragment-joining layer catches this. Without it `new Function` compiles
-    // the expression and `out` becomes "Object".
-    expect(await runHandler('{"x":{},"out":0}', "{out = x['constr' + 'uctor'].name}")).toBe('0');
-    expect(blockedReasons()).toContain('Blocked unsafe method "constructor" in handler');
+  it('a constructor reach is denied however the name is assembled', async () => {
+    // These four were WORKING bypasses of the string-scan blocklist: it saw no
+    // literal `constructor` in any of them. The key filter runs on the
+    // evaluated key, so the spelling is irrelevant.
+    for (const handler of [
+      "{out = x['constructor'].name}",
+      "{out = x['constr' + 'uctor'].name}",
+      "{out = x['con' + 'struc' + 'tor'].name}",
+      "{out = x['xconstructorx'.slice(1, 12)].name}",
+      '{out = x[k].name}',
+    ]) {
+      clearDiagnostics();
+      expect(await runHandler('{"x":{},"out":0,"k":"constructor"}', handler), handler).toBe('0');
+      expect(codes(), handler).toContain('FORMA_E_KEY_DENIED');
+      unmount(container);
+    }
   });
 
-  it('blocks a name split across three fragments', async () => {
-    expect(await runHandler('{"x":{},"out":0}', "{out = x['con' + 'struc' + 'tor'].name}")).toBe('0');
-    expect(blockedReasons()).toContain('Blocked unsafe method "constructor" in handler');
-  });
-
-  it('blocks a concatenated __proto__ before it can reach Object.prototype', async () => {
+  it('a prototype write never reaches Object.prototype', async () => {
     try {
-      expect(await runHandler('{"x":{},"out":0}', "{x['__pro' + 'to__'].polluted = true}")).toBe('0');
-      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
-      expect(Object.prototype).not.toHaveProperty('polluted');
-      expect(blockedReasons()).toContain('Blocked unsafe method "__proto__" in handler');
+      for (const handler of [
+        '{x.__proto__.polluted = true}',
+        "{x['__pro' + 'to__'].polluted = true}",
+        '{x[k].polluted = true}',
+      ]) {
+        clearDiagnostics();
+        expect(await runHandler('{"x":{},"out":0,"k":"__proto__"}', handler), handler).toBe('0');
+        expect(({} as Record<string, unknown>).polluted, handler).toBeUndefined();
+        expect(Object.prototype, handler).not.toHaveProperty('polluted');
+        expect(codes(), handler).toContain('FORMA_E_KEY_DENIED');
+        unmount(container);
+      }
     } finally {
       delete (Object.prototype as Record<string, unknown>).polluted;
     }
   });
 
-  it('blocks a concatenated name in a value expression, not just a handler', async () => {
-    // buildEvaluator has its own copy of the guard; data-text goes through it.
+  it('a value expression is guarded on the same terms as a handler', async () => {
+    // The two paths had separate copies of the old blocklist, and a fix applied
+    // to one of them was a fix applied to one of them.
     container.innerHTML = `
       <div data-forma-state='{"x":{}}'>
-        <p id="out" data-text="{x['constr' + 'uctor'].name}"></p>
+        <p id="out" data-text="{x['constr' + 'uctor'].name}">kept</p>
       </div>`;
     mount(container);
-    await waitForEffects();
+    await tick();
 
     const out = container.querySelector('#out')!;
-    expect(out.textContent).toBe('');
+    expect(out.textContent).toBe('kept');
     expect(out.getAttribute('data-forma-expr-error')).toBe('unsupported');
-    expect(getDiagnostics().map((d) => d.reason)).toContain(
-      'Blocked unsafe method "constructor" in expression',
-    );
+    expect(codes()).toContain('FORMA_E_KEY_DENIED');
   });
 
-  it('blocks a quoted bracket name in every quote style', async () => {
-    for (const expr of [
-      `{out = x['constructor'].name}`,
-      `{out = x[&quot;constructor&quot;].name}`,
-      '{out = x[`constructor`].name}',
-    ]) {
-      clearDiagnostics();
-      expect(await runHandler('{"x":{},"out":0}', expr), expr).toBe('0');
-      expect(blockedReasons(), expr).toContain('Blocked unsafe method "constructor" in handler');
-      unmount(container);
-    }
-  });
-
-  it('allows a bracket name concatenated from harmless fragments', async () => {
-    // The mirror image: over-blocking is a bug too. This is the case that
-    // proves the tests above are measuring the blocklist and not just the
-    // eval fallback being off.
+  it('does not over-block a harmless key that merely resembles one', async () => {
+    // The mirror image, and the case that proves the ones above measure the key
+    // filter rather than an engine that refuses everything: over-blocking is a
+    // bug too.
     expect(await runHandler('{"x":{"hello":"yes"},"out":""}', "{out = x['he' + 'llo']}")).toBe('yes');
-    expect(blockedReasons()).toEqual([]);
+    expect(getDiagnostics()).toEqual([]);
   });
 
   it('does not flag an identifier that merely contains a blocked name', async () => {
     expect(
-      await runHandler('{"constructorValue":5,"out":0}', '{out = [constructorValue, 1].filter(n => n > 1)[0]}'),
+      await runHandler(
+        '{"constructorValue":5,"out":0}',
+        '{out = [constructorValue, 1].filter(n => n > 1)[0]}',
+      ),
     ).toBe('5');
-    expect(blockedReasons()).toEqual([]);
+    expect(getDiagnostics()).toEqual([]);
+  });
+
+  it('state cannot smuggle a prototype key in through data-forma-state', async () => {
+    // JSON.parse materialises "__proto__" as a real own property, so the sweep
+    // in parseState is not the no-op the same delete would be on an object
+    // literal — and even if it were, the key is unreadable.
+    container.innerHTML = `
+      <div data-forma-state='{"__proto__":{"polluted":true},"safe":1}'>
+        <p id="out" data-text="{safe}"></p>
+      </div>`;
+    try {
+      mount(container);
+      await tick();
+      expect(container.querySelector('#out')!.textContent).toBe('1');
+      expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+      expect(Object.keys(getScopes()[0]!.values)).not.toContain('__proto__');
+    } finally {
+      delete (Object.prototype as Record<string, unknown>).polluted;
+    }
+  });
+
+  it('a state value that is a function cannot be invoked from markup', async () => {
+    // An app can put a function in state; it can never be called with
+    // attacker-chosen arguments, because bare `f(x)` has no call form at all.
+    container.innerHTML = `
+      <div data-forma-state='{"out":0}'>
+        <p id="out" data-text="{fn(1)}">kept</p>
+      </div>`;
+    mount(container);
+    await tick();
+    const scope = (container.firstElementChild as unknown as {
+      __formaScope: { getters: Record<string, () => unknown> };
+    }).__formaScope;
+    let called = false;
+    scope.getters.fn = () => () => { called = true; };
+
+    // Re-mount so the expression compiles against the extended scope.
+    unmount(container);
+    clearDiagnostics();
+    mount(container);
+    await tick();
+
+    expect(called).toBe(false);
+    expect(container.querySelector('#out')!.textContent).toBe('kept');
+  });
+
+  it('a page-wide budget refuses a runaway expression instead of hanging', async () => {
+    // T3. The language is total — no loops, no recursion — so this bounds cost,
+    // not termination; a 400×400 nested callback is simply refused.
+    const rows = JSON.stringify(Array.from({ length: 400 }, (_, i) => i));
+    container.innerHTML = `
+      <div data-forma-state='{"rows":${rows}}'>
+        <p id="out" data-text="{rows.map(a => rows.map(b => b)).length}">kept</p>
+      </div>`;
+    mount(container);
+    await tick();
+
+    expect(container.querySelector('#out')!.textContent).toBe('kept');
+    expect(codes()).toContain('FORMA_E_BUDGET');
   });
 });

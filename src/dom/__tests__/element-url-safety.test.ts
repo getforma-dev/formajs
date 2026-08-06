@@ -74,6 +74,54 @@ describe('h() URL attribute safety', () => {
     expect(el.getAttribute('src')).toBe('/other.png');
   });
 
+  it('a refused URL leaves no cache entry that would let the same string through unchecked', () => {
+    // handleGenericAttr consults its identity cache BEFORE the URL guard, which
+    // is only sound because the reject path stores `null` rather than the
+    // refused string. If it ever stored the string, the second write of the
+    // same payload would read as a cache hit and skip the guard entirely.
+    const [url, setUrl] = createSignal('/safe.png');
+    const el = h('img', { src: () => url() });
+
+    setUrl('javascript:alert(1)');
+    expect(el.getAttribute('src')).toBeNull();
+
+    // Bounce through a safe value (an equal write would not re-run the binding)
+    // and refuse the identical payload again.
+    setUrl('/safe.png');
+    expect(el.getAttribute('src')).toBe('/safe.png');
+    setUrl('javascript:alert(1)');
+    expect(el.getAttribute('src')).toBeNull();
+  });
+
+  it('runs the URL guard once per distinct value, not once per flush', () => {
+    // A reactive href whose value never changes used to pay an allocating
+    // String.replace plus two regexes on every flush and then write nothing:
+    // 27 ns → 77 ns per write (docs/PERFORMANCE.md § The URL guard runs before
+    // the identity cache).
+    const PROBE = 'https://example.com/a';
+    const [tick, setTick] = createSignal(0);
+    const el = h('a', { href: () => { tick(); return PROBE; } });
+    expect(el.getAttribute('href')).toBe(PROBE);
+
+    // isDangerousUrl normalizes its input with String.replace before it tests
+    // any regex, and it is the only .replace this write path performs on the
+    // value, so counting those counts guard runs.
+    const original = String.prototype.replace;
+    let guardRuns = 0;
+    String.prototype.replace = function (this: string, ...args: unknown[]): string {
+      if (String(this) === PROBE) guardRuns++;
+      return (original as unknown as (...a: unknown[]) => string).apply(this, args);
+    } as unknown as typeof String.prototype.replace;
+    try {
+      for (let i = 1; i <= 5; i++) setTick(i);
+    } finally {
+      String.prototype.replace = original;
+    }
+
+    expect(guardRuns).toBe(0);
+    expect(el.getAttribute('href')).toBe(PROBE);
+  });
+
   it('drops a javascript: xlink:href on <use>', () => {
     const staticUse = svg(() => h('use', { 'xlink:href': 'javascript:alert(1)' }));
     expect(staticUse.getAttributeNS(XLINK_NS, 'href')).toBeNull();

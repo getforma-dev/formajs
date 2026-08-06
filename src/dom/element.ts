@@ -363,8 +363,30 @@ function handleStyle(el: Element, _key: string, value: unknown): void {
   }
 }
 
-/** Handle event handler props (onClick, onInput, etc.). Cached eventName. */
+/**
+ * Handle event handler props (onClick, onInput, etc.). Cached eventName.
+ *
+ * A non-function value is DROPPED rather than registered. `h('button', {onclick:
+ * 'alert(1)'})` is the inline-handler shape the SSR renderer refuses, and
+ * registering the string as a listener does not make it run — it makes
+ * `dispatchEvent` throw `listener.call is not a function` the first time the
+ * element is clicked, taking every other listener on that element down with it.
+ * Refusing it here is what makes the client agree with the server.
+ *
+ * Verified by: src/__tests__/renderer-contract.test.ts > "a refused handler attribute does not become a live listener"
+ */
 function handleEvent(el: Element, key: string, value: unknown): void {
+  // A DOM EventListener is a function or an object with a handleEvent method;
+  // anything else (a string, a number, a plain object) is not callable.
+  const listenable =
+    typeof value === 'function' ||
+    (typeof value === 'object' && value !== null &&
+      typeof (value as { handleEvent?: unknown }).handleEvent === 'function');
+  if (!listenable) {
+    if (value == null) return;
+    if (__DEV__) warnDropped(el, key, 'inline-event-handler');
+    return;
+  }
   const controller = getAbortController(el);
   el.addEventListener(
     eventName(key),
@@ -502,8 +524,21 @@ function handleBooleanAttr(el: Element, key: string, value: unknown): void {
  * A rejected reactive value removes the attribute instead of leaving the
  * previous (accepted) one in place, so the DOM never disagrees with the cache.
  *
+ * The identity check runs BEFORE the URL guard. That is safe by construction,
+ * not a trade: `cache[key]` only ever holds a string this same guard already
+ * accepted, because the reject path stores `null` (never the refused string)
+ * and no other handler writes this key — `class`/`className`/`style`/
+ * `dangerouslySetInnerHTML` and every boolean attribute are routed to their own
+ * handler by `applyProp` and cache under their own key, and none of those keys
+ * is URL-bearing. `el.localName`, the guard's other input, cannot change for the
+ * life of the element. So a cache hit means this exact (element, attribute,
+ * value) triple already passed, and re-running an allocating `String.replace`
+ * plus two regexes to then write nothing is pure cost.
+ *
  * Verified by: src/dom/__tests__/element-url-safety.test.ts > "drops an uppercase-cased function prop instead of stringifying it into an attribute"
  * Verified by: src/dom/__tests__/element-url-safety.test.ts > "drops a javascript: src on a reactive binding and removes the stale safe value"
+ * Verified by: src/dom/__tests__/element-url-safety.test.ts > "a refused URL leaves no cache entry that would let the same string through unchecked"
+ * Verified by: src/dom/__tests__/element-url-safety.test.ts > "runs the URL guard once per distinct value, not once per flush"
  */
 function handleGenericAttr(el: Element, key: string, value: unknown): void {
   if (isEventHandlerAttr(key)) {
@@ -519,8 +554,9 @@ function handleGenericAttr(el: Element, key: string, value: unknown): void {
     const cache = getCache(el);
     if (v != null && v !== false) {
       const strVal = String(v);
+      // Already written, already guarded — see the note above the function.
+      if (cache[key] === strVal) return;
       if (!urlAttr || !isDangerousUrl(strVal, el.localName)) {
-        if (cache[key] === strVal) return;
         cache[key] = strVal;
         el.setAttribute(key, strVal);
         return;

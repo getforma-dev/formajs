@@ -35,10 +35,13 @@ because the Rust walker and ksx depend on them byte-for-byte.
 
 The headline CSP promise is false for the build every README/CDN snippet points at. The standard `formajs-runtime.global.js` / `dist/runtime.js` ships with the `new Function()` fallback ENABLED by default, and it is used silently for any expression the hand-written parser cannot handle. README.md:234 ("no `eval()`, no `new Function()` by default"), README.md:349, CSP.md:3 ("CSP-safe by default. No `unsafe-inline` or `unsafe-eval` required"), CSP.md:56 (table row `new Function(...)` → "FormaJS uses it? **No**") and SECURITY.md:27 ("`new Function` is present but only reached when `_allowUnsafeEval` is explicitly enabled") all state the opposite. Under the strict header CSP.md:87-95 recommends (`script-src 'nonce-…' 'self'`, no `unsafe-eval`), `new Function` throws EvalError, the catch at src/runtime.ts:2062 swallows it, and the expression silently evaluates to `undefined` — the page renders wrong with only a console message.
 
-**Fixed:** `_allowUnsafeEval` now starts `false` in every build. The build define chooses whether the fallback CAN be enabled (`mutable`) or is compiled out (`locked-off`), never whether it IS on, and an expression outside the CSP-safe grammar degrades to a diagnostic + `data-forma-expr-error` instead of silently evaluating to `undefined`. README/CSP.md/SECURITY.md rewritten to match.
+**Fixed (first pass):** `_allowUnsafeEval` started `false` in every build. The build define chose whether the fallback CAN be enabled (`mutable`) or is compiled out (`locked-off`), never whether it IS on, and an expression outside the CSP-safe grammar degraded to a diagnostic + `data-forma-expr-error` instead of silently evaluating to `undefined`. README/CSP.md/SECURITY.md rewritten to match.
 
-Verified by: `src/__tests__/runtime-csp-default.test.ts` > "every build ships with the new Function fallback disabled"
-Verified by: `src/__tests__/runtime-csp-default.test.ts` > "never reaches new Function for an unparseable expression by default"
+**Fixed (finally):** turning the fallback off exposed the second half of the problem — the regex parser's grammar was too small to run the README's own flagship example, which rendered "Found undefined results" and an empty list. Both halves are now gone: the regex cascade and the `new Function` fallback were deleted and replaced by the allowlist AST interpreter in `src/expr/`, so there is no posture to configure and no fallback to leave on. See CHANGELOG > *Unreleased* and SECURITY.md > *Supply Chain Security Notes*.
+
+Verified by: `src/__tests__/runtime-csp-default.test.ts` > "no build can reach new Function, with any configuration"
+Verified by: `src/__tests__/readme-flagship.test.ts` > "binds every directive in the block with zero diagnostics"
+Verified by: `src/__tests__/runtime-csp-default.test.ts` > "never constructs a function, not even one that would have succeeded"
 Verified by: `src/__tests__/runtime-csp-default.test.ts` > "marks the element with data-forma-expr-error when an expression cannot be compiled"
 
 #### `client-url-attr-xss-h` - FIXED
@@ -61,10 +64,13 @@ Verified by: `src/dom/__tests__/element-url-safety.test.ts` > "drops URL schemes
 
 The README's flagship "what you get from a single HTML file with one script tag" example uses arrow functions inside `data-computed` and `data-list` (`items.filter(i => i.toLowerCase().includes(query.toLowerCase()))`). The CSP-safe parser explicitly rejects arrow functions, so this example does not work on the hardened build that README.md:237 tells strict-CSP users to switch to, and works on the standard build only via `new Function`. The example is presented as the proof of the zero-build, CSP-safe story it actually disproves.
 
-**Fixed:** The showcase was rewritten to stay inside the CSP-safe grammar, and the old arrow-function version is kept as a negative test so the replacement cannot silently regress.
+**Fixed (first pass, superseded):** the showcase was rewritten to stay inside the regex parser's grammar, with the arrow-function version kept as a negative test.
 
-Verified by: `src/__tests__/readme-examples.test.ts` > "runs on the hardened build with no unsupported expression or handler"
-Verified by: `src/__tests__/readme-examples.test.ts` > "the arrow-function showcase this replaced does NOT run — why it was changed"
+**Fixed (finally):** rewriting the shop window to fit the engine was the wrong direction — the example *is* the product, and it was the only thing in the category that ran under a strict CSP. The engine was replaced instead: the allowlist AST interpreter supports arrow-function callbacks in higher-order method argument position, so the original example is back verbatim. It is now EXTRACTED FROM `README.md` AT TEST TIME rather than copied into a test file, so it cannot drift again, and a second copy runs in Playwright under a real `Content-Security-Policy: script-src 'self'` response header.
+
+Verified by: `src/__tests__/readme-flagship.test.ts` > "extracts a block that still contains the arrow-function filter"
+Verified by: `src/__tests__/readme-flagship.test.ts` > "typing in the data-model input filters the list and the count"
+Verified by: `src/__tests__/readme-flagship.test.ts` > "binds every directive in the block with zero diagnostics"
 
 #### `security-md-sandbox-claim-overstated` - FIXED
 
@@ -72,11 +78,12 @@ Verified by: `src/__tests__/readme-examples.test.ts` > "the arrow-function showc
 
 SECURITY.md states the unsafe-eval path "is sandboxed via a `with()` + `Proxy` wrapper that blocks access to `constructor`, `__proto__`, `eval`, `Function`, and other dangerous properties." The Proxy is not a sandbox: its `has` trap returns `key in scope.getters`, so any identifier that is NOT a declared state key reports `false` and `with()` falls through to the real global scope. Arbitrary globals (`document`, `fetch`, `localStorage`, `XMLHttpRequest`) are fully reachable from any expression; only the specific blocklisted names are stopped.
 
-**Fixed:** SECURITY.md no longer calls the opt-in eval path a sandbox. It now states what the `with()` + `Proxy` wrapper actually does — blocklists the dangerous property names and lets undeclared identifiers fall through to the real global scope — and the reachability of real globals is pinned by test rather than by prose.
+**Fixed (first pass):** SECURITY.md stopped calling the opt-in eval path a sandbox and described what the `with()` + `Proxy` wrapper actually did, with the reachability of real globals pinned by test rather than by prose.
 
-Verified by: `src/__tests__/unsafe-eval-scope.test.ts` > "reads a real global that was never declared as state"
-Verified by: `src/__tests__/unsafe-eval-scope.test.ts` > "still blocks the UNSAFE_METHOD_NAMES blocklist on the same path"
-Verified by: `src/__tests__/unsafe-eval-scope.test.ts` > "none of the above is reachable without opting in"
+**Fixed (finally):** the wrapper is gone. Expressions are evaluated by an allowlist AST interpreter whose identifier resolution never consults `globalThis`, so globals are unreachable rather than blocked, and `src/__tests__/unsafe-eval-scope.test.ts` was deleted along with the code it described. SECURITY.md now documents the allowlist model, the T1/T2/T3 threat model, the five guarantees and the residual risks.
+
+Verified by: `src/expr/__tests__/adversarial.test.ts` > "no global is reachable by name"
+Verified by: `src/expr/__tests__/no-escape-hatch.test.ts` > "src/expr contains no path to the Function constructor or a global"
 
 #### `blocked-expression-throws-out-of-initruntime` - FIXED
 
@@ -86,8 +93,8 @@ When the unsafe-eval path rejects a blocklisted expression it `throw`s instead o
 
 **Fixed:** The blocklist hit degrades to a noop + diagnostic, matching every other unsupported-expression path, so one offending expression no longer aborts `initRuntime` and leaves the whole page unbound.
 
-Verified by: `src/__tests__/runtime-hardening.test.ts` > "blocks .Function() access in handler"
-Verified by: `src/__tests__/runtime-hardening.test.ts` > "blocks .__proto__ access in handler"
+Verified by: `src/__tests__/runtime-hardening.test.ts` > "a prototype write never reaches Object.prototype"
+Verified by: `src/__tests__/failure-semantics.test.ts` > "a denied binding does not stop its siblings from binding"
 
 #### `readme-createhistory-example-throws` - FIXED
 

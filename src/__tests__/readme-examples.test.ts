@@ -1,204 +1,43 @@
 /**
- * Executable proof for the code samples README.md ships.
+ * Executable proof for the README code samples that are NOT the flagship block
+ * or the directive table.
  *
- * A documented example that nobody runs is a claim, not documentation. Every
- * markup block and snippet asserted here is copied verbatim from README.md, so
- * a change that breaks the sample breaks this file first.
+ * Those two have their own files, and for a stronger reason than tidiness: they
+ * extract their markup FROM README.md at test time, so they cannot drift.
+ *   - src/__tests__/readme-flagship.test.ts
+ *   - src/__tests__/readme-directive-table.test.ts
  *
- * The HTML Runtime samples are mounted against the `locked-off` build variant —
- * the strictest one, where the Function-constructor fallback does not exist at
- * all — so passing here proves the sample needs no `unsafe-eval` in ANY build.
+ * What is left here is the samples that are prose-adjacent snippets rather than
+ * one addressable block: the intro counter, the documented grammar surface, and
+ * the `createHistory` API example.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSignal } from 'forma/reactive';
 import { createHistory } from 'forma/state';
-
-type RuntimeModule = typeof import('../runtime');
-
-const loaded: RuntimeModule[] = [];
-
-/** Load a fresh runtime pinned to a build variant, exactly as tsup defines it. */
-async function loadRuntime(buildMode: string): Promise<RuntimeModule> {
-  vi.resetModules();
-  (globalThis as Record<string, unknown>).__FORMA_UNSAFE_EVAL_MODE__ = buildMode;
-  const mod = (await import('../runtime')) as RuntimeModule;
-  loaded.push(mod);
-  return mod;
-}
+import * as runtime from '../runtime';
 
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-// ---------------------------------------------------------------------------
-// README.md "Here's what you get from a single HTML file with one script tag"
-// Keep byte-identical with the README block (minus the <script src> line).
-// ---------------------------------------------------------------------------
-const SHOWCASE_MARKUP = `
-<div data-forma-state='{
-  "name": "",
-  "qty": 1,
-  "price": 12.5,
-  "toppings": ["Mushroom", "Olive", "Basil"],
-  "darkMode": false
-}'>
-
-  <!-- Two-way binding: type in the input, every binding below updates -->
-  <input data-model="{name}" placeholder="Your name">
-  <p data-text="\`Order for \${name}\`"></p>
-
-  <!-- Computed value: derived from state, recomputed automatically -->
-  <p data-computed="total = qty * price"
-     data-text="\`Total: $\${total}\`"></p>
-
-  <!-- Event handling: increment, decrement, toggle -->
-  <button data-on:click="{qty--}">-</button>
-  <button data-on:click="{qty++}">+</button>
-
-  <!-- Conditional rendering: show/hide based on state -->
-  <p data-show="{qty >= 10}">Bulk discount applied.</p>
-
-  <!-- List rendering: keyed reconciliation, only changed items re-render -->
-  <ul data-list="{toppings}">
-    <li>{item}</li>
-  </ul>
-
-  <!-- Dynamic classes and attributes -->
-  <div data-class:dark="{darkMode}" data-bind:data-theme="{darkMode ? 'dark' : 'light'}">
-    <button data-on:click="{darkMode = !darkMode}">Toggle theme</button>
-    Theme is: <span data-text="{darkMode ? 'Dark' : 'Light'}"></span>
-  </div>
-
-  <!-- Persist to localStorage: survives page refresh -->
-  <div data-persist="{darkMode}"></div>
-</div>
-`;
-
-describe('README HTML Runtime showcase', () => {
+describe('README HTML Runtime snippets', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
+    runtime.clearDiagnostics();
     container = document.createElement('div');
     document.body.appendChild(container);
   });
 
   afterEach(() => {
-    for (const mod of loaded) {
-      mod.unmount(container);
-      mod.destroyRuntime();
-    }
-    loaded.length = 0;
+    runtime.unmount(container);
     container.remove();
-    delete (globalThis as Record<string, unknown>).__FORMA_UNSAFE_EVAL_MODE__;
-    localStorage.clear();
-  });
-
-  it('runs on the hardened build with no unsupported expression or handler', async () => {
-    const runtime = await loadRuntime('locked-off');
-    container.innerHTML = SHOWCASE_MARKUP;
-    runtime.mount(container);
-    await tick();
-
-    // A single unparseable expression or handler marks its element and files a
-    // diagnostic. Zero of both is the whole claim.
-    expect(container.querySelectorAll('[data-forma-expr-error]')).toHaveLength(0);
-    expect(container.querySelectorAll('[data-forma-handler-error]')).toHaveLength(0);
-    expect(runtime.getDiagnostics()).toEqual([]);
-  });
-
-  it('renders every documented binding and updates them reactively', async () => {
-    const runtime = await loadRuntime('locked-off');
-    container.innerHTML = SHOWCASE_MARKUP;
-    runtime.mount(container);
-    await tick();
-
-    const paragraphs = container.querySelectorAll('p');
-    const greeting = paragraphs[0] as HTMLParagraphElement;
-    const total = paragraphs[1] as HTMLParagraphElement;
-    const bulk = paragraphs[2] as HTMLParagraphElement;
-    const input = container.querySelector('input') as HTMLInputElement;
-    const buttons = container.querySelectorAll('button');
-    const dec = buttons[0] as HTMLButtonElement;
-    const inc = buttons[1] as HTMLButtonElement;
-    const toggle = buttons[2] as HTMLButtonElement;
-    const themed = container.querySelector('[data-class\\:dark]') as HTMLElement;
-    const themeLabel = themed.querySelector('span') as HTMLSpanElement;
-
-    // Template literal + data-model two-way binding.
-    expect(greeting.textContent).toBe('Order for ');
-    input.value = 'Ada';
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    await tick();
-    expect(greeting.textContent).toBe('Order for Ada');
-
-    // data-computed feeding a second data-text on the same element.
-    expect(total.textContent).toBe('Total: $12.5');
-    inc.click();
-    await tick();
-    expect(total.textContent).toBe('Total: $25');
-    dec.click();
-    await tick();
-    expect(total.textContent).toBe('Total: $12.5');
-
-    // data-show toggles display, not existence.
-    expect(bulk.style.display).toBe('none');
-    for (let i = 0; i < 9; i++) inc.click();
-    await tick();
-    expect(bulk.style.display).not.toBe('none');
-
-    // data-list rendered one row per item, in order.
-    const rows = [...container.querySelectorAll('li')].map((li) => li.textContent);
-    expect(rows).toEqual(['Mushroom', 'Olive', 'Basil']);
-
-    // data-class:* and data-bind:* both react to the same signal.
-    expect(themed.classList.contains('dark')).toBe(false);
-    expect(themed.getAttribute('data-theme')).toBe('light');
-    expect(themeLabel.textContent).toBe('Light');
-    toggle.click();
-    await tick();
-    expect(themed.classList.contains('dark')).toBe(true);
-    expect(themed.getAttribute('data-theme')).toBe('dark');
-    expect(themeLabel.textContent).toBe('Dark');
-  });
-
-  it('persists darkMode to localStorage as the comment claims', async () => {
-    const runtime = await loadRuntime('locked-off');
-    container.innerHTML = SHOWCASE_MARKUP;
-    runtime.mount(container);
-    await tick();
-
-    (container.querySelectorAll('button')[2] as HTMLButtonElement).click();
-    await tick();
-
-    expect(localStorage.getItem('forma:darkMode')).toBe('true');
-  });
-
-  it('the arrow-function showcase this replaced does NOT run — why it was changed', async () => {
-    // Verbatim from the README before this fix. `i => …` is not in the
-    // CSP-safe grammar, so both bindings are dropped with a diagnostic and the
-    // page renders wrong. This is the failure the replacement above avoids.
-    const runtime = await loadRuntime('locked-off');
-    container.innerHTML = `
-      <div data-forma-state='{"query":"","items":["Apples","Bananas"]}'>
-        <p id="count" data-computed="matchCount = items.filter(i => i.toLowerCase().includes(query.toLowerCase())).length"
-           data-text="{'Found ' + matchCount + ' results'}"></p>
-        <ul id="list" data-list="{items.filter(i => i.toLowerCase().includes(query.toLowerCase()))}">
-          <li>{item}</li>
-        </ul>
-      </div>
-    `;
-    runtime.mount(container);
-    await tick();
-
-    expect(container.querySelectorAll('[data-forma-expr-error]').length).toBeGreaterThan(0);
-    expect(container.querySelectorAll('#list li')).toHaveLength(0);
-    const reasons = runtime.getDiagnostics().map((d) => d.reason);
-    expect(reasons.some((r) => /arrow function detected/.test(r))).toBe(true);
+    runtime.clearDiagnostics();
+    vi.unstubAllGlobals();
   });
 
   // The counter under "3. HTML Runtime (no build step)".
   it('the intro counter works without eval', async () => {
-    const runtime = await loadRuntime('locked-off');
     container.innerHTML = `
       <div data-forma-state='{ "count": 0 }'>
         <p data-text="{count}"></p>
@@ -221,74 +60,41 @@ describe('README HTML Runtime showcase', () => {
     expect(out.textContent).toBe('0');
     expect(runtime.getDiagnostics()).toEqual([]);
   });
-});
-
-// ---------------------------------------------------------------------------
-// README.md "Full directive reference" — the magic-variable rows. The plain
-// directive rows are already covered by the showcase above; these three carry
-// call syntax that the CSP-safe grammar has to accept for the row to be true.
-// ---------------------------------------------------------------------------
-describe('README directive reference — $el / $refs / $dispatch / $event', () => {
-  let container: HTMLDivElement;
-
-  beforeEach(() => {
-    container = document.createElement('div');
-    document.body.appendChild(container);
-  });
-
-  afterEach(() => {
-    for (const mod of loaded) {
-      mod.unmount(container);
-      mod.destroyRuntime();
-    }
-    loaded.length = 0;
-    container.remove();
-    delete (globalThis as Record<string, unknown>).__FORMA_UNSAFE_EVAL_MODE__;
-    vi.unstubAllGlobals();
-  });
-
-  it('$event resolves in a handler on every build', async () => {
-    const runtime = await loadRuntime('locked-off');
-    container.innerHTML = `
-      <div data-forma-state='{"query":""}'>
-        <input id="evt" data-on:input="{query = $event.target.value}">
-        <p id="out" data-text="{query}"></p>
-      </div>
-    `;
-    runtime.mount(container);
-    await tick();
-
-    const evt = container.querySelector('#evt') as HTMLInputElement;
-    evt.value = 'typed';
-    evt.dispatchEvent(new Event('input', { bubbles: true }));
-    await tick();
-
-    expect(container.querySelector('#out')!.textContent).toBe('typed');
-    expect(container.querySelectorAll('[data-forma-handler-error]')).toHaveLength(0);
-    expect(runtime.getDiagnostics()).toEqual([]);
-  });
 
   it('accepts every value-expression form the grammar section lists', async () => {
-    const runtime = await loadRuntime('locked-off');
     const cases: Array<[label: string, expr: string, expected: string]> = [
       ['identifier', '{name}', 'Ada'],
       ['dot chain', '{user.address.city}', 'Paris'],
       ['optional chain', '{user?.missing?.deep}', ''],
       ['string key', "{user['name']}", 'Ada'],
       ['array index', '{tags[0]}', 'red'],
+      ['computed index', '{tags[idx + 1]}', 'blue'],
+      ['chained computed', '{user.pets[0].name}', 'Ada Jr'],
       ['method call', '{name.trim()}', 'Ada'],
       ['method call with args', "{tags.join(', ')}", 'red, blue'],
       ['Math namespace', '{Math.round(price)}', '13'],
+      ['JSON namespace', '{JSON.stringify(tags)}', '["red","blue"]'],
+      ['Object namespace', '{Object.keys(user.address)}', 'city'],
+      ['arrow callback', '{tags.filter(t => t.length > 3)}', 'blue'],
+      ['arrow callback chained', '{tags.map(t => t.toUpperCase()).join(&quot;/&quot;)}', 'RED/BLUE'],
+      ['typeof', '{typeof price}', 'number'],
+      ['unary minus on a name', '{-price}', '-12.5'],
       ['negation', '{!ok}', 'false'],
       ['ternary', "{ok ? 'yes' : 'no'}", 'yes'],
+      // A `:` and a `//` inside a branch used to kill the ternary regex, which
+      // made the single most common data-bind:href idiom unusable.
+      ['ternary with a URL literal', "{ok ? 'https://a/b' : 'https://c/d'}", 'https://a/b'],
+      ['nested ternary', "{price > 10 ? (ok ? 'x' : 'y') : 'z'}", 'x'],
       ['nullish', "{missing ?? 'fallback'}", 'fallback'],
       ['logical and/or', "{ok && tags[1] || 'none'}", 'blue'],
+      // `!` had the LOWEST precedence in the regex cascade, so this used to
+      // evaluate as `!(ok || tags[0])` and silently render "false".
+      ['negation against ||', "{!ok || tags[0]}", 'red'],
       ['comparison', '{price > 10}', 'true'],
       ['arithmetic precedence', '{1 + 2 * 3}', '7'],
-      // A bare array literal only — `['a','b'].join('-')` is NOT parseable:
-      // the chain parser requires an identifier root, and the array-literal
-      // branch requires the literal to be the whole expression.
       ['array literal', "{['a', 'b']}", 'a,b'],
+      ['array literal with a method', "{['a', 'b'].join('-')}", 'a-b'],
+      ['object literal', '{JSON.stringify({ id: idx })}', '{"id":0}'],
       ['template literal', '`${name} in ${user.address.city}`', 'Ada in Paris'],
     ];
     container.innerHTML = `
@@ -296,8 +102,10 @@ describe('README directive reference — $el / $refs / $dispatch / $event', () =
         "name": "Ada",
         "price": 12.5,
         "ok": true,
+        "missing": null,
+        "idx": 0,
         "tags": ["red", "blue"],
-        "user": { "name": "Ada", "address": { "city": "Paris" } }
+        "user": { "name": "Ada", "address": { "city": "Paris" }, "pets": [{ "name": "Ada Jr" }] }
       }'>
         ${cases.map(([, expr], i) => `<p id="c${i}" data-text="${expr}"></p>`).join('')}
       </div>
@@ -313,29 +121,31 @@ describe('README directive reference — $el / $refs / $dispatch / $event', () =
   });
 
   it('accepts every handler-statement form the grammar section lists', async () => {
-    const runtime = await loadRuntime('locked-off');
     container.innerHTML = `
-      <div data-forma-state='{"n":0,"flag":false,"key":""}'>
+      <div data-forma-state='{"n":0,"flag":false,"key":"","item":{"done":false}}'>
         <button id="post" data-on:click="{n++}">post</button>
         <button id="pre" data-on:click="{--n}">pre</button>
         <button id="assign" data-on:click="{n = 5}">assign</button>
         <button id="toggle" data-on:click="{flag = !flag}">toggle</button>
         <button id="compound" data-on:click="{n *= 3}">compound</button>
         <button id="seq" data-on:click="{n = 1; flag = true}">seq</button>
+        <button id="member" data-on:click="{item.done = !item.done}">member</button>
+        <button id="rebind" data-on:click="{item = { done: !item.done }}">rebind</button>
         <input id="cond" data-on:keydown="{if (event.key === 'Enter') { key = 'entered' } else { key = 'other' }}">
         <p id="n" data-text="{n}"></p>
         <p id="flag" data-text="{flag}"></p>
         <p id="key" data-text="{key}"></p>
+        <p id="done" data-text="{item.done}"></p>
       </div>
     `;
     runtime.mount(container);
     await tick();
 
-    const click = async (id: string) => {
+    const click = async (id: string): Promise<void> => {
       (container.querySelector(id) as HTMLButtonElement).click();
       await tick();
     };
-    const n = () => container.querySelector('#n')!.textContent;
+    const n = (): string | null => container.querySelector('#n')!.textContent;
 
     await click('#post');
     expect(n()).toBe('1');
@@ -347,6 +157,21 @@ describe('README directive reference — $el / $refs / $dispatch / $event', () =
     expect(n()).toBe('15');
     await click('#toggle');
     expect(container.querySelector('#flag')!.textContent).toBe('true');
+    // A property-path write MUTATES IN PLACE. The signal still holds the same
+    // object, so nothing that reads it re-runs — identical to what `data-model`
+    // already does for a member path, and documented as such. The write really
+    // did land; only the notification is absent.
+    await click('#member');
+    expect(runtime.getScopes()[0]!.values.item!.value).toEqual({ done: true });
+    expect(container.querySelector('#done')!.textContent).toBe('false');
+
+    // Reassigning the root key is the reactive form, and object literals make
+    // it expressible in the grammar.
+    await click('#rebind');
+    expect(container.querySelector('#done')!.textContent).toBe('false');
+    await click('#rebind');
+    expect(container.querySelector('#done')!.textContent).toBe('true');
+
     await click('#seq');
     expect(n()).toBe('1');
     expect(container.querySelector('#flag')!.textContent).toBe('true');
@@ -364,7 +189,6 @@ describe('README directive reference — $el / $refs / $dispatch / $event', () =
   });
 
   it('data-fetch loads into a state key and $refetch re-runs it, both without eval', async () => {
-    const runtime = await loadRuntime('locked-off');
     let calls = 0;
     const fetchMock = vi.fn(async () => ({
       json: async () => ({ title: `load-${++calls}` }),
@@ -391,55 +215,35 @@ describe('README directive reference — $el / $refs / $dispatch / $event', () =
     expect(container.querySelectorAll('[data-forma-handler-error]')).toHaveLength(0);
   });
 
-  it('a bare method-call statement is NOT in the CSP-safe grammar — the opt-in note is real', async () => {
-    // `parseHandler` recognises assignments, ++/--, compound assignment,
-    // `if (…) { … }`, `;`-separated sequences of those, and `$refetch('id')`.
-    // A statement that is only a method call — which is the shape of every
-    // documented `$el` / `$refs` / `$dispatch` example — has no branch, so it
-    // falls through to the Function constructor. That is why the README marks
-    // those three rows as needing the opt-in.
-    const runtime = await loadRuntime('locked-off');
+  it('the forms the README says are permanently unsupported really are', async () => {
+    // The "Permanently unsupported" list is a promise about the security model,
+    // not a to-do. Each of these is a capability the design refuses on purpose,
+    // and each must be REPORTED rather than silently doing nothing.
+    const cases: Array<[label: string, expr: string]> = [
+      ['arrow as a value', '{f = i => i}'],
+      ['bare call on a state value', '{fn(1)}'],
+      ['.call', '{Math.floor.call(null, 1.2)}'],
+      ['new', '{new Date()}'],
+      ['delete', '{delete user.name}'],
+      ['instanceof', '{user instanceof Object}'],
+      ['a global', '{document.title}'],
+      ['spread', '{[...tags]}'],
+      ['this', '{this.x}'],
+      ['regex literal', '{/x/.test(name)}'],
+    ];
     container.innerHTML = `
-      <div data-forma-state='{"id":7}'>
-        <input data-ref="myInput">
-        <button id="elBtn" data-on:click="{$el.classList.toggle('active')}">el</button>
-        <button id="refBtn" data-on:click="{$refs.myInput.focus()}">ref</button>
-        <button id="dispatchBtn" data-on:click="{$dispatch('selected', id)}">dispatch</button>
+      <div data-forma-state='{"name":"Ada","tags":["a"],"user":{"name":"Ada"},"f":null,"fn":null}'>
+        ${cases.map(([, expr], i) => `<p id="u${i}" data-text="${expr}">kept</p>`).join('')}
       </div>
     `;
     runtime.mount(container);
     await tick();
 
-    for (const id of ['#elBtn', '#refBtn', '#dispatchBtn']) {
-      expect(container.querySelector(id)!.getAttribute('data-forma-handler-error'), id)
-        .toBe('unsupported');
-    }
-  });
-
-  it('the same three examples do run once the fallback is opted in', async () => {
-    const runtime = await loadRuntime('mutable');
-    runtime.setUnsafeEval(true);
-    container.innerHTML = `
-      <div data-forma-state='{"id":7}'>
-        <input data-ref="myInput">
-        <button id="elBtn" data-on:click="{$el.classList.toggle('active')}">el</button>
-        <button id="refBtn" data-on:click="{$refs.myInput.focus()}">ref</button>
-        <button id="dispatchBtn" data-on:click="{$dispatch('selected', id)}">dispatch</button>
-      </div>
-    `;
-    const seen: unknown[] = [];
-    container.addEventListener('selected', (e) => seen.push((e as CustomEvent).detail));
-    runtime.mount(container);
-    await tick();
-
-    (container.querySelector('#elBtn') as HTMLButtonElement).click();
-    (container.querySelector('#refBtn') as HTMLButtonElement).click();
-    (container.querySelector('#dispatchBtn') as HTMLButtonElement).click();
-    await tick();
-
-    expect(container.querySelector('#elBtn')!.classList.contains('active')).toBe(true);
-    expect(document.activeElement).toBe(container.querySelector('[data-ref="myInput"]'));
-    expect(seen).toEqual([7]);
+    cases.forEach(([label], i) => {
+      const el = container.querySelector(`#u${i}`)!;
+      expect(el.getAttribute('data-forma-expr-error'), label).toBe('unsupported');
+      expect(el.textContent, label).toBe('kept');
+    });
   });
 });
 

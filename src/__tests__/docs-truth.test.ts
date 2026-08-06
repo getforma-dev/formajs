@@ -359,10 +359,13 @@ describe('coverage figures', () => {
 
   it('the size table quotes the limits the CI gate actually enforces', () => {
     const gate = read('scripts/check-size.mjs');
+    const gated = (gate.match(/limit: \d+/g) ?? []).length;
     const limits = [...README.matchAll(/\| ([\d,]{5,}) B \|/g)].map((m) =>
       Number(m[1].replace(/,/g, ''))
     );
-    expect(limits.length, 'the README size table lists a CI limit per artifact').toBe(3);
+    // One README row per gate — the hardened CDN bundle used to be gated
+    // nowhere and listed nowhere, which is how it grew unwatched.
+    expect(limits.length, 'the README size table lists a CI limit per gated artifact').toBe(gated);
     for (const limit of limits) expect(gate).toContain(`limit: ${limit}`);
   });
 });

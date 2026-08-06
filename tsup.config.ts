@@ -1,6 +1,5 @@
 import { defineConfig } from 'tsup';
 import {
-  EVAL_MODE_FLAG,
   FORMA_ALIAS,
   PROD_DEFINE,
 } from './scripts/build-defines.mjs';
@@ -10,13 +9,18 @@ const formaAlias = { ...FORMA_ALIAS };
 /**
  * Every shipped artifact is built with `__FORMA_DEV_BUILD__` replaced by the
  * literal `false` (PROD_DEFINE), which is what makes `__DEV__` a build-time
- * constant instead of a runtime NODE_ENV read. `EVAL_MODE_FLAG` selects the
- * unsafe-eval posture of the runtime builds.
+ * constant instead of a runtime NODE_ENV read.
+ *
+ * There is no longer an eval-posture define: the `new Function` fallback was
+ * deleted from the source, so no build has one to switch on and the "hardened"
+ * artifacts differ from the standard ones only in name and bundling strategy.
+ * They are kept because they are documented CDN URLs and exports-map targets.
  *
  * Verified by: src/reactive/__tests__/dev-flag.test.ts > "resolves __DEV__ at build time and drops the NODE_ENV fallback"
+ * Verified by: src/__tests__/build-artifacts.test.ts > "no build emits new Function or a with() scope wrapper"
  */
-function defines(evalMode: 'mutable' | 'locked-off') {
-  return { ...PROD_DEFINE, [EVAL_MODE_FLAG]: JSON.stringify(evalMode) };
+function defines() {
+  return { ...PROD_DEFINE };
 }
 
 /**
@@ -25,23 +29,17 @@ function defines(evalMode: 'mutable' | 'locked-off') {
  * single-line files trigger false-positive "obfuscated code" flags in supply
  * chain scanners such as Socket.dev and Snyk).
  *
- * This is what makes the build-time flags real rather than decorative: esbuild
- * only inlines a `const` bound to a folded literal into its use sites when
- * syntax minification is on. Without it, `__DEV__` and `__EVAL_CAPABLE__` are
- * constants nothing reads at build time, so `if (__DEV__) console.warn(…)` and
- * the `new Function` fallback both survive — rebuilding with this off puts
- * `new Function(` back into dist/runtime-hardened.js.
- *
- * It is necessary but not sufficient for the hardened build: esbuild inlines
- * the constant and drops the taken branch, and tsup's `treeshake` (Rollup) pass
- * then removes what became unreachable after it. Both stages are required,
- * which is why the hardened configs below keep `treeshake: true`.
+ * This is what makes the build-time dev flag real rather than decorative:
+ * esbuild only inlines a `const` bound to a folded literal into its use sites
+ * when syntax minification is on. Without it `__DEV__` is a constant nothing
+ * reads at build time and `if (__DEV__) console.warn(…)` survives into the
+ * shipped bytes.
  *
  * Inlining also stops at chunk boundaries, so the code-split entries keep some
  * unreachable `__DEV__ && …` calls. See src/reactive/dev.ts for what that does
  * and does not guarantee.
  *
- * Verified by: src/__tests__/build-artifacts.test.ts > "hardened builds emit no new Function at all"
+ * Verified by: src/__tests__/build-artifacts.test.ts > "the allowlist interpreter is actually in the bundle"
  */
 function applyEsbuildOptions(options: { alias?: Record<string, string>; pure?: string[]; minifySyntax?: boolean }, pure?: string[]) {
   options.alias = formaAlias;
@@ -82,7 +80,7 @@ export default defineConfig([
     splitting: true,
     target: 'es2022',
     minify: false,
-    define: defines('mutable'),
+    define: defines(),
     esbuildOptions(options) {
       applyEsbuildOptions(options, PURE_FACTORIES);
     },
@@ -105,7 +103,7 @@ export default defineConfig([
     splitting: false,
     target: 'es2022',
     minify: false,
-    define: defines('mutable'),
+    define: defines(),
     esbuildOptions(options) {
       applyEsbuildOptions(options, PURE_FACTORIES);
     },
@@ -119,19 +117,18 @@ export default defineConfig([
     minify: false,
     sourcemap: true,
     target: 'es2022',
-    define: defines('mutable'),
+    define: defines(),
     esbuildOptions(options) {
       applyEsbuildOptions(options);
     },
   },
-  // Hardened runtime (unsafe-eval locked off, non-toggleable at runtime).
-  // The `locked-off` define plus syntax minification plus the `treeshake`
-  // (Rollup) pass together remove the eval branch, so `new Function` is absent
-  // from the emitted bytes rather than merely unreachable — which is what keeps
-  // Socket.dev static analysis quiet. Dropping `treeshake` here leaves the call
-  // in the file: esbuild alone does not finish the job.
+  // "Hardened" runtime. Historically this was the build with the `new Function`
+  // fallback compiled out; the fallback is gone from the source, so it is now
+  // the same runtime under a second, tree-shaken, non-code-split name. It stays
+  // because `@getforma/core/runtime-hardened`, `@getforma/core/runtime-csp` and
+  // two documented CDN URLs point at it.
   //
-  // Verified by: src/__tests__/build-artifacts.test.ts > "hardened builds emit no new Function at all"
+  // Verified by: src/__tests__/build-artifacts.test.ts > "no build emits new Function or a with() scope wrapper"
   {
     entry: { 'runtime-hardened': 'src/runtime.ts' },
     format: ['esm', 'cjs'],
@@ -143,16 +140,16 @@ export default defineConfig([
     splitting: false,
     target: 'es2022',
     minify: false,
-    define: defines('locked-off'),
+    define: defines(),
     esbuildOptions(options) {
       applyEsbuildOptions(options);
     },
   },
-  // Hardened IIFE. Same requirement as above: without `treeshake` the eval
-  // call stays in the file. The cost is that Rollup rewrites the IIFE wrapper
-  // into `(function(exports){…})({})`, which publint correctly reads as
-  // CommonJS served under an ESM `.js` extension — one more reason this
-  // artifact is reachable only by URL and not through the exports map.
+  // Hardened IIFE. `treeshake` makes Rollup rewrite the IIFE wrapper into
+  // `(function(exports){…})({})`, which publint correctly reads as CommonJS
+  // served under an ESM `.js` extension — which is why this artifact is
+  // reachable only by URL and not through the exports map. It is gated at
+  // 28,000 B gzip by scripts/check-size.mjs.
   {
     entry: { 'formajs-runtime-hardened': 'src/runtime.ts' },
     format: ['iife'],
@@ -162,7 +159,7 @@ export default defineConfig([
     treeshake: true,
     sourcemap: true,
     target: 'es2022',
-    define: defines('locked-off'),
+    define: defines(),
     esbuildOptions(options) {
       applyEsbuildOptions(options);
     },

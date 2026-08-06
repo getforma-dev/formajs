@@ -12,25 +12,53 @@ importantly the headline CSP promise — so behaviour was changed to match the
 promise rather than the other way round.
 
 **If you are upgrading, read "Changed — breaking" first.** The suite went from
-1007 tests to 1170.
+1007 tests to 1699 — but the number that moved is the one under "Test suite —
+measured, not assumed": the share of injected defects the suite actually
+detects.
 
 ### Changed — breaking
 
-- **The `new Function()` fallback is now OFF by default in every build.**
-  Previously `dist/runtime.js`, `dist/runtime.cjs` and both IIFE globals shipped
-  with it *enabled*, and silently used it for any expression the CSP-safe parser
-  could not compile — so "CSP-safe by default" was false of exactly the builds
-  every CDN snippet points at, and under a policy without `unsafe-eval` the
-  expression evaluated to `undefined` with only a console message. Opt in with
-  `setUnsafeEval(true)`, `data-forma-unsafe-eval="true"` on the runtime's script
-  tag, or `window.__FORMA_RUNTIME_CONFIG = { allowUnsafeEval: true }`.
-  Expressions outside the CSP-safe grammar are now **not evaluated**: they log,
-  fire a `formajs:diagnostic` event, appear in `getDiagnostics()` and mark their
-  element (see below). See README > *The expression grammar is a real
-  constraint* for what the grammar accepts.
-- **`setUnsafeEvalMode('mutable')` no longer turns eval on.** `'mutable'` now
-  means "off, but you may turn it on". A build define can only choose whether
-  eval *can* be enabled, never whether it *is*.
+- **The regex expression parser and the `new Function()` fallback are gone.**
+  Every build now evaluates `data-*` expressions with an allowlist AST
+  interpreter (`src/expr/`): lexer, precedence-climbing parser, validator,
+  tree-walking interpreter. **No shipped artifact contains `eval`,
+  `new Function` or `with()`.** `setUnsafeEval()`, `isUnsafeEvalAllowed()`,
+  `setUnsafeEvalMode()`, `getUnsafeEvalMode()`, `data-forma-unsafe-eval` and
+  `__FORMA_RUNTIME_CONFIG.allowUnsafeEval` are **removed** — there is no
+  fallback left for them to control. Code calling them must delete the call.
+- **The grammar got bigger, not smaller.** Newly supported, with no
+  `'unsafe-eval'`: arrow-function callbacks in `map` / `filter` / `find` /
+  `findIndex` / `some` / `every` / `flatMap` / `reduce` / `sort` (the flagship
+  README example runs again), object literals, `typeof`, unary `-`,
+  general computed member access (`obj[k]`, `items[i + 1]`, `a.b[0].c`),
+  member and computed assignment (`item.done = !item.done`, `obj.n += 1`),
+  handler statements that are a bare method call (`$el.classList.toggle('x')`,
+  `$refs.myInput.focus()`, `$dispatch('selected', {id})`), and the frozen
+  namespaces `JSON`, `Object`, `Array`, `Date.now`, `Number`, `String`,
+  `Boolean`, `parseInt`, `parseFloat` alongside `Math`.
+- **Two silent wrong answers are now correct.** Unary `!` had the LOWEST
+  precedence in the regex cascade, so `!a || b` computed `!(a || b)` and
+  rendered the wrong value with no diagnostic. The ternary matcher was
+  string-blind, so `{ok ? 'https://a' : 'https://b'}` — the commonest
+  `data-bind:href` idiom — was rejected because of the `//` inside a string.
+- **Three silent `undefined`s are now either working or reported.**
+  `{q = $event.target.value}` parsed, emitted no diagnostic and wrote
+  `undefined`; it now works. `{JSON.stringify(o)}` and `{Object.keys(o)}`
+  parsed and returned `undefined`; they now work. `{items.push(x)}`,
+  `{document.title}` and every other denial now report with a stable code
+  (`FORMA_E_METHOD_DENIED`, `FORMA_E_UNRESOLVED`, …) and a column, and the
+  binding leaves the DOM untouched instead of writing an empty string.
+- **An unknown assignment target in a handler is an error, not a no-op.**
+  `{coutn = 1}` used to run `scope.setters[name]?.(val)` and do nothing at all;
+  it now reports `FORMA_E_ASSIGN_DENIED`.
+- **Identifiers that are not declared state are errors.** The regex parser read
+  an unknown name as `undefined`. `{missing ?? 'x'}` now requires `missing` to
+  be a declared key (a key holding `null`/`undefined` is fine — the error is for
+  names that do not exist at all).
+- **A `formajs:diagnostic` event now fires once per distinct expression**
+  rather than once per occurrence; the running total stays available through
+  `getDiagnostics()`. A 1,000-row list sharing one denied expression used to
+  dispatch 1,000 events.
 - **`h()` now drops props whose name starts with `on` in ANY casing.** Detection
   was a case-sensitive two-character test, so `ONCLICK` / `Onerror` / `ONLOAD`
   skipped `addEventListener` and fell through to `setAttribute`, writing a real
@@ -129,7 +157,65 @@ promise rather than the other way round.
   external, `__DEV__` is a literal, the hardened builds contain no
   `new Function`, and each file has at most one sourcemap footer.
 
+### Test suite — measured, not assumed
+
+The suite was mutation-probed one surgical break at a time against a corpus of
+93 real defect shapes, now committed at `probes/corpus.json`. It detected
+**64%** of them overall, **72%** on security-relevant code and **33%** on
+`src/ssr/render.ts` — the one component whose output goes straight into a
+browser. Re-run against the same corpus after the work below: **100%**,
+**100%**, **100%** (three probes are marked equivalent-by-construction and
+excluded, each with its proof written into the corpus entry; counting them as
+survivors it is 90/93). Four of the defects the work found were live.
+
+- **A shared renderer contract** (`src/__tests__/renderer-contract.test.ts`).
+  FormaJS writes attributes through six independent sinks — SSR
+  `renderToString`, `h()` static, `h()` reactive, hydration adoption, the
+  `data-bind:` binder, and `$el.setAttribute()` in the CSP-safe grammar — and
+  each guarantee used to be asserted thoroughly on exactly one of them. That
+  habit produced 7 of the 25 code defects in `docs/HARDENING-AUDIT.md`. Dangerous
+  URLs (8 vectors x all 8 `URL_ATTRS`), safe-URL negative space, event-handler
+  names, attribute-name breakout, boolean-attribute semantics and text escaping
+  are now asserted once, parameterised over every sink, with a completeness test
+  that fails when a new attribute-writing module appears and does not join the
+  table.
+- **The mutation-probe corpus is committed** (`probes/corpus.json`,
+  `node scripts/run-probes.mjs`). Anchors are re-checked on every PR; the full
+  run is nightly with a detection floor. Every probe written during a future bug
+  investigation goes in it.
+- **The testing policy is written down and enforced.** CONTRIBUTING.md gains the
+  eight rules and the reviewer's checklist; `src/__tests__/test-policy.test.ts`
+  fails the build on a test with no `expect()`, a test file that touches no
+  production code, `it.skip` / a self-skipping `existsSync` guard, a test whose
+  only assertions are presence checks, a file that is 90% one identical
+  assertion, and `vi.mock` of a first-party module without `importOriginal`.
+
 ### Fixed — security
+
+- **`$el.setAttribute()` in the expression grammar was unguarded.** It was the
+  only attribute sink in the repo with no safety check at all, so a CSP-safe
+  `data-on:click` handler could write the `javascript:` href that `data-bind:href`
+  refuses twenty lines away in the same file — and, because the name and the
+  value both come from expressions that can read state, both halves were
+  attacker-reachable. `setAttribute` and `toggleAttribute` now apply the same
+  `isSafeAttrName` + `isUnsafeAttrWrite` predicate as every other sink and raise
+  `FORMA_E_METHOD_DENIED` instead.
+- **A non-function `on*` prop is dropped instead of registered.**
+  `h('button', {onclick: 'alert(1)'})` — the inline-handler shape the SSR
+  renderer refuses — used to reach `addEventListener` with a string. The string
+  never ran; instead the first real click threw `listener.call is not a function`
+  inside dispatch and took every other listener on that element down with it. An
+  object with a `handleEvent` method is still accepted, because that is a real
+  `EventListener`.
+
+### Fixed — hydration and reactivity
+
+- **`data-bind:` writes a bare attribute for `true`.** It wrote `String(true)`,
+  producing `disabled="true"` where `h()`, hydration adoption, the SSR renderer
+  and the Rust walker all produce a bare `disabled`. An SSR page and its bound
+  self disagreed byte-for-byte on every boolean attribute.
+
+
 
 - **SSR tag names are validated.** A `VNode.tag` is interpolated into markup with
   no escaping, so an attacker-controlled tag could inject an attribute
@@ -227,6 +313,38 @@ promise rather than the other way round.
   resolution, which previously failed on all 8 subpaths.
 - Every emitted file carried **two** `sourceMappingURL` footers (Rollup emits
   one, tsup appends another); they are collapsed to one and asserted.
+
+### Performance
+
+The hardening above was benchmarked after the fact (`npm run bench`,
+`docs/PERFORMANCE.md`). Two of its changes cost a great deal; both are fixed with
+the safety property intact, and the rest were measured and kept.
+
+- **Removing a list row no longer scans the row for islands.** `reconcileList`
+  ran `querySelectorAll('[data-forma-island]')` over **every** departing row,
+  which cost ~19 µs per removed six-node row — paid by every list on every page,
+  and almost none contain an island. `activateIslands` / `hydrateIslandRoot` now
+  count scheduled-or-active islands and the scan is skipped when the count is
+  zero; since an island cannot acquire anything to tear down without going
+  through one of those paths, the guarantee is unchanged. Removing 1000 six-node
+  rows went from 63.6 ms back to 45.7 ms, against 45.7 ms for the same removals
+  done by hand with `removeChild` — i.e. back on the floor. Round trips over a
+  1000-row list (append/prepend/remove + undo) are **~2.6× faster**.
+- **A reactive URL attribute whose value has not changed no longer re-runs the
+  scheme guard.** `handleGenericAttr` checked `isDangerousUrl` — an allocating
+  `String.replace` plus two regexes — *before* the identity cache, so an
+  unchanging `href` paid full price on every flush and then wrote nothing. The
+  cache check moved ahead of the guard, which is safe because the reject path
+  stores `null` rather than the refused string, so a refused value can never
+  produce a cache hit. 76 ns → 28 ns per no-op write; a write whose value *does*
+  change still pays for the guard and did not move.
+
+`docs/PERFORMANCE.md` also now resolves the separate finding that `createList`'s
+initial render is superlinear where the hand-built floor is linear: it is not the
+per-row root, index signal or cache rebuild (3% of the gap), but happy-dom's
+array-backed child lists, which make `insertBefore` before a marker and mounting
+a `DocumentFragment` quadratic. Both are O(1) in a browser. Three new floors in
+`bench/list.bench.ts` carry the evidence.
 
 ### Documentation
 

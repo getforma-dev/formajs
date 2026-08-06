@@ -1,11 +1,12 @@
 # FormaJS & Content Security Policy (CSP)
 
-FormaJS is CSP-safe by default. No `unsafe-inline` or `unsafe-eval` required — in **any** build, including the standard CDN runtime, not only the hardened one.
+FormaJS needs no `unsafe-inline` and no `unsafe-eval`, in **any** build. There is no switch that could change that: expressions in `data-*` attributes are evaluated by an allowlist AST interpreter, and **no shipped artifact contains `eval`, `new Function` or `with()`**. The opt-in fallback that used to exist has been deleted, not disabled.
 
-If you turn the expression fallback on (`setUnsafeEval(true)`, `data-forma-unsafe-eval="true"`, or `window.__FORMA_RUNTIME_CONFIG.allowUnsafeEval`), the page then needs `'unsafe-eval'`. If the CSP blocks it anyway, FormaJS reports `expression NOT evaluated` with the `EvalError` and disables the fallback, rather than failing silently.
+The README's flagship example — arrow-function callback and all — is served in CI under a real `Content-Security-Policy: script-src 'self'` response header, and the browser console is asserted to report zero violations.
 
-Verified by `src/__tests__/runtime-csp-default.test.ts` > "every build ships with the new Function fallback disabled"
-Verified by `src/__tests__/runtime-csp-default.test.ts` > "reports a CSP diagnostic and stops using new Function when the page CSP blocks it"
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "no build can reach new Function, with any configuration"
+Verified by `src/__tests__/runtime-csp-default.test.ts` > "never constructs a function, not even one that would have succeeded"
+Verified by `src/__tests__/build-artifacts.test.ts` > "no build emits new Function or a with() scope wrapper"
 
 ---
 
@@ -62,7 +63,9 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 | `innerHTML` with `style="..."` | Yes | **Not for library-generated markup** — `h()` builds DOM with `createElement`/`textContent`. `innerHTML` is reached only through the explicit opt-in sinks: `dangerouslySetInnerHTML`, `setHTMLUnsafe()` and `reconcile()`. See [SECURITY.md](./SECURITY.md#unsanitized-html-sinks). |
 | `Object.assign(el.style, {...})` | No (CSSOM API) | **Yes** — all styles go through this |
 | `el.style.color = 'red'` | No (CSSOM API) | **Yes** (via Object.assign) |
-| `new Function(...)` | Yes (`script-src` without `unsafe-eval`) | **No by default** — the CSP-safe parser is used instead. Reached only if you opt in with `setUnsafeEval(true)` / `data-forma-unsafe-eval="true"`; the hardened build has no `new Function` at all. |
+| `new Function(...)` | Yes (`script-src` without `unsafe-eval`) | **No** — an allowlist AST interpreter is used instead, in every build. There is no opt-in and no fallback; `scripts/verify-dist.mjs` greps every published artifact. |
+| `eval(...)` | Yes (`script-src` without `unsafe-eval`) | **No** — same gate. |
+| `with (scope) { … }` | No, but it defeats scope isolation | **No** — removed with the evaluator that used it. See [SECURITY.md](./SECURITY.md#why-an-allowlist-and-what-the-blocklist-it-replaced-could-not-do). |
 
 ---
 
@@ -88,9 +91,11 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 
 ### "An expression rendered nothing and the console says `data-forma-expr-error`"
 
-**Cause:** The expression is outside the CSP-safe grammar — most often an arrow function, or a `data-on:*` handler whose whole body is a method call. It was **not** evaluated, by design.
+**Cause:** The expression is outside the grammar, or it named something the allowlist does not offer. It was **not** evaluated, by design — the binding left the DOM alone rather than writing an empty string.
 
-**Fix:** Rewrite it within the grammar (see the README's *The expression grammar is a real constraint*), precompute the value server-side, or opt the fallback in and add `'unsafe-eval'` to your policy. Call `getDiagnostics()` for the full list, or listen for the `formajs:diagnostic` event.
+The `console.error` beside the attribute names the cause with a stable code and a column: `FORMA_E_SYNTAX` (the parser refused the text), `FORMA_E_UNRESOLVED` (an identifier that is not state, not a magic and not one of the frozen namespaces — `document`, `window` and `fetch` land here), `FORMA_E_METHOD_DENIED` / `FORMA_E_PROPERTY_DENIED` (not on the allowlist for that receiver), `FORMA_E_KEY_DENIED` (`constructor`, `__proto__`, `call`, …), `FORMA_E_ASSIGN_DENIED` (unknown or read-only target), `FORMA_E_LIMIT` / `FORMA_E_BUDGET` (a parse or evaluation budget).
+
+**Fix:** Rewrite it within the grammar (see the README's *The expression grammar is an allowlist, not a blocklist*) or precompute the value server-side. There is no fallback to opt into: adding `'unsafe-eval'` to your policy will not make it run, because FormaJS has no code path that would use it. Call `getDiagnostics()` for the full list, or listen for the `formajs:diagnostic` event.
 
 ---
 
@@ -112,7 +117,7 @@ form-action 'self'
 
 Every page render generates a unique cryptographic nonce. Scripts and the personality `<style>` tag get this nonce. Everything else must come from `'self'` (same origin).
 
-**This header is satisfied by the standard build.** You do not need the hardened build, and you do not need `unsafe-eval`, to run under it. The hardened build is for when you want that guaranteed by the artifact rather than by configuration — it cannot be talked into eval by any runtime switch.
+**This header is satisfied by every build.** The hardened artifact is no longer a stronger guarantee — it is the same runtime, bundled without code splitting — so pick either on size and packaging grounds alone.
 
 **Do not add `unsafe-inline` or `unsafe-eval`.** FormaJS is designed to work without them.
 
@@ -144,5 +149,5 @@ If you see this with FormaJS v1.0.9+, the issue is outside FormaJS — check for
 | Version | CSP Status |
 |---------|------------|
 | < 1.0.9 | String styles use `cssText` — **requires `unsafe-inline` in `style-src`** |
-| 1.0.9 – 1.5.0 | All styles use CSSOM. Scripts need no `unsafe-inline`, **but the standard runtime shipped with the `new Function` fallback ENABLED**, so any expression outside the CSP-safe grammar silently evaluated to `undefined` under a policy without `unsafe-eval`. |
-| > 1.5.0 | The fallback is off in every build until opted in, and an expression it cannot compile is reported rather than silently dropped. **Fully CSP-safe, no `unsafe-inline` and no `unsafe-eval` needed.** |
+| 1.0.9 – 1.5.0 | All styles use CSSOM. Scripts need no `unsafe-inline`, **but the standard runtime shipped with the `new Function` fallback ENABLED**, so any expression outside the regex parser's grammar silently evaluated to `undefined` under a policy without `unsafe-eval`. |
+| > 1.5.0 | The regex parser and the fallback are **deleted**. Every build evaluates expressions with an allowlist AST interpreter — arrow-function callbacks, object literals, `$event`, bare method-call handlers and the frozen `Math`/`JSON`/`Object`/`Array` namespaces all run with no `unsafe-eval` — and anything outside the grammar is reported with a code and a column instead of silently dropped. **Fully CSP-safe, no `unsafe-inline` and no `unsafe-eval`, with nothing left to misconfigure.** |
