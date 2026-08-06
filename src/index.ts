@@ -18,7 +18,7 @@ export {
 export type { SignalGetter, SignalSetter, SignalOptions, Owner, Ref, Dispatch, Resource, ResourceOptions, ResourceFetcherInfo, ErrorHandler } from './reactive';
 
 // DOM
-export { h, svg, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, deactivateIsland, deactivateAllIslands, reconcileList, template, templateMany } from './dom';
+export { h, svg, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, deactivateIsland, deactivateAllIslands, sanitizePropsDeep, reconcileList, template, templateMany } from './dom';
 export type { IslandHydrateFn, ReconcileResult, ListTransitionHooks, CreateListOptions, SwitchCase } from './dom';
 
 // Component

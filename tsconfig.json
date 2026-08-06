@@ -7,15 +7,31 @@
     "strict": true,
     "declaration": true,
     "outDir": "./dist",
-    "rootDir": "./src",
+    "rootDir": ".",
     "sourceMap": true,
     "skipLibCheck": true,
     "jsx": "react",
     "jsxFactory": "h",
     "jsxFragmentFactory": "Fragment",
+    // The build scripts are plain ESM JavaScript on purpose (node runs them
+    // directly, before and after tsup). allowJs lets the packaging tests import
+    // the same constants the build uses instead of duplicating them, and TS
+    // infers their types from the source.
+    "allowJs": true,
     "paths": {
       "forma/*": ["./src/*"]
     }
   },
-  "include": ["src/**/*"]
+  // tsup.config.ts, scripts/ and bench/ are included so `npm run typecheck`
+  // covers the build definition and the benchmark suite, not just the library.
+  // A benchmark that stops compiling is a benchmark that stops being run.
+  // rootDir is "." for the same reason; tsc is only ever run with --noEmit here
+  // (tsup produces dist).
+  "include": [
+    "src/**/*",
+    "tsup.config.ts",
+    "scripts/**/*.mjs",
+    "bench/**/*.ts",
+    "vitest.bench.config.ts"
+  ]
 }

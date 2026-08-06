@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createSignal, createRoot } from 'forma/reactive';
 import { mount } from '../mount';
 import { h } from '../element';
@@ -83,5 +83,48 @@ describe('mount', () => {
     expect(textNode.data).toBe('updated');
 
     unmount();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// CSR fallback: hydrateIsland replaces the container element
+// ---------------------------------------------------------------------------
+
+describe('mount CSR fallback', () => {
+  afterEach(() => {
+    document.body.innerHTML = '';
+  });
+
+  it('unmount removes the replacement element after the CSR fallback', () => {
+    // An empty data-forma-ssr shell has nothing to hydrate: hydrateIsland runs
+    // the component normally and REPLACES the shell with the component's own
+    // root. Clearing the detached shell on unmount would leave that root — and
+    // everything under it — in the document.
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const container = document.createElement('div');
+    container.setAttribute('data-forma-ssr', '');
+    container.setAttribute('data-forma-component', 'App');
+    document.body.appendChild(container);
+
+    const [text, setText] = createSignal('hello');
+    const unmount = mount(() => h('section', { class: 'app' }, text), container);
+
+    const replacement = document.body.querySelector('section.app')!;
+    expect(replacement).toBeTruthy();
+    expect(replacement.textContent).toBe('hello');
+    expect(document.body.contains(container)).toBe(false);
+    // data-forma-* attributes moved onto the replacement.
+    expect(replacement.getAttribute('data-forma-component')).toBe('App');
+
+    unmount();
+
+    expect(document.body.querySelector('section.app')).toBeNull();
+    expect(document.body.innerHTML).toBe('');
+
+    // Effects are disposed too — the detached node must not keep updating.
+    setText('changed');
+    expect(replacement.textContent).toBe('hello');
+
+    warn.mockRestore();
   });
 });

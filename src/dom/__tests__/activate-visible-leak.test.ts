@@ -4,10 +4,14 @@ import { describe, it, expect, vi, afterEach, beforeEach } from 'vitest';
 import { activateIslands, deactivateIsland } from '../activate';
 
 let obInstance: { observe: ReturnType<typeof vi.fn>; disconnect: ReturnType<typeof vi.fn> };
+/** The callback the runtime handed to `new IntersectionObserver(...)`. */
+let obCallback: ((entries: Array<{ isIntersecting: boolean }>) => void) | null;
 
 beforeEach(() => {
   obInstance = { observe: vi.fn(), disconnect: vi.fn() };
-  (globalThis as any).IntersectionObserver = vi.fn(function (this: any) {
+  obCallback = null;
+  (globalThis as any).IntersectionObserver = vi.fn(function (this: any, cb: any) {
+    obCallback = cb;
     this.observe = obInstance.observe;
     this.disconnect = obInstance.disconnect;
     return this;
@@ -44,6 +48,25 @@ describe('activateIslands visible observer leak (F2)', () => {
     const el = makeVisibleIsland();
     activateIslands({ Counter: vi.fn(() => null) });
     deactivateIsland(el);
+    expect(el.getAttribute('data-forma-status')).toBe('pending');
+  });
+
+  it('a deferred callback that fires after disposal cannot resurrect the island', () => {
+    // deactivateIsland sets a `__formaDisposed` marker "so any deferred callback
+    // that still fires cannot resurrect a torn-down island". Cancelling the
+    // observer is the first line of defence; this is the second, and it is the
+    // one that matters when a scheduler hands back a callback that was already
+    // in flight. Firing the captured callback after disconnect models exactly
+    // that, and nothing covered it.
+    const el = makeVisibleIsland();
+    const hydrate = vi.fn(() => null);
+    activateIslands({ Counter: hydrate });
+    expect(hydrate).not.toHaveBeenCalled();
+
+    deactivateIsland(el);
+    obCallback!([{ isIntersecting: true }]);
+
+    expect(hydrate, 'a disposed island must not hydrate').not.toHaveBeenCalled();
     expect(el.getAttribute('data-forma-status')).toBe('pending');
   });
 });

@@ -1,6 +1,6 @@
 // data-list {index} correctness + data-model completeness (1.3.0).
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mount, unmount, setUnsafeEval } from '../runtime';
+import { mount, unmount } from '../runtime';
 
 function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
@@ -9,7 +9,6 @@ function tick(): Promise<void> {
 describe('data-list {index} over duplicates and primitives (F1)', () => {
   let container: HTMLDivElement;
   beforeEach(() => {
-    setUnsafeEval(true);
     container = document.createElement('div');
     document.body.appendChild(container);
   });
@@ -55,7 +54,6 @@ describe('data-list {index} over duplicates and primitives (F1)', () => {
 describe('data-model radio groups (F2)', () => {
   let container: HTMLDivElement;
   beforeEach(() => {
-    setUnsafeEval(true);
     container = document.createElement('div');
     document.body.appendChild(container);
   });
@@ -84,7 +82,6 @@ describe('data-model radio groups (F2)', () => {
 describe('data-model select multiple (F2)', () => {
   let container: HTMLDivElement;
   beforeEach(() => {
-    setUnsafeEval(true);
     container = document.createElement('div');
     document.body.appendChild(container);
   });
@@ -117,7 +114,6 @@ describe('data-model select multiple (F2)', () => {
 describe('data-model number NaN guard (F2)', () => {
   let container: HTMLDivElement;
   beforeEach(() => {
-    setUnsafeEval(true);
     container = document.createElement('div');
     document.body.appendChild(container);
   });

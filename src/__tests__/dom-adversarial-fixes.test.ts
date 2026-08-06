@@ -1,6 +1,6 @@
 // Defects found by adversarial verification of the 1.3.0 DOM work.
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mount, unmount, setUnsafeEval, setUnsafeEvalMode, clearDiagnostics } from '../runtime';
+import { mount, unmount, clearDiagnostics } from '../runtime';
 import { activateIslands, deactivateIsland, deactivateAllIslands } from '../dom/activate';
 import { h } from '../dom/element';
 
@@ -11,13 +11,11 @@ function tick(): Promise<void> {
 describe('CSP parser left-associativity (HIGH)', () => {
   let c: HTMLDivElement;
   beforeEach(() => {
-    setUnsafeEvalMode('locked-off');
-    setUnsafeEval(false);
     clearDiagnostics();
     c = document.createElement('div');
     document.body.appendChild(c);
   });
-  afterEach(() => { unmount(c); c.remove(); setUnsafeEvalMode('mutable'); });
+  afterEach(() => { unmount(c); c.remove(); });
 
   async function evalText(expr: string): Promise<string | null> {
     c.innerHTML = `<div data-forma-state='{}'><p id="o" data-text="{${expr}}"></p></div>`;
@@ -79,7 +77,6 @@ describe('island teardown removes deferred work (HIGH)', () => {
 describe('data-model member-path binding (MEDIUM)', () => {
   let c: HTMLDivElement;
   beforeEach(() => {
-    setUnsafeEval(true);
     c = document.createElement('div');
     document.body.appendChild(c);
   });

@@ -47,13 +47,16 @@ export function createPortal(
   createEffect(() => {
     const node = children();
 
-    // Remove previous
-    removeMountedNode();
-
     mountedNode = node;
     resolvedTarget.appendChild(node);
 
-    // Ensure portal content is removed when the owner root disposes.
+    // The ONE place the previous node is detached. `createEffect` runs this
+    // cleanup before every re-run and once on dispose, which covers both the
+    // re-render case (the target must hold exactly one node, never a stack of
+    // them) and teardown. The body used to call `removeMountedNode()` a second
+    // time up front; that call could be deleted with the suite green, because
+    // by the time the body runs the cleanup has already detached the old node.
+    // Verified by: src/dom/__tests__/branch-depth.test.ts > "removes the previous node on every re-render, three times over"
     return () => {
       removeMountedNode();
     };

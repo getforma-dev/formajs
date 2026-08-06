@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   mount,
   unmount,
-  setUnsafeEval,
-  setUnsafeEvalMode,
   clearDiagnostics,
 } from '../runtime';
 
@@ -15,8 +13,6 @@ describe('CSP parser operator precedence', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
-    setUnsafeEvalMode('locked-off');
-    setUnsafeEval(false);
     clearDiagnostics();
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -25,8 +21,6 @@ describe('CSP parser operator precedence', () => {
   afterEach(() => {
     unmount(container);
     container.remove();
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(false);
   });
 
   it('a + b > c evaluates as (a + b) > c', async () => {

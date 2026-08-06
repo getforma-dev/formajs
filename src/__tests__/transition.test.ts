@@ -1,11 +1,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { mount, unmount, setUnsafeEval } from '../runtime';
+import { mount, unmount } from '../runtime';
 
 describe('data-transition', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
-    setUnsafeEval(true);
     container = document.createElement('div');
     document.body.appendChild(container);
   });

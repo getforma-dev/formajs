@@ -13,7 +13,9 @@
  */
 
 import { getSwapScript, getSwapTag } from './client-script.js';
-import { escapeHtml, isVNode, VOID_ELEMENTS, renderAttr, type VNode } from './render.js';
+import { __DEV__ } from '../reactive/dev.js';
+import { isSafeTagName } from '../security/url-safety.js';
+import { escapeHtml, isVNode, VOID_ELEMENTS, renderAttr } from './render.js';
 
 // ---------------------------------------------------------------------------
 // Suspense boundary tracking
@@ -24,7 +26,7 @@ interface PendingBoundary {
   promise: Promise<string>;
 }
 
-/** Per-render mutable state, scoped to a single renderToStreamNew call. */
+/** Per-render mutable state, scoped to a single renderToStream call. */
 interface StreamState {
   suspenseCounter: number;
   pendingBoundaries: PendingBoundary[];
@@ -45,12 +47,19 @@ function renderSync(node: unknown, parts: string[]): void {
   }
   if (isVNode(node)) {
     const { tag, props, children } = node;
+    // Same rule as renderToBuffer: an unvalidated tag is an attribute-injection
+    // sink, and the tag also decides how a data: URL in a prop is interpreted.
+    // Verified by: src/ssr/__tests__/render-safety.test.ts > "the streaming renderer drops a VNode with an unsafe tag name"
+    if (!isSafeTagName(tag)) {
+      if (__DEV__) console.warn(`[forma] Skipped VNode with an unsafe tag name: ${JSON.stringify(tag)}`);
+      return;
+    }
     parts.push('<', tag);
     if (props) {
       for (const [key, value] of Object.entries(props)) {
         if (key === 'ref' || key === 'dangerouslySetInnerHTML') continue;
         const resolved = typeof value === 'function' ? value() : value;
-        const frag = renderAttr(key, resolved);
+        const frag = renderAttr(key, resolved, tag);
         if (frag !== null) parts.push(frag);
       }
     }
@@ -168,7 +177,7 @@ function raceTimeout<T>(p: Promise<T>, ms: number | undefined): Promise<T | type
  * }
  * ```
  */
-export async function* renderToStreamNew(
+export async function* renderToStream(
   node: unknown,
   options?: StreamOptions,
 ): AsyncGenerator<string> {
@@ -264,13 +273,18 @@ function renderStreamNode(node: unknown, parts: string[], state: StreamState): v
   // Regular VNode
   if (isVNode(node)) {
     const { tag, props, children } = node;
+    // See renderSync: tags are interpolated verbatim, so they are validated.
+    if (!isSafeTagName(tag)) {
+      if (__DEV__) console.warn(`[forma] Skipped VNode with an unsafe tag name: ${JSON.stringify(tag)}`);
+      return;
+    }
     parts.push('<', tag);
     if (props) {
       for (const [key, value] of Object.entries(props)) {
         if (key === 'fallback') continue; // skip internal suspense props
         if (key === 'ref' || key === 'dangerouslySetInnerHTML') continue;
         const resolved = typeof value === 'function' ? value() : value;
-        const frag = renderAttr(key, resolved);
+        const frag = renderAttr(key, resolved, tag);
         if (frag !== null) parts.push(frag);
       }
     }

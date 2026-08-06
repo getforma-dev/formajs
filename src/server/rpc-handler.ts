@@ -75,24 +75,44 @@ export interface HandleRPCOptions {
 /** Keys that enable prototype-pollution; stripped from RPC args before invocation. */
 const FORBIDDEN_ARG_KEYS = ['__proto__', 'constructor', 'prototype'];
 
-/** Recursively delete prototype-pollution keys from parsed RPC arguments (mutating). */
+/**
+ * Delete prototype-pollution keys at every depth of parsed RPC arguments
+ * (mutating, in place).
+ *
+ * Iterative with an explicit stack, not recursive: the body is fully
+ * attacker-controlled and this runs before any authorization guard, so a
+ * per-level recursion let a ~120 KB deeply nested body exhaust the call stack —
+ * and the RangeError escaped as an unhandled rejection. Depth now costs heap,
+ * not stack. The WeakSet keeps the walk finite if a body arrives with shared or
+ * cyclic references (JSON.parse cannot produce them; an upstream body parser
+ * can).
+ *
+ * Verified by: src/server/__tests__/rpc-deep-strip.test.ts > "strips forbidden keys at a depth that overflows a recursive walk"
+ * Verified by: src/server/__tests__/rpc-deep-strip.test.ts > "terminates on a cyclic argument graph"
+ */
 function deepStripForbidden<T>(value: T): T {
-  if (Array.isArray(value)) {
-    for (const v of value) deepStripForbidden(v);
-    return value;
-  }
-  if (value && typeof value === 'object') {
+  const stack: unknown[] = [value];
+  const seen = new WeakSet<object>();
+
+  while (stack.length > 0) {
+    const current = stack.pop();
+    if (current === null || typeof current !== 'object') continue;
+    if (seen.has(current)) continue;
+    seen.add(current);
+
     for (const key of FORBIDDEN_ARG_KEYS) {
-      if (Object.prototype.hasOwnProperty.call(value, key)) {
+      if (Object.prototype.hasOwnProperty.call(current, key)) {
         // Guard the delete: it throws on a frozen/sealed (non-configurable) prop.
-        const desc = Object.getOwnPropertyDescriptor(value, key);
-        if (desc?.configurable) delete (value as Record<string, unknown>)[key];
+        const desc = Object.getOwnPropertyDescriptor(current, key);
+        if (desc?.configurable) delete (current as Record<string, unknown>)[key];
       }
     }
-    for (const k of Object.keys(value as Record<string, unknown>)) {
-      deepStripForbidden((value as Record<string, unknown>)[k]);
+
+    for (const k of Object.keys(current as Record<string, unknown>)) {
+      stack.push((current as Record<string, unknown>)[k]);
     }
   }
+
   return value;
 }
 
@@ -149,7 +169,17 @@ export async function handleRPC(
   }
 
   // Strip prototype-pollution keys from client-controlled args before invocation.
-  const args = deepStripForbidden([...body.args]);
+  // Copying and walking untrusted input can still throw (a hostile getter or
+  // Proxy in a body some upstream parser produced), and this runs before the
+  // authorization guard, so failure degrades to 400 instead of escaping into the
+  // caller's await.
+  // Verified by: src/server/__tests__/rpc-deep-strip.test.ts > "rejects args that throw while being read instead of propagating"
+  let args: unknown[];
+  try {
+    args = deepStripForbidden([...body.args]);
+  } catch {
+    return { error: 'Invalid RPC request: unreadable args', status: 400 };
+  }
 
   // Authorization is the deployment's responsibility — run any installed guard.
   // A guard that throws or rejects is treated as a denial (fail-closed): return
@@ -197,42 +227,63 @@ export function createRPCMiddleware(opts?: { guard?: RPCGuard }) {
     req: { url: string; method: string; path?: string; body?: unknown; headers?: Record<string, string | undefined> },
     res: { json: (data: unknown) => void; status: (code: number) => { json: (data: unknown) => void } },
   ) => {
-    if (req.method !== 'POST') {
-      res.status(405).json({ error: 'Method not allowed' });
-      return;
-    }
-
-    // CSRF mitigation: require the custom header (which forces a CORS preflight
-    // and cannot be set by a cross-site HTML form) and a JSON content type.
-    const h = req.headers ?? {};
-    if (h['x-forma-rpc'] !== '1') {
-      res.status(403).json({ error: 'Missing X-Forma-RPC header' });
-      return;
-    }
-    const ct = String(h['content-type'] ?? '');
-    if (!ct.includes('application/json')) {
-      res.status(415).json({ error: 'Unsupported Media Type' });
-      return;
-    }
-
-    const body = req.body as RPCRequest;
-    if (!body || !Array.isArray(body.args)) {
-      res.status(400).json({ error: 'Invalid RPC request: missing args array' });
-      return;
-    }
-
-    // Resolve the endpoint path without the query string.
-    const path = req.path ?? req.url.split('?')[0]!;
-    const result = await handleRPC(path, body, undefined, {
-      authorize: opts?.guard,
-      context: { req, headers: h },
-    });
-    if (result.error) {
-      res.status(result.status ?? 500).json({ error: result.error });
-    } else {
-      // Do not leak the internal `status` discriminator into the success body.
-      const { status: _status, ...rest } = result;
-      res.json(rest);
+    try {
+      await handleRPCRequest(req, res, opts);
+    } catch (err) {
+      // Last-resort barrier. This function is awaited by the host framework, so
+      // anything that throws here becomes an unhandled promise rejection, which
+      // terminates the process under Node's default --unhandled-rejections=throw.
+      // Every request path degrades to a 500 instead; details stay server-side.
+      // Verified by: src/server/__tests__/rpc-deep-strip.test.ts > "degrades to 500 instead of rejecting when request handling throws"
+      const isDev = typeof process !== 'undefined'
+        && process.env?.NODE_ENV === 'development';
+      if (isDev) console.error('[forma] RPC middleware error:', err);
+      res.status(500).json({ error: 'Internal server error' });
     }
   };
+}
+
+/** The middleware body, wrapped by {@link createRPCMiddleware}'s error barrier. */
+async function handleRPCRequest(
+  req: { url: string; method: string; path?: string; body?: unknown; headers?: Record<string, string | undefined> },
+  res: { json: (data: unknown) => void; status: (code: number) => { json: (data: unknown) => void } },
+  opts?: { guard?: RPCGuard },
+): Promise<void> {
+  if (req.method !== 'POST') {
+    res.status(405).json({ error: 'Method not allowed' });
+    return;
+  }
+
+  // CSRF mitigation: require the custom header (which forces a CORS preflight
+  // and cannot be set by a cross-site HTML form) and a JSON content type.
+  const h = req.headers ?? {};
+  if (h['x-forma-rpc'] !== '1') {
+    res.status(403).json({ error: 'Missing X-Forma-RPC header' });
+    return;
+  }
+  const ct = String(h['content-type'] ?? '');
+  if (!ct.includes('application/json')) {
+    res.status(415).json({ error: 'Unsupported Media Type' });
+    return;
+  }
+
+  const body = req.body as RPCRequest;
+  if (!body || !Array.isArray(body.args)) {
+    res.status(400).json({ error: 'Invalid RPC request: missing args array' });
+    return;
+  }
+
+  // Resolve the endpoint path without the query string.
+  const path = req.path ?? req.url.split('?')[0]!;
+  const result = await handleRPC(path, body, undefined, {
+    authorize: opts?.guard,
+    context: { req, headers: h },
+  });
+  if (result.error) {
+    res.status(result.status ?? 500).json({ error: result.error });
+  } else {
+    // Do not leak the internal `status` discriminator into the success body.
+    const { status: _status, ...rest } = result;
+    res.json(rest);
+  }
 }

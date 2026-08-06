@@ -70,7 +70,14 @@ export function createBus<
   function emit<K extends keyof T>(event: K, payload: T[K]): void {
     const set = listeners.get(event);
     if (set) {
-      // Iterate over a snapshot so removals during emit are safe
+      // Iterate a snapshot, so one dispatch sees exactly the handlers that were
+      // subscribed when it started. A handler that subscribes during the
+      // dispatch is not called by it — iterating the live Set would visit the
+      // entry it just added, and a handler that re-subscribes itself would
+      // never terminate. A handler unsubscribed mid-dispatch still runs for
+      // this dispatch, and not for the next.
+      // Verified by: src/events/__tests__/bus.test.ts > "a handler subscribed during emit is not called by that same emit"
+      // Verified by: src/events/__tests__/bus.test.ts > "a handler unsubscribed by an earlier handler still runs for that emit"
       for (const handler of [...set]) {
         try {
           handler(payload);

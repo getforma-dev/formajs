@@ -11,8 +11,9 @@
  */
 
 import { describe, it, expect, vi, afterEach } from 'vitest';
-import { createSignal, createRoot } from 'forma/reactive';
+import { createSignal, createRoot, createEffect } from 'forma/reactive';
 import { createList } from '../list';
+import { createShow } from '../show';
 import {
   hydrating,
   setHydrating,
@@ -599,6 +600,255 @@ describe('adoptNode list descriptor handling', () => {
       // Update: clear all
       setItems([]);
       expect(ssrEl.querySelectorAll('li').length).toBe(0);
+    });
+
+    dispose?.();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Adopted rows: bindings, disposal, duplicate keys
+// ---------------------------------------------------------------------------
+
+describe('adopted list rows', () => {
+  afterEach(() => {
+    setHydrating(false);
+    document.body.innerHTML = '';
+  });
+
+  /** SSR list: <ul><!--f:l0--><li data-forma-key=…>…</li>…<!--/f:l0--></ul> */
+  function ssrList(rows: [string, string][]): { ul: HTMLElement; lis: HTMLElement[] } {
+    const ul = document.createElement('ul');
+    ul.appendChild(document.createComment('f:l0'));
+    const lis = rows.map(([key, text]) => {
+      const li = document.createElement('li');
+      li.setAttribute('data-forma-key', key);
+      li.textContent = text;
+      ul.appendChild(li);
+      return li;
+    });
+    ul.appendChild(document.createComment('/f:l0'));
+    document.body.appendChild(ul);
+    return { ul, lis };
+  }
+
+  function listParent(listDesc: ListDescriptor): HydrationDescriptor {
+    return { type: 'element', tag: 'ul', props: null, children: [listDesc] };
+  }
+
+  it('attaches event handlers from renderFn to adopted SSR rows', () => {
+    // renderFn is re-run in hydration mode (no DOM built) and its descriptor is
+    // walked against the server row, so handlers attach to rows the server sent
+    // — not only to rows created later.
+    let dispose: (() => void) | undefined;
+    const clicked: string[] = [];
+
+    createRoot((d) => {
+      dispose = d;
+      const { ul, lis } = ssrList([['a', 'A'], ['b', 'B']]);
+      const [items] = createSignal([{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }]);
+
+      const listDesc: ListDescriptor = {
+        type: 'list',
+        items: items as () => unknown[],
+        keyFn: (item: any) => item.id,
+        renderFn: (item: any) =>
+          h('li', { 'data-forma-key': item.id, onClick: () => clicked.push(item.id) }, item.text),
+      };
+
+      adoptNode(listParent(listDesc), ul);
+
+      // Same nodes, no re-render.
+      expect(Array.from(ul.querySelectorAll('li'))).toEqual(lis);
+
+      lis[0]!.dispatchEvent(new Event('click'));
+      lis[1]!.dispatchEvent(new Event('click'));
+      expect(clicked).toEqual(['a', 'b']);
+    });
+
+    dispose?.();
+  });
+
+  it('binds reactive text inside an adopted row', () => {
+    let dispose: (() => void) | undefined;
+
+    createRoot((d) => {
+      dispose = d;
+      const { ul, lis } = ssrList([['a', 'A']]);
+      const [items] = createSignal([{ id: 'a' }]);
+      const [label, setLabel] = createSignal('A');
+
+      const listDesc: ListDescriptor = {
+        type: 'list',
+        items: items as () => unknown[],
+        keyFn: (item: any) => item.id,
+        renderFn: (item: any) => h('li', { 'data-forma-key': item.id }, label),
+      };
+
+      adoptNode(listParent(listDesc), ul);
+
+      setLabel('A2');
+      expect(lis[0]!.textContent).toBe('A2');
+    });
+
+    dispose?.();
+  });
+
+  it('disposes the effects of a row removed after adoption', () => {
+    // Covers both row origins: rows adopted from SSR and rows created later by
+    // the reconcile effect. Neither used to own a reactive root, so their
+    // bindings stayed subscribed forever and kept writing to detached DOM.
+    const spy = vi.fn();
+    let dispose: (() => void) | undefined;
+    const [tick, setTick] = createSignal(0);
+
+    createRoot((d) => {
+      dispose = d;
+      const { ul } = ssrList([['a', 'A'], ['b', 'B']]);
+      const [items, setItems] = createSignal([{ id: 'a' }, { id: 'b' }]);
+
+      const listDesc: ListDescriptor = {
+        type: 'list',
+        items: items as () => unknown[],
+        keyFn: (item: any) => item.id,
+        renderFn: (item: any) => {
+          createEffect(() => { tick(); spy(item.id); });
+          return h('li', { 'data-forma-key': item.id }, item.id);
+        },
+      };
+
+      adoptNode(listParent(listDesc), ul);
+      expect(spy).toHaveBeenCalledTimes(2);
+
+      // Adopted row 'b' leaves.
+      setItems([{ id: 'a' }]);
+      spy.mockClear();
+      setTick(1);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith('a');
+
+      // Row 'c' is created by the reconcile effect, then leaves.
+      setItems([{ id: 'a' }, { id: 'c' }]);
+      setItems([{ id: 'a' }]);
+      spy.mockClear();
+      setTick(2);
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith('a');
+    });
+
+    dispose?.();
+  });
+
+  it('disposes every row when the island root is disposed', () => {
+    const spy = vi.fn();
+    let dispose!: () => void;
+    const [tick, setTick] = createSignal(0);
+    const [items, setItems] = createSignal([{ id: 'a' }, { id: 'b' }]);
+
+    createRoot((d) => {
+      dispose = d;
+      const { ul } = ssrList([['a', 'A'], ['b', 'B']]);
+
+      const listDesc: ListDescriptor = {
+        type: 'list',
+        items: items as () => unknown[],
+        keyFn: (item: any) => item.id,
+        renderFn: (item: any) => {
+          createEffect(() => { tick(); spy(item.id); });
+          return h('li', { 'data-forma-key': item.id }, item.id);
+        },
+      };
+
+      adoptNode(listParent(listDesc), ul);
+      expect(spy).toHaveBeenCalledTimes(2);
+    });
+
+    // Row 'c' is created by the reconcile effect AFTER the root callback has
+    // returned, so it has no lexical parent root — only the list's own
+    // teardown registration can reach it.
+    setItems([{ id: 'a' }, { id: 'b' }, { id: 'c' }]);
+    expect(spy).toHaveBeenCalledTimes(3);
+
+    dispose();
+    spy.mockClear();
+    setTick(1);
+    expect(spy).toHaveBeenCalledTimes(0);
+  });
+
+  it('removes a duplicate data-forma-key row instead of leaving a ghost', () => {
+    let dispose: (() => void) | undefined;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+    createRoot((d) => {
+      dispose = d;
+      // The server emitted key "a" twice. Only one row can be matched to the
+      // item with that key; the other is tracked by nothing afterwards.
+      const { ul, lis } = ssrList([['a', 'A'], ['a', 'A duplicate'], ['b', 'B']]);
+      const [items, setItems] = createSignal([{ id: 'a' }, { id: 'b' }]);
+
+      const listDesc: ListDescriptor = {
+        type: 'list',
+        items: items as () => unknown[],
+        keyFn: (item: any) => item.id,
+        renderFn: (item: any) => h('li', { 'data-forma-key': item.id }, item.id),
+      };
+
+      adoptNode(listParent(listDesc), ul);
+
+      expect(ul.querySelectorAll('li').length).toBe(2);
+      expect(ul.contains(lis[1]!)).toBe(false);
+      expect(Array.from(ul.querySelectorAll('li'))).toEqual([lis[0], lis[2]]);
+
+      // The reconciler owns the survivors, so removals still clear the region.
+      setItems([]);
+      expect(ul.querySelectorAll('li').length).toBe(0);
+    });
+
+    warn.mockRestore();
+    dispose?.();
+  });
+
+  it('adopts a list that is a show branch with no wrapper element', () => {
+    // createShow(cond, () => createList(...)) puts the f:lN region directly
+    // between the show markers, where adoptNode element walk never reaches it.
+    let dispose: (() => void) | undefined;
+
+    createRoot((d) => {
+      dispose = d;
+
+      const root = document.createElement('div');
+      root.innerHTML =
+        '<!--f:s0--><!--f:l0--><li data-forma-key="a">A</li><!--/f:l0--><!--/f:s0-->';
+      document.body.appendChild(root);
+
+      const [visible] = createSignal(true);
+      const [items, setItems] = createSignal([{ id: 'a', text: 'A' }]);
+      const renderFn = (item: any) => h('li', { 'data-forma-key': item.id }, item.text);
+
+      setHydrating(true);
+      const showDesc = createShow(
+        visible,
+        () => createList(items as () => any[], (item: any) => item.id, renderFn) as unknown as Node,
+      );
+      setHydrating(false);
+
+      const parentDesc = {
+        type: 'element' as const,
+        tag: 'div',
+        props: null,
+        children: [showDesc],
+      } as unknown as HydrationDescriptor;
+      adoptNode(parentDesc, root);
+
+      const original = root.querySelector('li')!;
+      expect(original.textContent).toBe('A');
+
+      // The reconcile effect must be bound to the SSR region.
+      setItems([{ id: 'a', text: 'A' }, { id: 'b', text: 'B' }]);
+      const lis = root.querySelectorAll('li');
+      expect(lis.length).toBe(2);
+      expect(lis[0]).toBe(original);
+      expect(lis[1]!.textContent).toBe('B');
     });
 
     dispose?.();

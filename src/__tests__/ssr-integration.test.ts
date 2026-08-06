@@ -2,11 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   renderToStream,
   renderToString,
-  renderToStringWithHydration,
   sh,
   shSuspense,
   ssrSignal,
 } from '../ssr';
+import * as ssr from '../ssr';
 
 describe('ssr integration', () => {
   it('renders vnode trees and signal getters to string', () => {
@@ -18,32 +18,17 @@ describe('ssr integration', () => {
     expect(html).toBe('<div class="card">Count: 3</div>');
   });
 
-  it('injects hydration markers in hydration render mode', () => {
-    const html = renderToStringWithHydration(
+  // renderToStringWithHydration was deleted: it emitted a marker grammar
+  // (data-forma-h / <!--forma-t:N-->) that nothing in the ecosystem parses. The
+  // client adopts only the walker's f:tN/f:sN/f:lN/f:iN markers, so its output
+  // was never hydratable despite the docstring promising it was.
+  it('does not export a second, unparseable hydration marker dialect', () => {
+    expect((ssr as Record<string, unknown>).renderToStringWithHydration).toBeUndefined();
+    const html = renderToString(
       sh('section', null, sh('h1', null, 'Title'), () => 'dynamic'),
     );
-
-    expect(html).toContain('data-forma-h="');
-    expect(html).toContain('<!--forma-t:');
-  });
-
-  it('concurrent renders produce independent hydration IDs', () => {
-    const html1 = renderToStringWithHydration(
-      sh('div', null, sh('span', null, 'A'), sh('span', null, 'B')),
-    );
-    const html2 = renderToStringWithHydration(
-      sh('div', null, sh('p', null, 'X'), sh('p', null, 'Y')),
-    );
-
-    // Both should start their hydration IDs at 0 (independent counters)
-    expect(html1).toContain('data-forma-h="0"');
-    expect(html2).toContain('data-forma-h="0"');
-
-    // Both should have sequential IDs for children
-    expect(html1).toContain('data-forma-h="1"');
-    expect(html1).toContain('data-forma-h="2"');
-    expect(html2).toContain('data-forma-h="1"');
-    expect(html2).toContain('data-forma-h="2"');
+    expect(html).not.toContain('data-forma-h=');
+    expect(html).not.toContain('<!--forma-t:');
   });
 
   it('streams fallback first and swap payload after suspense resolves', async () => {
@@ -90,12 +75,12 @@ describe('ssr integration', () => {
     }).toThrow('dangerouslySetInnerHTML must be { __html: string }');
   });
 
-  it('SSR hydration throws TypeError for invalid dangerouslySetInnerHTML', () => {
+  it('SSR throws TypeError for invalid dangerouslySetInnerHTML (boolean __html)', () => {
     expect(() => {
-      renderToStringWithHydration(sh('div', { dangerouslySetInnerHTML: 42 }));
+      renderToString(sh('div', { dangerouslySetInnerHTML: 42 }));
     }).toThrow(TypeError);
     expect(() => {
-      renderToStringWithHydration(sh('div', { dangerouslySetInnerHTML: { __html: false } }));
+      renderToString(sh('div', { dangerouslySetInnerHTML: { __html: false } }));
     }).toThrow('dangerouslySetInnerHTML must be { __html: string }');
   });
 
@@ -152,10 +137,13 @@ describe('ssr integration', () => {
     }
   });
 
-  it('blocks control-char-obfuscated URIs in hydration render too', () => {
+  it('blocks control-char-obfuscated URIs in the streaming renderer too', async () => {
     const payload = 'java' + String.fromCharCode(0x09) + 'script:alert(1)';
-    const html = renderToStringWithHydration(sh('a', { href: payload }, 'x'));
-    expect(html).not.toMatch(/script:/i);
+    const chunks: string[] = [];
+    for await (const chunk of renderToStream(sh('a', { href: payload }, 'x'))) {
+      chunks.push(chunk);
+    }
+    expect(chunks.join('')).not.toMatch(/script:/i);
   });
 
   it('drops event-handler and malformed attribute names (case-insensitive)', () => {

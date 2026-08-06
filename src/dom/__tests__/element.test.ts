@@ -1,4 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { resolve } from 'node:path';
 import { h, Fragment, fragment, cleanup } from '../element';
 import { createSignal } from '../../reactive/signal';
 import { createRoot } from '../../reactive/root';
@@ -368,5 +370,54 @@ describe('h() — dangerouslySetInnerHTML validation', () => {
         h('div', { dangerouslySetInnerHTML: () => ({ __html: 123 }) });
       });
     }).toThrow(TypeError);
+  });
+});
+
+describe('h() — claims the implementation comments make', () => {
+  const CACHE_SYM = Symbol.for('forma-attr-cache');
+
+  it('allocates no attribute cache for an element with only static props', () => {
+    // The static/dynamic prop split in h() is justified in a comment by "an
+    // element with no dynamic prop never allocates a cache object". Nothing
+    // proved it, so the split could have quietly collapsed into one path.
+    const staticOnly = h('div', { id: 'a', class: 'b', tabIndex: 2, hidden: true }, 'text');
+    expect((staticOnly as unknown as Record<symbol, unknown>)[CACHE_SYM]).toBeUndefined();
+
+    createRoot(() => {
+      const [n] = createSignal('x');
+      const dynamic = h('div', { id: () => n() });
+      expect((dynamic as unknown as Record<symbol, unknown>)[CACHE_SYM]).toBeDefined();
+    });
+  });
+
+  it('reconciles a reactive style per declaration instead of rewriting the block', () => {
+    // handleStyle claims per-declaration reconciliation. If it rewrote the whole
+    // block instead, `color` would survive here (a fresh assignment leaves
+    // whatever the element already had) — or, with a cssText assignment, the
+    // element would lose declarations it never set through this prop.
+    createRoot(() => {
+      const [css, setCss] = createSignal('color: red; font-weight: bold');
+      const el = h('div', { style: () => css() }) as HTMLElement;
+      expect(el.style.color).toBe('red');
+      expect(el.style.fontWeight).toBe('bold');
+
+      setCss('font-weight: bold');
+      expect(el.style.color, 'a dropped declaration must be removed').toBe('');
+      expect(el.style.fontWeight, 'a kept declaration must survive').toBe('bold');
+
+      setCss('font-weight: normal; color: blue');
+      expect(el.style.fontWeight).toBe('normal');
+      expect(el.style.color).toBe('blue');
+    });
+  });
+
+  it('never assigns cssText anywhere in the element factory', () => {
+    // The CSP claim is about the WRITE mechanism, which no DOM assertion can
+    // distinguish in a test environment that reflects CSSOM writes back into the
+    // attribute itself. What can be pinned is that the module never reaches for
+    // the bulk-assignment API that would defeat the reconciliation above.
+    const source = readFileSync(resolve(__dirname, '../element.ts'), 'utf8');
+    expect(source).not.toMatch(/\.cssText\s*=/);
+    expect(source).not.toMatch(/setAttribute\(\s*['"]style['"]/);
   });
 });

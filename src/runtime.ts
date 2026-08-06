@@ -2,8 +2,16 @@
  * FormaJS HTML Runtime
  *
  * Declarative reactive UI via data-* attributes, powered by fine-grained
- * signals (alien-signals 3.x). Combined into a single, CSP-safe runtime
- * with zero build step required.
+ * signals (alien-signals 3.x). Zero build step required.
+ *
+ * CSP posture: EVERY build evaluates expressions with the allowlist AST
+ * interpreter in src/expr/ — lexer, precedence-climbing parser, validator,
+ * tree-walking interpreter. There is no eval(), no new Function() and no
+ * opt-in switch that could reach one, in any artifact. An expression outside
+ * the grammar is reported and NOT evaluated; the binding keeps whatever was
+ * already in the DOM rather than writing an empty string.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "no build can reach new Function, with any configuration"
+ * Verified by: src/__tests__/build-artifacts.test.ts > "no build emits new Function or a with() scope wrapper"
  *
  * Design inspirations:
  *   Alpine.js   — data-* directive model, progressive enhancement
@@ -14,18 +22,24 @@
  *   Lit         — root element access during hydration, (el, props) pattern
  *
  * ┌─────────────────────────────────────────────────────────────────────┐
- * │  Yes, this file is ~3,300 lines. It's a monolith on purpose.      │
+ * │  Yes, this file is ~2,400 lines. It's a monolith on purpose.        │
  * │                                                                     │
- * │  The HTML Runtime is a self-contained unit: expression parser,      │
- * │  handler compiler, transition system, DOM scanner, and observer     │
- * │  all share mutable state (debug flags, caches, eval mode). Keeping  │
+ * │  The HTML Runtime is a self-contained unit: directive binding,      │
+ * │  handler compilation, transition system, DOM scanner and observer   │
+ * │  all share mutable state (debug flags, caches, config). Keeping     │
  * │  them in one file avoids circular imports, simplifies the build     │
- * │  (single IIFE for CDN), and means `grep` always finds what you     │
- * │  need. The sections are clearly marked — use the map below.        │
+ * │  (single IIFE for CDN), and means `grep` always finds what you      │
+ * │  need. The sections are clearly marked — use the map below.         │
  * │                                                                     │
- * │  Will it be split someday? Maybe. But today it works, it's tested  │
- * │  and the CDN runtime bundle ships at ~24KB gzipped. If you're       │
- * │  judging the line count — fair. But read the code first. :)         │
+ * │  The expression language is the one thing that is NOT here: it      │
+ * │  lives in src/expr/ because its security properties are stated as   │
+ * │  "nothing outside this directory can reach X", and a directory is   │
+ * │  a boundary a CI grep can check. See src/expr/__tests__/            │
+ * │  no-escape-hatch.test.ts.                                           │
+ * │                                                                     │
+ * │  Will it be split further someday? Maybe. But today it works, it's  │
+ * │  tested, and the CDN runtime bundle ships at ~31KB gzipped. If      │
+ * │  you're judging the line count — fair. But read the code first. :)  │
  * └─────────────────────────────────────────────────────────────────────┘
  *
  * This file is the HTML Runtime — a subpath of @getforma/core:
@@ -36,36 +50,58 @@
  * signals, h(), mount, stores, etc. The main entry has zero network code.
  * HTTP/storage/server are at @getforma/core/http, /storage, /server.
  *
- * Usage (CDN):
- *   <script src="https://unpkg.com/@getforma/core@1.0.1/dist/formajs-runtime.global.js"></script>
+ * Usage (CDN — the pin below tracks the published package version):
+ *   <script src="https://unpkg.com/@getforma/core@2.0.0/dist/formajs-runtime.global.js"></script>
  *   <div data-forma-state='{"count": 0}'>
  *     <p data-text="{count}"></p>
  *     <button data-on:click="{count++}">+1</button>
  *   </div>
+ * Verified by: src/__tests__/docs-truth.test.ts > "the runtime header's CDN pin is the current package version"
  *
  * Build outputs from this source file:
  *   dist/runtime.js                        ESM (import '@getforma/core/runtime')
  *   dist/runtime.cjs                       CommonJS (require)
  *   dist/formajs-runtime.global.js         IIFE for <script> tags (auto-inits)
- *   dist/runtime-hardened.js               ESM, unsafe-eval locked off (zero new Function)
- *   dist/formajs-runtime-hardened.global.js IIFE, unsafe-eval locked off (zero new Function)
+ *   dist/runtime-hardened.js               ESM, tree-shaken, no code splitting
+ *   dist/formajs-runtime-hardened.global.js IIFE, tree-shaken, no code splitting
+ *
+ * The "hardened" pair is the same source. It was once the build with the
+ * `new Function` fallback compiled out; the fallback is gone from every build,
+ * so the only difference left is bundling strategy. Both names stay because
+ * they are documented CDN URLs and exports-map targets.
  *
  * ── FILE MAP ──────────────────────────────────────────────────────────
  *
- *   Line ~31-71     Core types & scope (Getter, Setter, Scope, createChildScope)
- *   Line ~73-253    Configuration & diagnostics (debug, CSP modes, containment)
- *   Line ~254-344   Performance utilities (yieldToMain, containment hints)
- *   Line ~346-534   Regexes, caches, security blocklist (findBlockedMethod)
- *   Line ~536-923   Parsing utilities (splitCallArgs, readBalancedSegment, if-handler)
- *   Line ~925-1049  Template compilation (data-list templates)
- *   Line ~1051-1396 CSS Transitions (parse, run, enter/leave phases)
- *   Line ~1398-1809 CSP-safe expression parser (chained access, operators, literals)
- *   Line ~1811-2091 Evaluator & handler builder (CSP path + new Function fallback)
- *   Line ~2093-2184 State initialization & safe $el proxy
- *   Line ~2186-2682 bindElement() — the central directive processor
- *   Line ~2684-2952 MutationObserver, directive map, mountScope/unmountScope
- *   Line ~2954-3064 Init/destroy, mount/unmount, public API setters
- *   Line ~3066-3188 DevTools API, reconciler bridge, exports
+ * Search for the marker, not a line number. This map used to carry line
+ * ranges; they were four sections out of date by the time anyone read them,
+ * which is the failure mode of every hand-maintained line index. The names
+ * below are the literal `// ── … ──` markers in this file, in order, and a
+ * test fails if one is renamed, removed, or moved out of order.
+ *
+ *   Attribute safety & scope                  isUnsafeAttrBinding, Scope, createChildScope
+ *   $refetch registry                         imperative data-fetch triggers
+ *   Debug logger                              dbg(), window.__FORMA_DEBUG
+ *   Configuration & diagnostics               RuntimeConfig, RuntimeDiagnostic
+ *   Performance utilities                     yieldToMain, applyContainmentHints
+ *   Pre-compiled regexes                      hot-path RegExp literals
+ *   Per-scope evaluator cache                 compiled expression/handler reuse
+ *   Compiled template cache                   data-list template compilation
+ *   Parsing utilities                         readBalancedSegment
+ *   Template text caching for data-list       clone + interpolate list rows
+ *   CSS Transitions                           parse spec, enter/leave phases
+ *   Expression evaluator                      buildEvaluator over src/expr
+ *   Handler compiler                          buildHandler over src/expr
+ *   State initialization                      parseState, initScope
+ *   DOM scanner                               directive discovery
+ *   Element binding                           bindElement — the directive processor
+ *   Scope mounting / unmounting               mountScope, unmountScope
+ *   Pre-compiled Directive Map                server-supplied directive sidecar
+ *   MutationObserver                          auto-discovery of new scopes
+ *   Main init                                 initRuntime/destroyRuntime, mount/unmount
+ *   DevTools API — State Inspector            getScopes, setScopeValue, resetScope
+ *   Reconciler                                createReconciler bridge, exports
+ *
+ * Verified by: src/__tests__/docs-truth.test.ts > "the runtime file map names every section marker, in order"
  *
  * ── SUPPORTED DIRECTIVES ──────────────────────────────────────────────
  *
@@ -103,14 +139,15 @@
  *     data-fetch-id="name"               Register for $refetch('name')
  *
  *   Configuration (on <script> tag):
- *     data-forma-unsafe-eval="true"      Enable new Function() fallback
  *     data-forma-diagnostics="true"      Enable expression diagnostics
  *     data-forma-auto-containment="true" Enable CSS containment hints
+ *     data-forma-expr-budget="100000"    Per-evaluation interpreter step budget
  *
  * ── MAGIC VARIABLES ──────────────────────────────────────────────────
  *
  *   Available in all expressions and handlers:
- *     $el          The current DOM element (safe proxy — see createSafeElProxy)
+ *     $el          The current DOM element, wrapped — reads and calls are
+ *                  restricted to the tables in src/expr/allowlist.ts
  *     $dispatch    Fire a CustomEvent: $dispatch('name', detail?)
  *                  Events bubble and cross Shadow DOM (composed: true)
  *     $event       The DOM event object (in data-on:* handlers only)
@@ -122,15 +159,37 @@ import { createSignal, internalEffect, createComputed, batch } from './reactive'
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
+import {
+  clearExpressionCache,
+  compileExpression,
+  compileHandler,
+  evaluateExpression,
+  hostFn,
+  hostObject,
+  isExprError,
+  runHandler,
+  setStepBudget,
+  type FormaExprError,
+} from './expr';
+
+// ── Attribute safety & scope ──
 
 /**
- * True if writing `value` to attribute `name` via setAttribute would create an
- * XSS sink: an `on*` inline event handler, or a URL attribute carrying a
- * script-executing scheme. Shared by data-bind:* and list-template binding.
+ * True if writing `value` to attribute `name` on a `<tag>` element via
+ * setAttribute would create an XSS sink: an `on*` inline event handler, or a
+ * URL attribute carrying a script-executing scheme. Shared by data-bind:* and
+ * list-template binding.
+ *
+ * `tag` is the lower-case name of the element receiving the attribute and is
+ * always passed: `isDangerousUrl` needs it to tell a `data:image/svg+xml` that
+ * is inert on an `<img>` from the same value on an `<a href>`, where it is a
+ * navigable document.
+ * Verified by: src/__tests__/runtime-bind-security.test.ts > "does not set a javascript: URL from data-bind:href"
+ * Verified by: src/__tests__/runtime-bind-security.test.ts > "forwards the element tag to the URL scheme check"
  */
-function isUnsafeAttrBinding(name: string, value: string): boolean {
+function isUnsafeAttrBinding(name: string, value: string, tag: string): boolean {
   if (isEventHandlerAttr(name)) return true;
-  if (isUrlAttr(name) && isDangerousUrl(value)) return true;
+  if (isUrlAttr(name) && isDangerousUrl(value, tag)) return true;
   return false;
 }
 
@@ -178,9 +237,9 @@ function createChildScope(parent: Scope, locals: Record<string, unknown>): Scope
 
 // ── Debug logger — enable via FormaRuntime.debug = true or window.__FORMA_DEBUG = true ──
 let _debug = false;
-type UnsafeEvalMode = 'mutable' | 'locked-off' | 'locked-on';
-let _unsafeEvalMode: UnsafeEvalMode = 'mutable';
-let _allowUnsafeEval = false;
+
+// ── Configuration & diagnostics ──
+
 let _diagnosticsEnabled = true;
 function dbg(...args: unknown[]): void {
   if (_debug || (typeof window !== 'undefined' && (window as any).__FORMA_DEBUG)) {
@@ -189,17 +248,18 @@ function dbg(...args: unknown[]): void {
 }
 
 interface RuntimeConfig {
-  allowUnsafeEval?: boolean;
-  unsafeEvalMode?: UnsafeEvalMode;
-  lockUnsafeEval?: boolean;
   diagnostics?: boolean;
   autoContainment?: boolean;
+  /** Per-evaluation interpreter step budget (`data-forma-expr-budget`). */
+  exprBudget?: number;
 }
 
 interface RuntimeDiagnostic {
   kind: 'handler-unsupported' | 'expression-unsupported';
   expr: string;
   reason: string;
+  /** Stable machine-readable cause, e.g. `FORMA_E_METHOD_DENIED`. */
+  code: string;
   count: number;
   firstSeenAt: number;
   lastSeenAt: number;
@@ -215,17 +275,30 @@ function parseBooleanFlag(raw: string | null | undefined): boolean | undefined {
   return undefined;
 }
 
-function parseUnsafeEvalMode(raw: string | null | undefined): UnsafeEvalMode | undefined {
-  if (raw == null) return undefined;
-  const normalized = raw.trim().toLowerCase();
-  if (normalized === 'mutable') return 'mutable';
-  if (normalized === 'locked-off' || normalized === 'off' || normalized === 'disabled') {
-    return 'locked-off';
-  }
-  if (normalized === 'locked-on' || normalized === 'on' || normalized === 'enabled') {
-    return 'locked-on';
-  }
-  return undefined;
+// Script attributes that carry runtime configuration. Used to locate the
+// configuring <script> in module builds, where document.currentScript is null.
+const CONFIG_SCRIPT_SELECTOR = [
+  'script[data-forma-diagnostics]',
+  'script[data-forma-auto-containment]',
+  'script[data-forma-expr-budget]',
+].join(',');
+
+/**
+ * The <script> tag that configures the runtime.
+ *
+ * `document.currentScript` is the right answer for the IIFE builds, but it is
+ * null by spec while a `<script type="module">` runs — so the ESM builds
+ * (dist/runtime.js) would ignore every `data-forma-*` switch. Falling back to
+ * the first script tag that carries one keeps the switches working identically
+ * in every build. Module scripts are deferred, so the whole document is parsed
+ * by the time this runs. Anyone who can add such a script tag can already run
+ * script on the page, so the fallback grants no new capability.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "honours a data-forma-* script attribute when document.currentScript is null (ESM builds)"
+ */
+function findConfigScript(): HTMLScriptElement | null {
+  const current = document.currentScript as HTMLScriptElement | null;
+  if (current) return current;
+  return document.querySelector(CONFIG_SCRIPT_SELECTOR) as HTMLScriptElement | null;
 }
 
 function readRuntimeConfig(): RuntimeConfig {
@@ -234,15 +307,8 @@ function readRuntimeConfig(): RuntimeConfig {
   if (typeof window !== 'undefined') {
     const globalConfig = (window as any).__FORMA_RUNTIME_CONFIG as RuntimeConfig | undefined;
     if (globalConfig) {
-      if (typeof globalConfig.allowUnsafeEval === 'boolean') {
-        config.allowUnsafeEval = globalConfig.allowUnsafeEval;
-      }
-      if (typeof globalConfig.unsafeEvalMode === 'string') {
-        const parsed = parseUnsafeEvalMode(globalConfig.unsafeEvalMode);
-        if (parsed) config.unsafeEvalMode = parsed;
-      }
-      if (typeof globalConfig.lockUnsafeEval === 'boolean') {
-        config.lockUnsafeEval = globalConfig.lockUnsafeEval;
+      if (typeof globalConfig.exprBudget === 'number') {
+        config.exprBudget = globalConfig.exprBudget;
       }
       if (typeof globalConfig.diagnostics === 'boolean') {
         config.diagnostics = globalConfig.diagnostics;
@@ -254,21 +320,11 @@ function readRuntimeConfig(): RuntimeConfig {
   }
 
   if (typeof document !== 'undefined') {
-    const script = document.currentScript as HTMLScriptElement | null;
+    const script = findConfigScript();
     if (script) {
-      const unsafeFromAttr = parseBooleanFlag(script.getAttribute('data-forma-unsafe-eval'));
-      if (unsafeFromAttr !== undefined) {
-        config.allowUnsafeEval = unsafeFromAttr;
-      }
-      const modeFromAttr = parseUnsafeEvalMode(
-        script.getAttribute('data-forma-unsafe-eval-mode'),
-      );
-      if (modeFromAttr !== undefined) {
-        config.unsafeEvalMode = modeFromAttr;
-      }
-      const lockFromAttr = parseBooleanFlag(script.getAttribute('data-forma-lock-unsafe-eval'));
-      if (lockFromAttr !== undefined) {
-        config.lockUnsafeEval = lockFromAttr;
+      const budgetFromAttr = Number(script.getAttribute('data-forma-expr-budget'));
+      if (Number.isFinite(budgetFromAttr) && budgetFromAttr > 0) {
+        config.exprBudget = budgetFromAttr;
       }
       const diagnosticsFromAttr = parseBooleanFlag(script.getAttribute('data-forma-diagnostics'));
       if (diagnosticsFromAttr !== undefined) {
@@ -288,6 +344,7 @@ function reportDiagnostic(
   kind: RuntimeDiagnostic['kind'],
   expr: string,
   reason: string,
+  code = 'FORMA_E_UNSUPPORTED',
 ): void {
   if (!_diagnosticsEnabled) return;
 
@@ -296,28 +353,29 @@ function reportDiagnostic(
   const existing = diagnostics.get(key);
 
   if (existing) {
+    // Seen before: count it and say nothing. A 1,000-row list sharing one
+    // denied expression must not produce 1,000 console lines or 1,000
+    // CustomEvents — the running total is on the record, for anyone who wants
+    // it, via getDiagnostics().
     existing.count += 1;
     existing.lastSeenAt = now;
-  } else {
-    diagnostics.set(key, {
-      kind,
-      expr,
-      reason,
-      count: 1,
-      firstSeenAt: now,
-      lastSeenAt: now,
-    });
-    console.warn(`[FormaJS] ${reason}: ${expr}`);
+    return;
   }
+
+  diagnostics.set(key, {
+    kind,
+    expr,
+    reason,
+    code,
+    count: 1,
+    firstSeenAt: now,
+    lastSeenAt: now,
+  });
+  console.warn(`[FormaJS] ${reason}: ${expr}`);
 
   try {
     if (typeof window !== 'undefined') {
-      const detail = {
-        kind,
-        expr,
-        reason,
-        count: diagnostics.get(key)?.count ?? 1,
-      };
+      const detail = { kind, expr, reason, code, count: 1 };
       window.dispatchEvent(new CustomEvent('formajs:diagnostic', { detail }));
     }
   } catch {
@@ -325,50 +383,16 @@ function reportDiagnostic(
   }
 }
 
-declare const __FORMA_UNSAFE_EVAL_MODE__: string | undefined;
-
-/**
- * Compile-time flag: true when the build CAN use new Function().
- * In the hardened build, __FORMA_UNSAFE_EVAL_MODE__ is "locked-off" and
- * esbuild constant-folds this to `false`, allowing dead code elimination
- * of all new Function() paths. This ensures Socket.dev/Snyk static analysis
- * does not flag eval usage in the hardened build.
- */
-const __EVAL_CAPABLE__ = typeof __FORMA_UNSAFE_EVAL_MODE__ !== 'string'
-  || __FORMA_UNSAFE_EVAL_MODE__ !== 'locked-off';
-
-const buildUnsafeEvalMode = parseUnsafeEvalMode(
-  typeof __FORMA_UNSAFE_EVAL_MODE__ === 'string'
-    ? __FORMA_UNSAFE_EVAL_MODE__
-    : undefined,
-);
-
-if (buildUnsafeEvalMode) {
-  _unsafeEvalMode = buildUnsafeEvalMode;
-  if (_unsafeEvalMode === 'locked-off') _allowUnsafeEval = false;
-  if (_unsafeEvalMode === 'locked-on') _allowUnsafeEval = true;
-  if (_unsafeEvalMode === 'mutable') _allowUnsafeEval = true;
-}
-
 const runtimeConfig = readRuntimeConfig();
-const configUnsafeMode = runtimeConfig.lockUnsafeEval
-  ? 'locked-off'
-  : runtimeConfig.unsafeEvalMode;
-if (configUnsafeMode) {
-  _unsafeEvalMode = configUnsafeMode;
-  if (_unsafeEvalMode === 'locked-off') _allowUnsafeEval = false;
-  if (_unsafeEvalMode === 'locked-on') _allowUnsafeEval = true;
-}
-if (
-  _unsafeEvalMode === 'mutable'
-  && typeof runtimeConfig.allowUnsafeEval === 'boolean'
-) {
-  _allowUnsafeEval = runtimeConfig.allowUnsafeEval;
+if (typeof runtimeConfig.exprBudget === 'number') {
+  setStepBudget(runtimeConfig.exprBudget);
 }
 if (typeof runtimeConfig.diagnostics === 'boolean') {
   _diagnosticsEnabled = runtimeConfig.diagnostics;
 }
 const _autoContainment = runtimeConfig.autoContainment === true;
+
+// ── Performance utilities ──
 
 interface SchedulerLike {
   yield?: () => Promise<unknown>;
@@ -462,98 +486,13 @@ function applyContainmentHints(
 
 // ── Pre-compiled regexes (avoid re-creation in hot paths) ──
 
-const RE_STRING_SINGLE = /^'[^']*'$/;
-const RE_STRING_DOUBLE = /^"[^"]*"$/;
-const RE_NUMBER = /^-?\d+(\.\d+)?$/;
-const RE_IDENTIFIER = /^[a-zA-Z_$]\w*$/;
-const RE_DOT_ACCESS = /^(\w+)\.(\w+)$/;
-const RE_DEEP_DOT = /^(\w+)\.(\w+)\.(\w+)(?:\.(\w+))?$/;
-const RE_BRACKET = /^(\w+)\[(\d+|'[^']*'|"[^"]*")\]$/;
-const RE_TERNARY = /^(.+?)\s*\?\s*(.+?)\s*:\s*(.+)$/;
-const RE_NULLISH = /^(.+?)\s*\?\?\s*(.+)$/;
-const RE_AND = /^(.+?)\s*&&\s*(.+)$/;
-const RE_OR = /^(.+?)\s*\|\|\s*(.+)$/;
-
-/**
- * Split an expression at the FIRST top-level occurrence of one of `ops`,
- * skipping operators that appear inside string/template literals or nested
- * brackets. This replaces whole-string regexes that mis-split operators inside
- * string literals (e.g. `'a' + '-' + 'b'` split at the '-' inside the literal).
- * Splits at the RIGHTMOST top-level binary operator so the recursive descent is
- * left-associative (`a - b - c` => `(a - b) - c`). A `+`/`-` that follows another
- * operator or an open bracket is treated as unary and never split on.
- */
-const UNARY_PRECEDERS = '+-*/%<>=!&|^~(,[{?:';
-function matchBinaryOp(
-  expr: string,
-  ops: readonly string[],
-): { left: string; op: string; right: string } | null {
-  const SQ = String.fromCharCode(39); // '
-  const DQ = String.fromCharCode(34); // "
-  const BT = String.fromCharCode(96); // `
-  const BS = String.fromCharCode(92); // backslash
-  let depth = 0;
-  let inSingle = false, inDouble = false, inTemplate = false, escaped = false;
-  let prevSig = ''; // previous significant (non-space) char at depth 0
-  let bestIdx = -1;
-  let bestOp = '';
-  for (let i = 0; i < expr.length; i++) {
-    const ch = expr[i]!;
-    if (escaped) { escaped = false; continue; }
-    if (ch === BS && (inSingle || inDouble || inTemplate)) { escaped = true; continue; }
-    if (inSingle) { if (ch === SQ) { inSingle = false; prevSig = DQ; } continue; }
-    if (inDouble) { if (ch === DQ) { inDouble = false; prevSig = DQ; } continue; }
-    if (inTemplate) { if (ch === BT) { inTemplate = false; prevSig = DQ; } continue; }
-    if (ch === SQ) { inSingle = true; continue; }
-    if (ch === DQ) { inDouble = true; continue; }
-    if (ch === BT) { inTemplate = true; continue; }
-    if (ch === '(' || ch === '[' || ch === '{') { depth++; prevSig = ch; continue; }
-    if (ch === ')' || ch === ']' || ch === '}') { if (depth > 0) depth--; prevSig = ch; continue; }
-    if (depth !== 0) continue;
-    if (ch === ' ' || ch === '\t' || ch === '\n') continue; // whitespace is transparent
-    if (i > 0) {
-      let matchedOp = '';
-      for (const op of ops) {
-        if (expr.startsWith(op, i)) { matchedOp = op; break; }
-      }
-      if (matchedOp) {
-        const isPlusMinus = matchedOp === '+' || matchedOp === '-';
-        const unary = isPlusMinus && (prevSig === '' || UNARY_PRECEDERS.includes(prevSig));
-        // Record the rightmost BINARY operator (skip unary +/-).
-        if (!unary) { bestIdx = i; bestOp = matchedOp; }
-        i += matchedOp.length - 1;
-        prevSig = matchedOp[matchedOp.length - 1]!;
-        continue;
-      }
-    }
-    prevSig = ch;
-  }
-  if (bestIdx === -1) return null;
-  return { left: expr.slice(0, bestIdx).trim(), op: bestOp, right: expr.slice(bestIdx + bestOp.length).trim() };
-}
-const RE_TEMPLATE_LIT = /^`([^`]*)`$/;
-const RE_TEMPLATE_INTERP = /\$\{([^}]+)\}/g;
-const RE_METHOD_CALL = /^(\w+)\.(\w+)\((.*)\)$/;
-const RE_GROUP_METHOD_CALL = /^\((.+)\)\.(\w+)\((.*)\)$/;
 const RE_STRIP_BRACES = /^\{|\}$/g;
-const RE_ITEM_TEMPLATE = /\{item\.?(\w*)\}/g;
-const RE_DIGIT_ONLY = /^\d+$/;
-const RE_POST_INCR = /^(\w+)(\+\+|--)$/;
-const RE_PRE_INCR = /^(\+\+|--)(\w+)$/;
-const RE_TOGGLE = /^(\w+)\s*=\s*!(\w+)$/;
-const RE_ASSIGN = /^(\w+)\s*=\s*(.+)$/;
-const RE_COMPOUND = /^(\w+)\s*(\+=|-=|\*=|\/=)\s*(.+)$/;
-const RE_IF_PREFIX = /^if\b/;
 // RE_UNQUOTED_KEYS removed in v0.5.0 — relaxed JSON parsing corrupted URLs
 // and string values containing colons. Use valid JSON in data-forma-state.
 const RE_COMPUTED = /^(\w+)\s*=\s*(.+)$/;
 const RE_FETCH = /^(.+?)(?:→|->)\s*(\S+)(.*)$/;
 const RE_FETCH_METHOD = /^(GET|POST|PUT|PATCH|DELETE)\s+(.+)$/i;
 const RE_STRIP_ITEM_BRACES = /^\{item\.?|\}$/g;
-// Detect expressions referencing DOM event parameters — these can't be resolved
-// through scope getters and must fall through to the new Function handler path.
-const RE_EVENT_REF = /\bevent\s*[.([]|\$event\b/;
-const RE_REFETCH_CALL = /^\$refetch\(\s*['"]([^'"]+)['"]\s*\)$/;
 
 interface TransitionSpec {
   enter: string[];
@@ -573,28 +512,18 @@ interface ElementTransitionState {
 
 const TRANSITION_STATE_SYM = Symbol.for('forma-transition-state');
 
-// ── Expression factory cache ──
-// Maps expression string -> factory function that takes a scope and returns a getter.
-// This avoids re-parsing the same expression pattern across different scopes.
-type ExpressionFactory = (scope: Scope) => (() => unknown) | null;
-const EXPRESSION_CACHE_MAX = 2048;
-const expressionCache = new Map<string, ExpressionFactory>();
-function cacheExpression(key: string, factory: ExpressionFactory): void {
-  if (expressionCache.size >= EXPRESSION_CACHE_MAX) {
-    // Evict oldest entry (first inserted)
-    const first = expressionCache.keys().next().value;
-    if (first !== undefined) expressionCache.delete(first);
-  }
-  expressionCache.set(key, factory);
-}
-let scopeExpressionCache = new WeakMap<Scope, Map<string, () => unknown>>();
-
+// ── Per-scope evaluator cache ──
 interface HandlerBuildResult {
   handler: (e: Event) => void;
   supported: boolean;
 }
 
-let scopeHandlerCache = new WeakMap<Scope, Map<string, HandlerBuildResult>>();
+// Compiling an expression is scope-independent (src/expr caches the AST by
+// source text), but the CLOSURE that binds it to a scope is not, so it is
+// memoised per scope — one entry per (scope, expression) instead of one per
+// (scope, expression, evaluation).
+const scopeExpressionCache = new WeakMap<Scope, Map<string, () => unknown>>();
+const scopeHandlerCache = new WeakMap<Scope, Map<string, HandlerBuildResult>>();
 
 // ── Compiled template cache ──
 // Pre-splits template text into static/dynamic segments for fast re-evaluation.
@@ -614,97 +543,6 @@ function cacheCompiledTemplate(key: string, template: CompiledTemplate): void {
   }
   compiledTemplateCache.set(key, template);
 }
-const UNSAFE_METHOD_NAMES = new Set([
-  'constructor', '__proto__', 'prototype',
-  '__defineGetter__', '__defineSetter__', '__lookupGetter__', '__lookupSetter__',
-  'eval', 'Function',
-]);
-
-/**
- * Pre-compiled regexes for each blocked method name — avoids re-creating
- * RegExp objects on every call.
- */
-const BLOCKED_METHOD_REGEXES: Array<{ name: string; dotRe: RegExp; bracketRe: RegExp }> = (() => {
-  const result: Array<{ name: string; dotRe: RegExp; bracketRe: RegExp }> = [];
-  for (const name of UNSAFE_METHOD_NAMES) {
-    const escaped = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    result.push({
-      name,
-      // Match as property access (.name) or bare identifier at start
-      dotRe: new RegExp(`(?:^|\\.)${escaped}(?:\\s*\\(|\\s*$|[^\\w$])`, 'm'),
-      // Match bracket access with single quotes, double quotes, or backticks
-      bracketRe: new RegExp(`\\[\\s*(?:'${escaped}'|"${escaped}"|` + '`' + escaped + '`' + `)\\s*\\]`),
-    });
-  }
-  return result;
-})();
-
-/**
- * Scan an expression string for any UNSAFE_METHOD_NAMES usage.
- * Uses word-boundary matching to avoid false positives on substrings
- * (e.g. "constructorValue" should not match "constructor").
- *
- * Before scanning:
- * 1. Strips JS block comments and line comments
- * 2. Normalizes whitespace around dots (e.g. "x . constructor" → "x.constructor")
- * 3. Checks bracket access with static string literals and backtick templates
- * 4. Detects string concatenation inside brackets that could produce a blocked name
- *
- * Returns the matched blocked name, or null if clean.
- */
-function findBlockedMethod(expr: string): string | null {
-  // Strip block comments (/* ... */)
-  let cleaned = expr.replace(/\/\*[\s\S]*?\*\//g, '');
-  // Strip line comments (// ... to end of line)
-  cleaned = cleaned.replace(/\/\/[^\n]*/g, '');
-  // Normalize whitespace around dots: "x . constructor" → "x.constructor"
-  cleaned = cleaned.replace(/\s*\.\s*/g, '.');
-
-  for (const { name, dotRe, bracketRe } of BLOCKED_METHOD_REGEXES) {
-    if (dotRe.test(cleaned)) return name;
-    if (bracketRe.test(cleaned)) return name;
-  }
-
-  // Layer 2: detect string concatenation inside brackets that could produce
-  // a blocked name. Extract all bracket contents and check if concatenated
-  // string fragments could form a blocked name.
-  // e.g. x['constr' + 'uctor'] → extract 'constr' and 'uctor' → 'constructor'
-  if (cleaned.includes('[')) {
-    const bracketContents = extractBracketContents(cleaned);
-    for (const content of bracketContents) {
-      // Only check contents with concatenation operators
-      if (!content.includes('+')) continue;
-      // Extract all string literal fragments and join them
-      const fragments = content.match(/['"`]([^'"`]*?)['"`]/g);
-      if (!fragments) continue;
-      const joined = fragments.map(f => f.slice(1, -1)).join('');
-      if (UNSAFE_METHOD_NAMES.has(joined)) return joined;
-    }
-  }
-
-  return null;
-}
-
-/** Extract the contents of all bracket access expressions (between [ and ]). */
-function extractBracketContents(expr: string): string[] {
-  const results: string[] = [];
-  let depth = 0;
-  let start = -1;
-  for (let i = 0; i < expr.length; i++) {
-    if (expr[i] === '[') {
-      if (depth === 0) start = i + 1;
-      depth++;
-    } else if (expr[i] === ']') {
-      depth--;
-      if (depth === 0 && start >= 0) {
-        results.push(expr.slice(start, i));
-        start = -1;
-      }
-    }
-  }
-  return results;
-}
-
 const TEXT_BINDING_SYM = Symbol.for('forma-text-binding-cache');
 
 interface TextBindingCache {
@@ -752,65 +590,7 @@ function setElementTextFast(el: Element, next: string): void {
   cache.initialized = true;
 }
 
-function splitCallArgs(raw: string): string[] {
-  const out: string[] = [];
-  if (raw.trim() === '') return out;
-
-  let depth = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let escaped = false;
-  let start = 0;
-
-  for (let i = 0; i < raw.length; i++) {
-    const ch = raw[i]!;
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (ch === '\\') {
-      escaped = true;
-      continue;
-    }
-
-    if (inSingle) {
-      if (ch === '\'') inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (ch === '"') inDouble = false;
-      continue;
-    }
-
-    if (ch === '\'') {
-      inSingle = true;
-      continue;
-    }
-    if (ch === '"') {
-      inDouble = true;
-      continue;
-    }
-
-    if (ch === '(') {
-      depth++;
-      continue;
-    }
-    if (ch === ')') {
-      if (depth > 0) depth--;
-      continue;
-    }
-
-    if (ch === ',' && depth === 0) {
-      out.push(raw.slice(start, i).trim());
-      start = i + 1;
-    }
-  }
-
-  out.push(raw.slice(start).trim());
-  return out.filter(Boolean);
-}
+// ── Parsing utilities ──
 
 function readBalancedSegment(
   input: string,
@@ -883,217 +663,6 @@ function readBalancedSegment(
   return null;
 }
 
-function splitTopLevelStatements(raw: string): string[] {
-  const input = raw.trim();
-  if (!input) return [];
-
-  const out: string[] = [];
-  let depthParen = 0;
-  let depthBrace = 0;
-  let depthBracket = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let escaped = false;
-  let start = 0;
-
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i]!;
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (ch === '\\' && (inSingle || inDouble || inTemplate)) {
-      escaped = true;
-      continue;
-    }
-
-    if (inSingle) {
-      if (ch === '\'') inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (ch === '"') inDouble = false;
-      continue;
-    }
-    if (inTemplate) {
-      if (ch === '`') inTemplate = false;
-      continue;
-    }
-
-    if (ch === '\'') {
-      inSingle = true;
-      continue;
-    }
-    if (ch === '"') {
-      inDouble = true;
-      continue;
-    }
-    if (ch === '`') {
-      inTemplate = true;
-      continue;
-    }
-
-    if (ch === '(') depthParen++;
-    else if (ch === ')' && depthParen > 0) depthParen--;
-    else if (ch === '{') depthBrace++;
-    else if (ch === '}' && depthBrace > 0) depthBrace--;
-    else if (ch === '[') depthBracket++;
-    else if (ch === ']' && depthBracket > 0) depthBracket--;
-
-    if (ch === ';' && depthParen === 0 && depthBrace === 0 && depthBracket === 0) {
-      const stmt = input.slice(start, i).trim();
-      if (stmt) out.push(stmt);
-      start = i + 1;
-    }
-  }
-
-  const tail = input.slice(start).trim();
-  if (tail) out.push(tail);
-  return out;
-}
-
-function consumeStatement(raw: string): { body: string; rest: string } | null {
-  const input = raw.trim();
-  if (!input) return null;
-
-  if (input.startsWith('{')) {
-    const block = readBalancedSegment(input, 0, '{', '}');
-    if (!block) return null;
-    const body = block.inner.trim();
-    let rest = input.slice(block.end + 1).trim();
-    if (rest.startsWith(';')) rest = rest.slice(1).trim();
-    return { body, rest };
-  }
-
-  let depthParen = 0;
-  let depthBrace = 0;
-  let depthBracket = 0;
-  let inSingle = false;
-  let inDouble = false;
-  let inTemplate = false;
-  let escaped = false;
-
-  for (let i = 0; i < input.length; i++) {
-    const ch = input[i]!;
-
-    if (escaped) {
-      escaped = false;
-      continue;
-    }
-
-    if (ch === '\\' && (inSingle || inDouble || inTemplate)) {
-      escaped = true;
-      continue;
-    }
-
-    if (inSingle) {
-      if (ch === '\'') inSingle = false;
-      continue;
-    }
-    if (inDouble) {
-      if (ch === '"') inDouble = false;
-      continue;
-    }
-    if (inTemplate) {
-      if (ch === '`') inTemplate = false;
-      continue;
-    }
-
-    if (ch === '\'') {
-      inSingle = true;
-      continue;
-    }
-    if (ch === '"') {
-      inDouble = true;
-      continue;
-    }
-    if (ch === '`') {
-      inTemplate = true;
-      continue;
-    }
-
-    if (ch === '(') depthParen++;
-    else if (ch === ')' && depthParen > 0) depthParen--;
-    else if (ch === '{') depthBrace++;
-    else if (ch === '}' && depthBrace > 0) depthBrace--;
-    else if (ch === '[') depthBracket++;
-    else if (ch === ']' && depthBracket > 0) depthBracket--;
-
-    if (ch === ';' && depthParen === 0 && depthBrace === 0 && depthBracket === 0) {
-      return {
-        body: input.slice(0, i).trim(),
-        rest: input.slice(i + 1).trim(),
-      };
-    }
-  }
-
-  return {
-    body: input,
-    rest: '',
-  };
-}
-
-function parseIfHandler(expr: string, scope: Scope): ((e: Event) => void) | null {
-  const input = expr.trim();
-  if (!RE_IF_PREFIX.test(input)) return null;
-
-  // If the expression references DOM event parameters (`event`, `$event`),
-  // bail out — these aren't in scope getters and must use new Function.
-  if (RE_EVENT_REF.test(input)) return null;
-
-  let idx = 2;
-  while (idx < input.length && /\s/.test(input[idx]!)) idx++;
-  if (input[idx] !== '(') return null;
-
-  const condSegment = readBalancedSegment(input, idx, '(', ')');
-  if (!condSegment) return null;
-
-  const condExpr = parseExpression(condSegment.inner.trim(), scope);
-  if (!condExpr) return null;
-
-  let rest = input.slice(condSegment.end + 1).trim();
-  const thenStmt = consumeStatement(rest);
-  if (!thenStmt || !thenStmt.body) return null;
-
-  const thenHandler = parseHandler(thenStmt.body, scope);
-  if (!thenHandler) return null;
-
-  rest = thenStmt.rest.trim();
-  let elseHandler: ((e: Event) => void) | null = null;
-  if (rest.startsWith('else')) {
-    rest = rest.slice('else'.length).trim();
-    const elseStmt = consumeStatement(rest);
-    if (!elseStmt || !elseStmt.body) return null;
-    elseHandler = parseHandler(elseStmt.body, scope);
-    if (!elseHandler) return null;
-    rest = elseStmt.rest.trim();
-  }
-
-  if (rest.length > 0) return null;
-
-  return (e: Event) => {
-    batch(() => {
-      if (condExpr()) thenHandler(e);
-      else elseHandler?.(e);
-    });
-  };
-}
-
-function unwrapOuterParens(raw: string): string {
-  let expr = raw.trim();
-  while (expr.startsWith('(')) {
-    const segment = readBalancedSegment(expr, 0, '(', ')');
-    if (!segment || segment.end !== expr.length - 1) break;
-    const inner = segment.inner.trim();
-    if (!inner) break;
-    expr = inner;
-  }
-  return expr;
-}
-
 function compileTemplate(text: string): CompiledTemplate {
   const cached = compiledTemplateCache.get(text);
   if (cached) return cached;
@@ -1124,15 +693,6 @@ function compileTemplate(text: string): CompiledTemplate {
 
 /** Maps text nodes to their compiled template (pre-split static/dynamic segments). */
 const templateTexts = new WeakMap<Node, CompiledTemplate>();
-
-/**
- * Resolve template placeholders in a text string using pre-compiled template.
- * Concatenates static segments with evaluated dynamic segments.
- */
-function resolveTemplate(text: string, item: unknown): string {
-  const compiled = compileTemplate(text);
-  return evaluateCompiledTemplate(compiled, item);
-}
 
 /**
  * Evaluate a pre-compiled template against an item.
@@ -1219,6 +779,8 @@ function splitClassTokens(raw: string | null): string[] {
     .map((t) => t.trim())
     .filter(Boolean);
 }
+
+// ── CSS Transitions ──
 
 function parseDurationTokenMs(token: string): number | null {
   const t = token.trim().toLowerCase();
@@ -1559,7 +1121,7 @@ function cloneAttributeTemplates(el: Element, item: unknown): void {
         const compiled = compileTemplate(attr.value);
         entries.push({ attr: attr.name, compiled });
         const value = evaluateCompiledTemplate(compiled, item);
-        if (isUnsafeAttrBinding(attr.name, value)) {
+        if (isUnsafeAttrBinding(attr.name, value, node.tagName.toLowerCase())) {
           node.removeAttribute(attr.name);
         } else {
           node.setAttribute(attr.name, value);
@@ -1570,419 +1132,6 @@ function cloneAttributeTemplates(el: Element, item: unknown): void {
       templateAttrs.set(node, entries);
     }
   }
-}
-
-// ── Chained access / optional chaining parser ──
-
-/**
- * Represents a single step in a property/method chain.
- * - type 'prop': property access (`.name` or `?.name`)
- * - type 'call': method call (`.method(args)` or `?.method(args)`)
- */
-interface ChainStep {
-  type: 'prop' | 'call';
-  name: string;
-  optional: boolean; // true for `?.`
-  argFns?: Array<() => unknown>; // only for 'call' type
-}
-
-/**
- * Parse an expression that starts with an identifier and is followed by
- * zero or more chain steps: `.prop`, `?.prop`, `.method(args)`, `?.method(args)`.
- * Returns null if the expression doesn't match this pattern.
- *
- * Handles: "user.name", "user?.name", "str.trim().toUpperCase()",
- * "obj?.method()", "items.filter(x).map(y)", "a.b.c.d" (any depth).
- */
-function parseChainedAccess(expr: string, scope: Scope): (() => unknown) | null {
-  // Must start with an identifier (or Math)
-  let pos = 0;
-  const identMatch = expr.match(/^[a-zA-Z_$]\w*/);
-  if (!identMatch) return null;
-
-  const rootName = identMatch[0]!;
-  pos = rootName.length;
-
-  // Must have at least one chain step after the identifier
-  if (pos >= expr.length) return null;
-  // Next char must be '.' or '?' (for '?.')
-  if (expr[pos] !== '.' && !(expr[pos] === '?' && expr[pos + 1] === '.')) return null;
-
-  const steps: ChainStep[] = [];
-
-  while (pos < expr.length) {
-    let optional = false;
-
-    // Check for `?.` (optional chaining) or `.` (regular access)
-    if (expr[pos] === '?' && expr[pos + 1] === '.') {
-      optional = true;
-      pos += 2;
-    } else if (expr[pos] === '.') {
-      pos += 1;
-    } else {
-      // Not a chain continuation — unexpected character
-      return null;
-    }
-
-    // Parse property/method name
-    const nameMatch = expr.slice(pos).match(/^\w+/);
-    if (!nameMatch) return null;
-    const name = nameMatch[0]!;
-    pos += name.length;
-
-    if (UNSAFE_METHOD_NAMES.has(name)) return () => undefined;
-
-    // Check if this is a method call: followed by `(`
-    if (pos < expr.length && expr[pos] === '(') {
-      const balanced = readBalancedSegment(expr, pos, '(', ')');
-      if (!balanced) return null;
-
-      const argsRaw = balanced.inner.trim();
-      const argFns: Array<() => unknown> = [];
-      for (const arg of splitCallArgs(argsRaw)) {
-        const parsed = parseExpression(arg, scope);
-        if (!parsed) return null;
-        argFns.push(parsed);
-      }
-
-      steps.push({ type: 'call', name, optional, argFns });
-      pos = balanced.end + 1;
-    } else {
-      steps.push({ type: 'prop', name, optional });
-    }
-  }
-
-  // If we didn't consume the entire expression, this isn't a simple chain
-  if (pos !== expr.length) return null;
-
-  // If there are no steps, fall back (just an identifier)
-  if (steps.length === 0) return null;
-
-  // Build the root expression getter
-  const rootExpr = rootName === 'Math'
-    ? (() => Math)
-    : (() => scope.getters[rootName]?.());
-
-  return () => {
-    let val: any = rootExpr();
-    for (const step of steps) {
-      if (val == null) {
-        if (step.optional) return undefined;
-        // Non-optional access on null/undefined — use ?. semantics
-        // (existing behavior used ?. for dot access)
-        return undefined;
-      }
-      if (step.type === 'prop') {
-        val = val[step.name];
-      } else {
-        const method = val[step.name];
-        if (typeof method !== 'function') return undefined;
-        const args = step.argFns!.map(fn => fn());
-        val = method.apply(val, args);
-      }
-    }
-    return val;
-  };
-}
-
-// ── CSP-safe expression parser ──
-
-/**
- * Parse a simple expression into a closure that evaluates against the scope.
- * Handles common patterns without requiring `new Function()` or `eval`.
- * Returns null if the expression is too complex for the CSP-safe parser.
- */
-function parseExpression(expr: string, scope: Scope): (() => unknown) | null {
-  // Check expression factory cache first
-  const cachedFactory = expressionCache.get(expr);
-  if (cachedFactory) return cachedFactory(scope);
-
-  const result = parseExpressionUncached(expr, scope);
-
-  // Cache factory functions for common simple patterns that can be re-bound to different scopes
-  if (result !== null) {
-    // Cache factories for simple patterns (identifier, dot access, etc.)
-    // Complex patterns with sub-expressions are scope-dependent and harder to cache as factories,
-    // but we can still cache the structural match result for them.
-    // Keyword literals MUST be checked before RE_IDENTIFIER — "true", "false",
-    // "null", "undefined" all match /^[a-zA-Z_$]\w*$/ and would be incorrectly
-    // cached as scope variable lookups (returning undefined).
-    if (expr === 'true' || expr === 'false' || expr === 'null' || expr === 'undefined') {
-      const val = expr === 'true' ? true : expr === 'false' ? false : expr === 'null' ? null : undefined;
-      cacheExpression(expr, () => () => val);
-    } else if (RE_IDENTIFIER.test(expr)) {
-      cacheExpression(expr, (s) => () => s.getters[expr]?.());
-    } else if (RE_STRING_SINGLE.test(expr) || RE_STRING_DOUBLE.test(expr)) {
-      const val = expr.slice(1, -1);
-      cacheExpression(expr, () => () => val);
-    } else if (RE_NUMBER.test(expr)) {
-      const val = Number(expr);
-      cacheExpression(expr, () => () => val);
-    } else {
-      const dotMatch = expr.match(RE_DOT_ACCESS);
-      if (dotMatch) {
-        const p1 = dotMatch[1]!, p2 = dotMatch[2]!;
-        cacheExpression(expr, (s) => () => {
-          const obj = s.getters[p1]?.();
-          return (obj as any)?.[p2];
-        });
-      }
-    }
-  }
-
-  return result;
-}
-
-/**
- * Core expression parser — called on cache miss.
- * Uses pre-compiled module-level regexes for all pattern matching.
- */
-function parseExpressionUncached(expr: string, scope: Scope): (() => unknown) | null {
-  expr = expr.trim();
-
-  // Parenthesized group: "(a + b)", "((count))"
-  const unwrapped = unwrapOuterParens(expr);
-  if (unwrapped !== expr) {
-    return parseExpression(unwrapped, scope);
-  }
-
-  // Literals first (before identifier check, since \w matches digits)
-
-  // String literals
-  if (RE_STRING_SINGLE.test(expr) || RE_STRING_DOUBLE.test(expr)) {
-    const val = expr.slice(1, -1);
-    return () => val;
-  }
-
-  // Number literals
-  if (RE_NUMBER.test(expr)) {
-    const val = Number(expr);
-    return () => val;
-  }
-
-  // Boolean / null / undefined literals
-  if (expr === 'true') return () => true;
-  if (expr === 'false') return () => false;
-  if (expr === 'null') return () => null;
-  if (expr === 'undefined') return () => undefined;
-
-  // Simple identifier: "count", "name" (must start with letter/underscore/$)
-  if (RE_IDENTIFIER.test(expr)) {
-    return () => scope.getters[expr]?.();
-  }
-
-  // Chained access / method calls / optional chaining:
-  // "user.name", "user?.name", "str.trim().toUpperCase()", "obj?.method()", "items.filter(x).map(y)"
-  // Also handles simple dot access, deep dot access, and single method calls.
-  {
-    const chainResult = parseChainedAccess(expr, scope);
-    if (chainResult) return chainResult;
-  }
-
-  // Grouped method call: "(expr).method(args)" — base is a parenthesized expression
-  const groupedCallMatch = expr.match(RE_GROUP_METHOD_CALL);
-  if (groupedCallMatch) {
-    const baseRaw = groupedCallMatch[1]!.trim();
-    const methodName = groupedCallMatch[2]!;
-    const argsRaw = groupedCallMatch[3]!.trim();
-
-    if (UNSAFE_METHOD_NAMES.has(methodName)) return () => undefined;
-
-    const baseExpr = parseExpression(baseRaw, scope);
-    if (!baseExpr) return null;
-
-    const argFns: Array<() => unknown> = [];
-    for (const arg of splitCallArgs(argsRaw)) {
-      const parsed = parseExpression(arg, scope);
-      if (!parsed) return null;
-      argFns.push(parsed);
-    }
-
-    return () => {
-      const base = baseExpr() as any;
-      const method = base?.[methodName];
-      if (typeof method !== 'function') return undefined;
-      const args = argFns.map(fn => fn());
-      return method.apply(base, args);
-    };
-  }
-
-  // Negation: "!active", "!user.loggedIn"
-  if (expr.startsWith('!')) {
-    const inner = parseExpression(expr.slice(1).trim(), scope);
-    if (inner) return () => !inner();
-  }
-
-  // Bracket access: "items[0]", "obj['key']"
-  const bracketMatch = expr.match(RE_BRACKET);
-  if (bracketMatch) {
-    const objExpr = parseExpression(bracketMatch[1]!, scope);
-    let key: string | number;
-    const rawKey = bracketMatch[2]!;
-    if (RE_DIGIT_ONLY.test(rawKey)) {
-      key = Number(rawKey);
-    } else {
-      key = rawKey.slice(1, -1);
-    }
-    if (objExpr) {
-      return () => (objExpr() as any)?.[key];
-    }
-  }
-
-  // Array literal: "[1, 2, 3]", "[item.name, item.id]", "['a', 'b']"
-  if (expr.startsWith('[')) {
-    const balanced = readBalancedSegment(expr, 0, '[', ']');
-    if (balanced && balanced.end === expr.length - 1) {
-      const inner = balanced.inner.trim();
-      if (inner === '') {
-        // Empty array: []
-        return () => [];
-      }
-      const elements = splitCallArgs(inner);
-      const elementFns: Array<() => unknown> = [];
-      let allParsed = true;
-      for (const el of elements) {
-        const parsed = parseExpression(el.trim(), scope);
-        if (!parsed) { allParsed = false; break; }
-        elementFns.push(parsed);
-      }
-      if (allParsed) {
-        return () => elementFns.map(fn => fn());
-      }
-    }
-  }
-
-  // Ternary: "expr ? a : b"
-  const ternaryMatch = expr.match(RE_TERNARY);
-  if (ternaryMatch) {
-    const cond = parseExpression(ternaryMatch[1]!.trim(), scope);
-    const then = parseExpression(ternaryMatch[2]!.trim(), scope);
-    const els = parseExpression(ternaryMatch[3]!.trim(), scope);
-    if (cond && then && els) {
-      return () => cond() ? then() : els();
-    }
-  }
-
-  // Nullish coalescing: "value ?? 'default'"
-  const nullishMatch = expr.match(RE_NULLISH);
-  if (nullishMatch) {
-    const left = parseExpression(nullishMatch[1]!.trim(), scope);
-    const right = parseExpression(nullishMatch[2]!.trim(), scope);
-    if (left && right) {
-      return () => left() ?? right();
-    }
-  }
-
-  // Logical OR: "a || b" (lower precedence than AND — checked first)
-  const orMatch = expr.match(RE_OR);
-  if (orMatch) {
-    const left = parseExpression(orMatch[1]!.trim(), scope);
-    const right = parseExpression(orMatch[2]!.trim(), scope);
-    if (left && right) {
-      return () => left() || right();
-    }
-  }
-
-  // Logical AND: "a && b" (higher precedence than OR — checked after)
-  const andMatch = expr.match(RE_AND);
-  if (andMatch) {
-    const left = parseExpression(andMatch[1]!.trim(), scope);
-    const right = parseExpression(andMatch[2]!.trim(), scope);
-    if (left && right) {
-      return () => left() && right();
-    }
-  }
-
-  // Comparison operators: ===, !==, ==, !=, >=, <=, >, < (longest-first)
-  const compMatch = matchBinaryOp(expr, ['===', '!==', '==', '!=', '>=', '<=', '>', '<']);
-  if (compMatch) {
-    const left = parseExpression(compMatch.left, scope);
-    const right = parseExpression(compMatch.right, scope);
-    if (left && right) {
-      const op = compMatch.op;
-      return () => {
-        const l = left(), r = right();
-        switch (op) {
-          case '===': return l === r;
-          case '!==': return l !== r;
-          case '==': return l == r;
-          case '!=': return l != r;
-          case '>': return (l as number) > (r as number);
-          case '<': return (l as number) < (r as number);
-          case '>=': return (l as number) >= (r as number);
-          case '<=': return (l as number) <= (r as number);
-        }
-      };
-    }
-  }
-
-  // Arithmetic: +, -, *, /, %
-  // Addition/subtraction first (lower precedence — checked first), then * / %
-  const addMatch = matchBinaryOp(expr, ['+', '-']);
-  if (addMatch) {
-    const left = parseExpression(addMatch.left, scope);
-    const right = parseExpression(addMatch.right, scope);
-    if (left && right) {
-      const op = addMatch.op;
-      return () => {
-        const l = left(), r = right();
-        if (op === '+') return (l as any) + (r as any);
-        return (l as number) - (r as number);
-      };
-    }
-  }
-
-  // Multiplication / division / modulo (higher precedence — checked after addition)
-  const mulMatch = matchBinaryOp(expr, ['*', '/', '%']);
-  if (mulMatch) {
-    const left = parseExpression(mulMatch.left, scope);
-    const right = parseExpression(mulMatch.right, scope);
-    if (left && right) {
-      const op = mulMatch.op;
-      return () => {
-        const l = left() as number, r = right() as number;
-        switch (op) {
-          case '*': return l * r;
-          case '/': return l / r;
-          case '%': return l % r;
-        }
-      };
-    }
-  }
-
-  // Template literals: `Hello ${name}`
-  const tmplMatch = expr.match(RE_TEMPLATE_LIT);
-  if (tmplMatch) {
-    const raw = tmplMatch[1]!;
-    // Pre-split template literal into static/dynamic segments
-    const staticParts: string[] = [];
-    const dynamicFns: (() => unknown)[] = [];
-    let lastIndex = 0;
-    // Create a fresh regex since RE_TEMPLATE_INTERP has the 'g' flag
-    const re = new RegExp(RE_TEMPLATE_INTERP.source, 'g');
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(raw)) !== null) {
-      staticParts.push(raw.slice(lastIndex, m.index));
-      const inner = parseExpression(m[1]!.trim(), scope);
-      if (!inner) return null; // Can't parse inner expression
-      dynamicFns.push(inner);
-      lastIndex = re.lastIndex;
-    }
-    staticParts.push(raw.slice(lastIndex));
-
-    // Optimized evaluation: concatenate instead of map+join
-    return () => {
-      let result = staticParts[0]!;
-      for (let i = 0; i < dynamicFns.length; i++) {
-        result += String(dynamicFns[i]!() ?? '');
-        result += staticParts[i + 1] ?? '';
-      }
-      return result;
-    };
-  }
-
-  // Can't parse — return null for fallback
-  return null;
 }
 
 // ── Expression evaluator ──
@@ -1996,285 +1145,150 @@ function getScopeCache<T>(cache: WeakMap<Scope, Map<string, T>>, scope: Scope): 
   return scoped;
 }
 
-/** Build an actionable hint for expressions/handlers that failed CSP-safe parsing. */
-function cspExpressionHint(expr: string): string {
-  if (expr.includes('...')) {
-    return `Unsupported expression in CSP-safe mode: spread syntax detected. Use .concat() instead, or enable unsafe-eval via setUnsafeEval(true).`;
-  }
-  // Note: optional chaining (?.) is now supported by the CSP-safe parser.
-  if (expr.includes('=>')) {
-    return `Unsupported expression in CSP-safe mode: arrow function detected. Extract logic to a data-computed attribute, or enable unsafe-eval via setUnsafeEval(true).`;
-  }
-  return `Unsupported expression in CSP-safe mode. Simplify the expression or enable unsafe-eval via setUnsafeEval(true).`;
+/**
+ * Sentinel returned by a binding whose expression did not evaluate. It is a
+ * unique symbol precisely so it cannot be confused with a legitimate
+ * `undefined` — the whole failure model rests on those being distinguishable
+ * (R1). Every directive checks for it and leaves the DOM alone.
+ * Verified by: src/__tests__/failure-semantics.test.ts > "a denied expression leaves the previous text in place and never renders undefined"
+ */
+const EXPR_FAILED = Symbol('forma-expression-failed');
+
+/** Strip one balanced `{ … }` wrapper, honouring string and template literals. */
+function stripBraces(raw: string): string {
+  const trimmed = raw.trim();
+  if (!trimmed.startsWith('{')) return trimmed;
+  const seg = readBalancedSegment(trimmed, 0, '{', '}');
+  if (!seg || seg.end !== trimmed.length - 1) return trimmed;
+  return seg.inner.trim();
 }
 
-function buildEvaluator(expr: string, scope: Scope): () => unknown {
-  const cleaned = expr.replace(RE_STRIP_BRACES, '').trim();
+/** The console half of a failure report: expression, cause, and the element. */
+function logExprFailure(el: Element | null, expr: string, err: FormaExprError, what: string): void {
+  const where = err.column >= 0 ? ` at column ${err.column + 1}` : '';
+  const head = el ? `\n  on: ${el.outerHTML.slice(0, 120)}` : '';
+  console.error(`[FormaJS] ${what} not evaluated${where}: ${expr}\n  ${err.code}: ${err.message}${head}`);
+}
+
+/**
+ * A value expression could not be compiled or could not be evaluated. Both are
+ * reported the same way — console error, `formajs:diagnostic`, an entry in
+ * `getDiagnostics()` with a stable code, and a `data-forma-expr-error` marker
+ * on the element — and in both cases the binding writes NOTHING.
+ * Verified by: src/__tests__/failure-semantics.test.ts > "reports one diagnostic per distinct expression, however many elements share it"
+ */
+function reportExprFailure(el: Element | null, expr: string, err: FormaExprError): void {
+  logExprFailure(el, expr, err, 'expression');
+  reportDiagnostic('expression-unsupported', expr, err.message, err.code);
+  el?.setAttribute('data-forma-expr-error', 'unsupported');
+}
+
+function reportHandlerFailure(el: Element | null, expr: string, err: FormaExprError): void {
+  logExprFailure(el, expr, err, 'handler');
+  reportDiagnostic('handler-unsupported', expr, err.message, err.code);
+  el?.setAttribute('data-forma-handler-error', 'unsupported');
+}
+
+/**
+ * Compile one value expression against a scope.
+ *
+ * Returns `null` when the expression is outside the grammar — already reported,
+ * so the caller only has to decide what "no binding" looks like for its
+ * directive. The returned closure THROWS `FormaExprError` on an evaluation-time
+ * denial; it never answers `undefined` to mean "failed".
+ */
+function buildEvaluator(expr: string, scope: Scope, el: Element | null): (() => unknown) | null {
+  const cleaned = stripBraces(expr);
   const cache = getScopeCache(scopeExpressionCache, scope);
   const cached = cache.get(cleaned);
   if (cached) return cached;
 
-  // Try CSP-safe parsing first
-  const cspFn = parseExpression(cleaned, scope);
-  if (cspFn) {
-    cache.set(cleaned, cspFn);
-    return cspFn;
-  }
-
-  // Fallback to Function constructor (for complex expressions)
-  // __EVAL_CAPABLE__ is a compile-time constant — in the hardened build,
-  // esbuild constant-folds it to false and eliminates this entire block,
-  // ensuring no `new Function` appears in the hardened dist.
-  if (!__EVAL_CAPABLE__ || !_allowUnsafeEval) {
-    dbg('buildEvaluator: blocked unsafe eval fallback for expression:', cleaned);
-    reportDiagnostic('expression-unsupported', cleaned, cspExpressionHint(cleaned));
-    const blocked = () => undefined;
-    cache.set(cleaned, blocked);
-    return blocked;
-  }
-
-  // Apply UNSAFE_METHOD_NAMES blocklist before new Function — prevents
-  // prototype-pollution and eval injection via the unsafe eval path.
-  const blockedMethod = findBlockedMethod(cleaned);
-  if (blockedMethod) {
-    const msg = `Blocked unsafe method "${blockedMethod}" in expression`;
-    reportDiagnostic('expression-unsupported', cleaned, msg);
-    throw new Error(`[FormaJS] ${msg}: ${cleaned}`);
-  }
-
+  let compiled;
   try {
-    const fn = new Function('__scope', `with(__scope) { return (${cleaned}); }`);
-    // Cache proxy — scope.getters is a mutable object, so the proxy
-    // always reflects current state without needing to be recreated.
-    const proxy = new Proxy(Object.create(null) as Record<string, unknown>, {
-      has(_, key: string) { return key in scope.getters; },
-      get(_, key: string) {
-        // Defense-in-depth: block dangerous property access even if
-        // findBlockedMethod missed a bypass (e.g. computed bracket names)
-        if (UNSAFE_METHOD_NAMES.has(key)) return undefined;
-        const g = scope.getters[key];
-        return g ? g() : undefined;
-      },
-    });
-    const unsafe = () => fn(proxy);
-    cache.set(cleaned, unsafe);
-    return unsafe;
-  } catch {
-    reportDiagnostic('expression-unsupported', cleaned, 'Expression too complex for CSP-safe mode. Enable unsafe-eval via FormaRuntime.unsafeEval = true, or use the standard (non-hardened) build.');
-    const failed = () => undefined;
-    cache.set(cleaned, failed);
-    return failed;
-  }
-}
-
-// ── CSP-safe handler parser ──
-
-/**
- * Parse common handler patterns without `new Function()`.
- * Returns null if the expression is too complex for the CSP-safe parser.
- */
-function parseHandler(expr: string, scope: Scope): ((e: Event) => void) | null {
-  const normalized = expr.trim().replace(/;+$/g, '').trim();
-  if (!normalized) return null;
-
-  const ifHandler = parseIfHandler(normalized, scope);
-  if (ifHandler) return ifHandler;
-
-  const stmts = splitTopLevelStatements(normalized);
-  if (stmts.length > 1) {
-    const handlers = stmts.map(s => parseHandler(s, scope));
-    if (handlers.every(h => h !== null)) {
-      return (e: Event) => {
-        batch(() => {
-          for (const h of handlers) h!(e);
-        });
-      };
-    }
+    compiled = compileExpression(cleaned);
+  } catch (err) {
+    if (!isExprError(err)) throw err;
+    reportExprFailure(el, cleaned, err);
     return null;
   }
-
-  const single = stmts[0] ?? normalized;
-
-  // count++ or count--
-  const incrMatch = single.match(RE_POST_INCR);
-  if (incrMatch) {
-    const name = incrMatch[1]!;
-    const op = incrMatch[2]!;
-    return () => {
-      batch(() => {
-        const val = scope.getters[name]?.() as number ?? 0;
-        scope.setters[name]?.(op === '++' ? val + 1 : val - 1);
-      });
-    };
-  }
-
-  // ++count or --count
-  const preIncrMatch = single.match(RE_PRE_INCR);
-  if (preIncrMatch) {
-    const op = preIncrMatch[1]!;
-    const name = preIncrMatch[2]!;
-    return () => {
-      batch(() => {
-        const val = scope.getters[name]?.() as number ?? 0;
-        scope.setters[name]?.(op === '++' ? val + 1 : val - 1);
-      });
-    };
-  }
-
-  // prop = !prop (toggle)
-  const toggleMatch = single.match(RE_TOGGLE);
-  if (toggleMatch && toggleMatch[1] === toggleMatch[2]) {
-    const name = toggleMatch[1]!;
-    return () => {
-      batch(() => {
-        scope.setters[name]?.(!scope.getters[name]?.());
-      });
-    };
-  }
-
-  // prop = expr (simple assignment)
-  const assignMatch = single.match(RE_ASSIGN);
-  if (assignMatch) {
-    const name = assignMatch[1]!;
-    const valExpr = parseExpression(assignMatch[2]!.trim(), scope);
-    if (valExpr) {
-      if (_debug) dbg(`parseHandler: assignment "${name} = ..." — setter exists:`, !!scope.setters[name], ', getter exists:', !!scope.getters[name]);
-      return () => {
-        batch(() => {
-          const val = valExpr();
-          if (_debug) dbg(`SETTER: ${name} = ${val} (was: ${scope.getters[name]?.()})`);
-          scope.setters[name]?.(val);
-        });
-      };
-    }
-  }
-
-  // prop += value, prop -= value, prop *= value, prop /= value
-  const compoundMatch = single.match(RE_COMPOUND);
-  if (compoundMatch) {
-    const name = compoundMatch[1]!;
-    const op = compoundMatch[2]!;
-    const valExpr = parseExpression(compoundMatch[3]!.trim(), scope);
-    if (valExpr) {
-      return () => {
-        batch(() => {
-          const current = scope.getters[name]?.() as number ?? 0;
-          const val = valExpr() as number;
-          switch (op) {
-            case '+=': scope.setters[name]?.(current + val); break;
-            case '-=': scope.setters[name]?.(current - val); break;
-            case '*=': scope.setters[name]?.(current * val); break;
-            case '/=': scope.setters[name]?.(current / val); break;
-          }
-        });
-      };
-    }
-  }
-
-  // $refetch('id') — imperative data-fetch trigger (CSP-safe)
-  const refetchMatch = single.match(RE_REFETCH_CALL);
-  if (refetchMatch) {
-    const fetchId = refetchMatch[1]!;
-    return () => $refetch(fetchId);
-  }
-
-  return null;
+  const run = () => evaluateExpression(compiled, scope);
+  cache.set(cleaned, run);
+  return run;
 }
 
-function buildHandler(expr: string, scope: Scope): HandlerBuildResult {
-  // Strip balanced outer braces (e.g., `{count++}` → `count++`) but NOT
-  // unbalanced ones like `if (x) { a = b }` where the `}` is a code-block close.
-  let cleaned = expr.trim();
-  if (cleaned.startsWith('{')) {
-    const seg = readBalancedSegment(cleaned, 0, '{', '}');
-    if (seg && seg.end === cleaned.length - 1) {
-      cleaned = seg.inner.trim();
-    }
-  }
+// ── Handler compiler ──
+
+/**
+ * Compile a `data-on:*` handler body: `;`-separated statements over the same
+ * grammar, plus assignment, `++`/`--`, `if`/`else` and bare method calls.
+ *
+ * `$event` / `event` are not scope state — they exist only for the duration of
+ * one dispatch — so they are bound through a child scope whose two locals are
+ * refreshed on every invocation and restored afterwards. That keeps a
+ * re-entrant dispatch correct and stops a compiled handler retaining the Event.
+ * Verified by: src/__tests__/runtime-csp-default.test.ts > "does not leak the Event between dispatches"
+ */
+function buildHandler(expr: string, scope: Scope, el: Element | null): HandlerBuildResult {
+  const cleaned = stripBraces(expr);
   const cache = getScopeCache(scopeHandlerCache, scope);
   const cached = cache.get(cleaned);
   if (cached) return cached;
 
-  // Try CSP-safe parsing first
-  const cspFn = parseHandler(cleaned, scope);
-  if (cspFn) {
-    const result: HandlerBuildResult = { handler: cspFn, supported: true };
-    cache.set(cleaned, result);
-    return result;
-  }
-
-  // Fallback to Function constructor (for complex expressions)
-  // __EVAL_CAPABLE__ gate ensures hardened build eliminates this entire block.
-  if (!__EVAL_CAPABLE__ || !_allowUnsafeEval) {
-    dbg('buildHandler: blocked unsafe eval fallback for expression:', cleaned);
-    reportDiagnostic('handler-unsupported', cleaned, cspExpressionHint(cleaned));
-    const result: HandlerBuildResult = {
-      handler: () => {},
-      supported: false,
-    };
-    cache.set(cleaned, result);
-    return result;
-  }
-
-  // Apply UNSAFE_METHOD_NAMES blocklist before new Function — prevents
-  // prototype-pollution and eval injection via the unsafe eval path.
-  const blockedMethod = findBlockedMethod(cleaned);
-  if (blockedMethod) {
-    const msg = `Blocked unsafe method "${blockedMethod}" in handler`;
-    reportDiagnostic('handler-unsupported', cleaned, msg);
-    throw new Error(`[FormaJS] ${msg}: ${cleaned}`);
-  }
-
+  let program;
   try {
-    // Accept both `$event` and bare `event` — Claude sometimes generates either.
-    const fn = new Function('__scope', '$event', 'event', `with(__scope) { ${cleaned} }`);
-    // Cache proxy — scope.getters/setters are mutable objects, so the proxy
-    // always reflects current state without needing to be recreated.
-    const proxy = new Proxy(Object.create(null) as Record<string, unknown>, {
-      has(_, key: string) {
-        // Do NOT intercept '$event' or 'event' — let them fall through to
-        // function parameters so $event.key, event.stopPropagation(), etc. work.
-        if (key === '$event' || key === 'event') return false;
-        return key in scope.getters || key in scope.setters;
-      },
-      get(_, key: string) {
-        // Defense-in-depth: block dangerous property access
-        if (UNSAFE_METHOD_NAMES.has(key)) return undefined;
-        const g = scope.getters[key];
-        return g ? g() : undefined;
-      },
-      set(_, key: string, value: unknown) {
-        const s = scope.setters[key];
-        if (s) s(value);
-        return true;
-      },
-    });
-    const unsafeHandler = (e: Event) => {
-      batch(() => fn(proxy, e, e));
-    };
-    const result: HandlerBuildResult = {
-      handler: unsafeHandler,
-      supported: true,
-    };
-    cache.set(cleaned, result);
-    return result;
-  } catch {
-    reportDiagnostic('handler-unsupported', cleaned, 'Expression too complex for CSP-safe mode. Enable unsafe-eval via FormaRuntime.unsafeEval = true, or use the standard (non-hardened) build.');
-    const result: HandlerBuildResult = {
-      handler: () => {},
-      supported: false,
-    };
-    cache.set(cleaned, result);
-    return result;
+    program = compileHandler(cleaned);
+  } catch (err) {
+    if (!isExprError(err)) throw err;
+    reportHandlerFailure(el, cleaned, err);
+    const failed: HandlerBuildResult = { handler: () => {}, supported: false };
+    cache.set(cleaned, failed);
+    return failed;
   }
+
+  const eventLocals: Record<string, unknown> = { $event: undefined, event: undefined };
+  const eventScope = createChildScope(scope, eventLocals);
+
+  const handler = (e: Event) => {
+    const outer = eventLocals.$event;
+    const wrapped = hostObject('event', e, '$event');
+    eventLocals.$event = wrapped;
+    eventLocals.event = wrapped;
+    try {
+      batch(() => runHandler(program, eventScope));
+    } catch (err) {
+      if (!isExprError(err)) throw err;
+      reportHandlerFailure((e.currentTarget as Element | null) ?? el, cleaned, err);
+    } finally {
+      eventLocals.$event = outer;
+      eventLocals.event = outer;
+    }
+  };
+
+  const result: HandlerBuildResult = { handler, supported: true };
+  cache.set(cleaned, result);
+  return result;
 }
 
 // ── State initialization ──
 
 const FORBIDDEN_STATE_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
 
+/**
+ * Parse a `data-forma-state` attribute into the plain object a scope is built
+ * from. Anything else — invalid JSON, but equally the *valid* JSON values
+ * `null`, `7`, `"str"` and `[1,2]` — yields `{}`.
+ *
+ * Rejecting the valid-but-wrong-shape values is not tidiness. `initScope` feeds
+ * the result to `Object.entries`, and the pollution sweep below uses `in`,
+ * which throws a TypeError on a primitive: `data-forma-state='null'` on ONE
+ * element used to throw out of parseState, out of `mount()`, and leave every
+ * other scope on the page unbound.
+ *
+ * Verified by: src/__tests__/runtime-state-parsing.test.ts > "a JSON scalar in data-forma-state does not stop the rest of the page from binding"
+ * Verified by: src/__tests__/runtime-state-parsing.test.ts > "treats every non-object JSON value as empty state"
+ */
 function parseState(raw: string): Record<string, unknown> {
-  let parsed: Record<string, unknown>;
+  let parsed: unknown;
   try {
     parsed = JSON.parse(raw);
   } catch {
@@ -2283,11 +1297,21 @@ function parseState(raw: string): Record<string, unknown> {
     }
     return {};
   }
-  // Strip prototype-pollution keys
-  for (const key of FORBIDDEN_STATE_KEYS) {
-    if (key in parsed) delete parsed[key];
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    if (_debug) {
+      dbg('parseState: data-forma-state must be a JSON object. Got:', raw.slice(0, 200));
+    }
+    return {};
   }
-  return parsed;
+  const state = parsed as Record<string, unknown>;
+  // Strip prototype-pollution keys. JSON.parse materializes `"__proto__"` as a
+  // real own property, so this delete is not a no-op the way it would be for an
+  // object literal.
+  // Verified by: src/__tests__/runtime-state-parsing.test.ts > "a __proto__ key in data-forma-state never reaches Object.prototype"
+  for (const key of FORBIDDEN_STATE_KEYS) {
+    if (Object.hasOwn(state, key)) delete state[key];
+  }
+  return state;
 }
 
 // ── DOM scanner ──
@@ -2302,8 +1326,16 @@ function initScope(stateEl: Element): Scope {
       dbg('initScope: WARNING — empty state! Raw attribute:', raw.slice(0, 200));
     }
   }
-  const getters: Record<string, Getter> = {};
-  const setters: Record<string, Setter> = {};
+  // Null-prototype, so an expression naming a member of Object.prototype does
+  // not resolve to one. With a `{}` literal here, `data-text="{constructor}"`
+  // read `Object` off the prototype chain and the parser's `getters[expr]?.()`
+  // CALLED it — the same reach applied to `toString`, `valueOf` and
+  // `hasOwnProperty`. That is the sandbox escape the FORBIDDEN_STATE_KEYS sweep
+  // in parseState only looked like it closed: it strips the keys from the
+  // parsed state, but inheritance put them back on the scope.
+  // Verified by: src/__tests__/runtime-state-parsing.test.ts > "an expression naming an Object.prototype member reads undefined, not the prototype"
+  const getters: Record<string, Getter> = Object.create(null);
+  const setters: Record<string, Setter> = Object.create(null);
 
   for (const [key, initial] of Object.entries(state)) {
     const [get, set] = createSignal(initial);
@@ -2311,71 +1343,66 @@ function initScope(stateEl: Element): Scope {
     setters[key] = set as Setter;
   }
 
-  // Inject $refetch as a callable getter so handlers can use $refetch('id')
-  getters['$refetch'] = () => $refetch;
+  // $refetch is a captured callable, not a bare function in scope.
+  const refetchHost = hostFn('$refetch', (id: unknown) => $refetch(String(id)), 1);
+  getters['$refetch'] = () => refetchHost;
 
   return { getters, setters };
 }
 
-// ── Safe $el proxy ──
-// Allowlist of properties exposed on the $el magic.  Everything else
-// (ownerDocument, parentNode, innerHTML, …) returns undefined so that
-// attacker-authored expressions cannot escape to window/document.
-
-const SAFE_EL_PROPS = new Set([
-  // Identity & attributes
-  'id', 'className', 'tagName', 'nodeName',
-  'getAttribute', 'setAttribute', 'removeAttribute', 'hasAttribute', 'toggleAttribute',
-  'dataset', 'classList',
-  // Content
-  'textContent', 'innerText',
-  // Form elements
-  'value', 'checked', 'disabled', 'selected', 'type', 'name', 'placeholder',
-  'readOnly', 'required', 'min', 'max', 'step', 'pattern',
-  // Dimensions & position
-  'getBoundingClientRect', 'offsetWidth', 'offsetHeight',
-  'offsetTop', 'offsetLeft', 'clientWidth', 'clientHeight',
-  'scrollWidth', 'scrollHeight', 'scrollTop', 'scrollLeft',
-  // Style
-  'style', 'hidden',
-  // Focus & interaction
-  'focus', 'blur', 'click', 'scrollIntoView', 'scrollTo',
-  // Traversal (safe — returns elements, not window/document)
-  'closest', 'matches', 'querySelector', 'querySelectorAll',
-  'children', 'childElementCount', 'firstElementChild', 'lastElementChild',
-  'nextElementSibling', 'previousElementSibling',
-]);
-
-function createSafeElProxy(el: Element): Element {
-  return new Proxy(el, {
-    get(target, prop) {
-      if (typeof prop === 'symbol') return Reflect.get(target, prop);
-      if (!SAFE_EL_PROPS.has(prop)) return undefined;
-      const val = Reflect.get(target, prop);
-      return typeof val === 'function' ? val.bind(target) : val;
-    },
-    set(target, prop, value) {
-      if (typeof prop === 'symbol') return false;
-      if (!SAFE_EL_PROPS.has(prop)) return false;
-      return Reflect.set(target, prop, value);
-    },
-  });
-}
+// ── Element binding ──
 
 function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void {
-  // Inject per-element magics: $el and $dispatch
-  // Each element gets its own child scope so $el resolves to the correct element.
+  // Per-element magics. Both are HOST values (src/expr/host.ts): the element is
+  // reachable only through the element property allowlist, and $dispatch is a
+  // captured callable rather than a function sitting in scope — a function held
+  // in state is never invocable, so only magics like this one can be called.
   const elMagics: Record<string, unknown> = {
-    $el: createSafeElProxy(el),
-    $dispatch: (name: string, detail?: unknown) => {
-      el.dispatchEvent(new CustomEvent(name, {
+    $el: hostObject('element', el, '$el'),
+    $dispatch: hostFn('$dispatch', (name: unknown, detail?: unknown) => {
+      el.dispatchEvent(new CustomEvent(String(name), {
         bubbles: true,
         composed: true, // crosses Shadow DOM boundaries (important for <forma-stage>)
         detail,
       }));
-    },
+    }, 2),
   };
   scope = createChildScope(scope, elMagics);
+
+  // A marker left by an EARLIER bind of this element (reconcile re-binds in
+  // place) is cleared here, up front, and never again. It used to be cleared in
+  // a trailer at the end of bindElement, guarded by a flag that only knew about
+  // COMPILE failures — so a denial raised while EVALUATING, which marks the
+  // element from inside the effect that bindElement is still setting up, was
+  // reported to the console and to getDiagnostics() and then had its marker
+  // wiped off the element on the way out. `{items.push(4)}`, `{items[key]}`
+  // with a hostile key, `{$el.ownerDocument}` and every budget denial were
+  // silent in the DOM. Clearing before, and only setting after, makes the
+  // marker mean "this element has an expression that did not run", whenever
+  // that was discovered.
+  // Verified by: src/__tests__/failure-semantics.test.ts > "a denial while evaluating marks the element, not just the console"
+  if (el.hasAttribute('data-forma-expr-error')) el.removeAttribute('data-forma-expr-error');
+  if (el.hasAttribute('data-forma-handler-error')) el.removeAttribute('data-forma-handler-error');
+
+  // Every directive on this element goes through `evaluator()`. An expression
+  // that cannot compile, or that is denied while evaluating, reports once and
+  // yields EXPR_FAILED — which each directive treats as "do not write", so the
+  // DOM keeps whatever it had instead of being handed the string "undefined".
+  // Verified by: src/__tests__/runtime-csp-default.test.ts > "marks the element with data-forma-expr-error when an expression cannot be compiled"
+  // Verified by: src/__tests__/failure-semantics.test.ts > "a denied expression leaves the previous text in place and never renders undefined"
+  const evaluator = (expression: string): (() => unknown) => {
+    const fn = buildEvaluator(expression, scope, el);
+    if (!fn) return () => EXPR_FAILED;
+    return () => {
+      try {
+        return fn();
+      } catch (err) {
+        if (!isExprError(err)) throw err;
+        reportExprFailure(el, stripBraces(expression), err);
+        return EXPR_FAILED;
+      }
+    };
+  };
 
   // When the server provides a directive map, we know exactly which directives
   // this element has. Skip getAttribute calls for directives it doesn't have.
@@ -2400,9 +1427,29 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         // to prevent self-referential cycle (computed reading itself)
         const prevGetter = scope.getters[name];
         delete scope.getters[name];
-        const evaluate = buildEvaluator(`{${expr}}`, scope);
-        const getter = createComputed(evaluate);
-        scope.getters[name] = getter;
+        // The raw evaluator is used here, not the reporting one: a computed
+        // that cannot evaluate must make its READERS fail loudly (each with its
+        // own element and diagnostic) rather than caching a sentinel that would
+        // then be rendered as text.
+        // `buildEvaluator` has already reported the failure and marked the
+        // element, so there is nothing to do here but leave the name unbound —
+        // which makes every reader of it fail loudly with its own diagnostic.
+        const evaluate = buildEvaluator(`{${expr}}`, scope, el);
+        if (evaluate) {
+          const cell = createComputed((): { ok: true; v: unknown } | { ok: false; e: FormaExprError } => {
+            try {
+              return { ok: true, v: evaluate() };
+            } catch (err) {
+              if (!isExprError(err)) throw err;
+              return { ok: false, e: err };
+            }
+          });
+          scope.getters[name] = () => {
+            const r = cell();
+            if (!r.ok) throw r.e;
+            return r.v;
+          };
+        }
         // Keep the original setter so manual overrides still work
         if (!prevGetter) {
           // If there was no initial state entry, remove the setter too
@@ -2415,9 +1462,11 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-text="{expr}"
   const textExpr = (!known || known.has('data-text')) ? el.getAttribute('data-text') : null;
   if (textExpr) {
-    const evaluate = buildEvaluator(textExpr, scope);
+    const evaluate = evaluator(textExpr);
     const dispose = internalEffect(() => {
-      setElementTextFast(el, toTextValue(evaluate()));
+      const value = evaluate();
+      if (value === EXPR_FAILED) return;
+      setElementTextFast(el, toTextValue(value));
     });
     disposers.push(dispose);
   }
@@ -2425,7 +1474,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-show="{expr}"
   const showExpr = (!known || known.has('data-show')) ? el.getAttribute('data-show') : null;
   if (showExpr) {
-    const evaluate = buildEvaluator(showExpr, scope);
+    const evaluate = evaluator(showExpr);
     const transition = parseTransitionSpec(el);
     if (_debug) {
       const tag = el.tagName.toLowerCase();
@@ -2434,7 +1483,9 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
     }
     let initialized = false;
     const dispose = internalEffect(() => {
-      const visible = !!evaluate();
+      const value = evaluate();
+      if (value === EXPR_FAILED) return;
+      const visible = !!value;
       if (_debug) dbg(`data-show effect: "${showExpr}" → ${visible}`);
       applyShowVisibility(el as HTMLElement, visible, transition, !initialized);
       initialized = true;
@@ -2448,7 +1499,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-if="{expr}" — conditional DOM insertion/removal with optional transitions
   const ifExpr = (!known || known.has('data-if')) ? el.getAttribute('data-if') : null;
   if (ifExpr) {
-    const evaluate = buildEvaluator(ifExpr, scope);
+    const evaluate = evaluator(ifExpr);
     const transition = parseTransitionSpec(el);
     const placeholder = document.createComment('forma-if');
     const parent = el.parentNode;
@@ -2456,7 +1507,9 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
     let initialized = false;
 
     const dispose = internalEffect(() => {
-      const show = !!evaluate();
+      const value = evaluate();
+      if (value === EXPR_FAILED) return;
+      const show = !!value;
 
       if (show && !inserted) {
         // Cancel any in-flight leave
@@ -2502,14 +1555,16 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       // and set the last key on the resolved parent object to write. Reactive
       // when the parent is a store proxy; a plain object still round-trips the
       // input value.
-      getter = buildEvaluator(prop, scope);
+      getter = evaluator(prop);
       const lastDot = prop.lastIndexOf('.');
       const basePath = prop.slice(0, lastDot);
       const key = prop.slice(lastDot + 1);
-      const baseGet = buildEvaluator(basePath, scope);
+      const baseGet = evaluator(basePath);
       setter = (v: unknown) => {
         const base = baseGet();
-        if (base != null && typeof base === 'object') (base as Record<string, unknown>)[key] = v;
+        if (base !== EXPR_FAILED && base != null && typeof base === 'object') {
+          (base as Record<string, unknown>)[key] = v;
+        }
       };
     }
     if (getter && setter) {
@@ -2517,6 +1572,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       const tag = input.tagName;
       const dispose = internalEffect(() => {
         const val = getter();
+        if (val === EXPR_FAILED) return;
         const type = input.type;
         if (type === 'checkbox') {
           input.checked = !!val;
@@ -2576,7 +1632,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
 
     if (name.startsWith('data-on:')) {
       const event = name.slice(8); // 'data-on:'.length === 8
-      const built = buildHandler(attr.value, scope);
+      const built = buildHandler(attr.value, scope, el);
       const handler = built.handler;
       if (_debug) {
         const tag = el.tagName.toLowerCase();
@@ -2584,10 +1640,12 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         const cls = el.className ? `.${String(el.className).split(' ')[0]}` : '';
         dbg(`bindElement: data-on:${event}="${attr.value}" on <${tag}${id}${cls}>`);
       }
+      // Set only. A stale marker was cleared at the top of bindElement, so an
+      // element carrying two handlers cannot have the second one erase the
+      // first one's failure.
+      // Verified by: src/__tests__/failure-semantics.test.ts > "a second, working handler does not erase the first one's failure marker"
       if (!built.supported) {
         el.setAttribute('data-forma-handler-error', 'unsupported');
-      } else if (el.hasAttribute('data-forma-handler-error')) {
-        el.removeAttribute('data-forma-handler-error');
       }
       if (_debug) {
         const attrVal = attr.value;
@@ -2603,28 +1661,39 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       }
     } else if (name.startsWith('data-class:')) {
       const cls = name.slice(11); // 'data-class:'.length === 11
-      const evaluate = buildEvaluator(attr.value, scope);
+      const evaluate = evaluator(attr.value);
       const dispose = internalEffect(() => {
-        el.classList.toggle(cls, !!evaluate());
+        const value = evaluate();
+        if (value === EXPR_FAILED) return;
+        el.classList.toggle(cls, !!value);
       });
       disposers.push(dispose);
     } else if (name.startsWith('data-bind:')) {
       const attrName = name.slice(10); // 'data-bind:'.length === 10
-      const evaluate = buildEvaluator(attr.value, scope);
+      const evaluate = evaluator(attr.value);
       const dispose = internalEffect(() => {
         const val = evaluate();
+        if (val === EXPR_FAILED) return;
         if (val == null || val === false) {
           el.removeAttribute(attrName);
+          return;
+        }
+        // `true` writes a BARE attribute, matching h(), hydration adoption, the
+        // SSR renderer and the Rust walker. Writing String(true) here produced
+        // `disabled="true"` where every other path produced `disabled`, so an
+        // SSR page and its bound self disagreed byte-for-byte.
+        // Verified by: src/__tests__/renderer-contract.test.ts > "true renders a bare attribute — present with an empty value"
+        const str = val === true ? '' : String(val);
+        // The safety check runs for EVERY accepted value, including the bare
+        // one: an `on*` name must not be written even with an empty value, and
+        // splitting the true-case out above the guard is exactly how it would
+        // be. Applies to standard and hardened builds alike.
+        // Verified by: src/__tests__/runtime-bind-security.test.ts > "does not set an inline event-handler attribute via data-bind:onclick"
+        // Verified by: src/__tests__/renderer-contract.test.ts > "refuses an on* name whatever the value type: %j"
+        if (isUnsafeAttrBinding(attrName, str, el.tagName.toLowerCase())) {
+          el.removeAttribute(attrName);
         } else {
-          const str = String(val);
-          // Drop event-handler and dangerous-URL bindings — a bound value from
-          // state/data-fetch must not be able to inject javascript: URLs or
-          // inline handlers. Applies to standard and hardened builds alike.
-          if (isUnsafeAttrBinding(attrName, str)) {
-            el.removeAttribute(attrName);
-          } else {
-            el.setAttribute(attrName, str);
-          }
+          el.setAttribute(attrName, str);
         }
       });
       disposers.push(dispose);
@@ -2653,7 +1722,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-list="{expr}" — keyed reconciliation with LIS
   const listExpr = (!known || known.has('data-list')) ? el.getAttribute('data-list') : null;
   if (listExpr) {
-    const evaluate = buildEvaluator(listExpr, scope);
+    const evaluate = evaluator(listExpr);
     const templateEl = el.children[0] as Element | undefined;
     if (templateEl) {
       const template = templateEl.cloneNode(true) as Element;
@@ -2749,6 +1818,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
 
       const dispose = internalEffect(() => {
         const rawItems = evaluate();
+        if (rawItems === EXPR_FAILED) return;
         if (!Array.isArray(rawItems)) {
           // Remove all — dispose bindings first
           for (const n of oldNodes) {
@@ -2879,26 +1949,21 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       }
     }
   }
+
 }
 
 // ── Scope mounting / unmounting (single data-forma-state element) ──
 
 /**
- * Mount a single `data-forma-state` element — creates signals, binds
- * all descendants, stores disposers on the element for cleanup.
- * Idempotent: skips elements that are already mounted.
+ * Fast check: does this element have any Forma directive attribute?
+ *
+ * This is the fallback scan, used when the server sent no directive map. It
+ * replaced a `DIRECTIVE_SELECTOR` constant that claimed to "avoid scanning
+ * every descendant" while being referenced by nothing: mountScope has always
+ * called querySelectorAll('*') and filtered with this predicate. The targeted
+ * selector the claim described is the one buildDirectiveSelector() constructs
+ * from the server's map.
  */
-/** CSS selector matching elements with at least one Forma directive.
- *  Avoids scanning every descendant — only visits directive-bearing elements. */
-const DIRECTIVE_SELECTOR = [
-  '[data-text]', '[data-show]', '[data-if]', '[data-model]',
-  '[data-computed]', '[data-persist]', '[data-list]', '[data-fetch]',
-  '[data-bind\\:*]', '[data-class\\:*]', '[data-on\\:*]',
-  // Catch-all for colon-prefixed data attrs that the escaped selectors miss in some engines
-  '[data-transition]',
-].join(',');
-
-/** Fast check: does this element have any Forma directive attribute? */
 function hasDirective(el: Element): boolean {
   const attrs = el.attributes;
   for (let i = 0; i < attrs.length; i++) {
@@ -3002,14 +2067,12 @@ function mountScope(root: Element): void {
   const rootRefName = root.getAttribute('data-ref');
   if (rootRefName) refsMap.set(rootRefName, root);
 
-  scope.getters['$refs'] = () => new Proxy({} as Record<string, Element>, {
-    get(_, name: string) {
-      return refsMap.get(name) ?? undefined;
-    },
-    has(_, name: string) {
-      return refsMap.has(name);
-    },
-  });
+  // $refs hands back ELEMENT HOSTS, not raw elements. Before this, a `data-ref`
+  // element came out unwrapped and `$refs.r.ownerDocument.location.href` read
+  // the real page URL from inside a "CSP-safe" expression, with no diagnostic.
+  // Verified by: src/expr/__tests__/adversarial.test.ts > "$refs.r.ownerDocument.location.href is denied"
+  const refsHost = hostObject('refs', refsMap, '$refs');
+  scope.getters['$refs'] = () => refsHost;
 
   // Bind the root itself
   bindElement(root, scope, disposers);
@@ -3017,25 +2080,28 @@ function mountScope(root: Element): void {
   // Bind only directive-bearing descendants (skip inert elements).
   // When the server provides a directive map, we build a targeted CSS selector
   // that queries only elements with known directives — no querySelectorAll('*').
+  //
+  // Both queries take a SNAPSHOT, and binding an earlier element can detach a
+  // later one: `data-list` lifts its first child out as the row template with
+  // `removeChild`, so that node is still in the snapshot and no longer in the
+  // tree. Binding it evaluated the row's expressions against the PARENT scope,
+  // where `item` does not exist — silently undefined under the old parser, and
+  // a bogus "item is not declared" diagnostic under this one. A detached node
+  // has no parent, which is the O(1) test for "an earlier bind removed this".
+  // Verified by: src/__tests__/failure-semantics.test.ts > "a data-list row template is not bound against the parent scope"
   let boundCount = 0;
   const selector = buildDirectiveSelector();
-  if (selector) {
-    // Fast path: query only elements the server told us have directives
-    const targets = root.querySelectorAll(selector);
-    for (let i = 0; i < targets.length; i++) {
-      bindElement(targets[i]!, scope, disposers);
-      boundCount++;
-    }
-  } else {
-    // Fallback: scan all descendants and check attributes
-    const descendants = root.querySelectorAll('*');
-    for (let i = 0; i < descendants.length; i++) {
-      const el = descendants[i]!;
-      if (hasDirective(el)) {
-        bindElement(el, scope, disposers);
-        boundCount++;
-      }
-    }
+  // Without a server-supplied map the query is `*`, so every element on the
+  // page is visited and the attribute scan is the filter. Hoisted out of the
+  // loop because that is the hot path.
+  const scanAll = selector === null;
+  const targets = scanAll ? root.querySelectorAll('*') : root.querySelectorAll(selector);
+  for (let i = 0; i < targets.length; i++) {
+    const el = targets[i]!;
+    if (el.parentNode === null) continue;
+    if (scanAll && !hasDirective(el)) continue;
+    bindElement(el, scope, disposers);
+    boundCount++;
   }
 
   // Store disposers on the root element for cleanup
@@ -3189,13 +2255,22 @@ function initRuntime(): void {
   if (_debug) dbg('initRuntime: MutationObserver started');
 }
 
-/** Dispose all FormaJS scopes — clears effects, intervals, event listeners, and stops the observer. */
+/**
+ * Dispose all FormaJS scopes — clears effects, intervals, event listeners, and
+ * stops the observer.
+ *
+ * The per-scope closure caches are WeakMaps keyed by the scope, so they go with
+ * the scopes. The module-level compiled-AST cache in src/expr is keyed by source
+ * TEXT and shared across scopes, so it has to be dropped explicitly or a torn
+ * down page keeps up to 2,048 parsed programs alive.
+ */
 function destroyRuntime(): void {
   stopObserver();
   const stateRoots = document.querySelectorAll('[data-forma-state]');
   for (const root of Array.from(stateRoots)) {
     unmountScope(root);
   }
+  clearExpressionCache();
 }
 
 /**
@@ -3244,34 +2319,6 @@ if (typeof document !== 'undefined') {
 
 /** Enable/disable debug logging. Also toggleable via window.__FORMA_DEBUG = true */
 function setDebug(on: boolean): void { _debug = on; }
-/** Set unsafe-eval mode. `locked-off` is hardened and non-toggleable via setUnsafeEval. */
-function setUnsafeEvalMode(mode: UnsafeEvalMode): void {
-  if (_unsafeEvalMode === mode) return;
-  _unsafeEvalMode = mode;
-  if (mode === 'locked-off') _allowUnsafeEval = false;
-  if (mode === 'locked-on') _allowUnsafeEval = true;
-  if (mode === 'mutable') _allowUnsafeEval = true;
-  // Rebuild caches whenever policy changes.
-  scopeExpressionCache = new WeakMap<Scope, Map<string, () => unknown>>();
-  scopeHandlerCache = new WeakMap<Scope, Map<string, HandlerBuildResult>>();
-}
-/** Enable/disable unsafe `new Function` fallback for complex expressions. */
-function setUnsafeEval(on: boolean): void {
-  if (_unsafeEvalMode !== 'mutable') {
-    dbg(
-      `setUnsafeEval ignored (mode=${_unsafeEvalMode}); unsafe fallback is locked`,
-    );
-    return;
-  }
-  if (_allowUnsafeEval === on) return;
-  _allowUnsafeEval = on;
-  // Rebuild handlers/evaluators after mode change so cached blocked results
-  // don't persist when toggling trusted mode at runtime.
-  scopeExpressionCache = new WeakMap<Scope, Map<string, () => unknown>>();
-  scopeHandlerCache = new WeakMap<Scope, Map<string, HandlerBuildResult>>();
-}
-/** Get current unsafe-eval policy mode. */
-function getUnsafeEvalMode(): UnsafeEvalMode { return _unsafeEvalMode; }
 /** Enable/disable runtime diagnostics for unsupported expressions/handlers. */
 function setDiagnostics(on: boolean): void { _diagnosticsEnabled = on; }
 
@@ -3395,9 +2442,6 @@ export {
   unmount,
   reconcile,
   setDebug,
-  setUnsafeEvalMode,
-  getUnsafeEvalMode,
-  setUnsafeEval,
   yieldToMain,
   applyContainmentHints,
   setDirectiveMap,

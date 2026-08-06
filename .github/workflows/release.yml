@@ -7,6 +7,9 @@ on:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Required reviewers / deployment secrets are configured on this
+    # environment, so a tag push cannot publish unattended.
+    environment: npm-publish
     env:
       # Cross-repo dispatch PAT (optional). Surfaced as env so the notify step
       # can skip cleanly when it isn't configured, rather than erroring.
@@ -25,24 +28,16 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test
-      - run: npm run build
 
-      - name: Check bundle size
-        run: |
-          MAX_INDEX=12000     # main entry, ~7.6KB today
-          MAX_RUNTIME=28000   # CDN runtime bundle, ~24KB today
-          INDEX_SIZE=$(gzip -c dist/index.js | wc -c)
-          RUNTIME_SIZE=$(gzip -c dist/formajs-runtime.global.js | wc -c)
-          echo "dist/index.js: ${INDEX_SIZE} bytes gzipped (limit ${MAX_INDEX})"
-          echo "dist/formajs-runtime.global.js: ${RUNTIME_SIZE} bytes gzipped (limit ${MAX_RUNTIME})"
-          if [ "$INDEX_SIZE" -gt "$MAX_INDEX" ]; then
-            echo "::error::index.js ${INDEX_SIZE} exceeds limit ${MAX_INDEX} bytes"
-            exit 1
-          fi
-          if [ "$RUNTIME_SIZE" -gt "$MAX_RUNTIME" ]; then
-            echo "::error::runtime bundle ${RUNTIME_SIZE} exceeds limit ${MAX_RUNTIME} bytes"
-            exit 1
-          fi
+      # The e2e suite is the only thing that exercises the built artifacts in a
+      # real browser. The CI badge implies it gates the code, so release must
+      # run it too — a hydration regression it catches must not ship.
+      - run: npx playwright install --with-deps chromium
+      - run: npm run test:e2e   # builds, then drives dist/formajs-runtime.global.js
+
+      - run: npm run build
+      - run: npm run check:size
+      - run: npm run check:pack
 
       - name: Verify version matches tag
         run: |
@@ -56,7 +51,11 @@ jobs:
       # Trusted publishing: uses OIDC for auth, no npm token needed.
       # Provenance is generated automatically.
       # Configure at: npmjs.com/package/@getforma/core → Settings → Trusted Publisher
-      - run: npm publish --access public
+      #
+      # --ignore-scripts skips prepublishOnly, which would otherwise rebuild
+      # dist AFTER the gates above measured it. The bytes that get published are
+      # then exactly the bytes check:size and check:pack inspected.
+      - run: npm publish --access public --ignore-scripts
 
       - name: Notify create-forma-app to update dependency
         # Skip silently when no dispatch PAT is configured (OIDC covers npm

@@ -103,18 +103,47 @@ function runCleanups(bag: (() => void)[] | undefined): void {
 /**
  * @internal — Lightweight effect for Forma's internal DOM bindings.
  *
- * Bypasses createEffect's cleanup infrastructure (pool, collector, error
- * reporting, engine compression) since internal effects never use
- * onCleanup() or return cleanup functions.  This saves ~4 function calls
- * per effect creation and per re-run.
+ * Bypasses createEffect's cleanup infrastructure (pool, collector, engine
+ * compression) since internal effects never use onCleanup() or return cleanup
+ * functions.  This saves ~4 function calls per effect creation and per re-run.
  *
  * ONLY use for effects that:
  * 1. Never call onCleanup()
  * 2. Never return a cleanup function
  * 3. Contain simple "read signal → write DOM" logic
+ *
+ * Error handling is split by run:
+ * - The FIRST run is synchronous inside the caller (h(), adoption, mount), so a
+ *   throw propagates to that caller. Island activation wraps that call in
+ *   try/catch, so a component whose binding throws while being built is marked
+ *   `status="error"` with its SSR content intact, instead of half-built.
+ * - Every LATER run happens inside alien-signals' flush, which is driven by a
+ *   signal write that may come from completely unrelated code. A throw there
+ *   aborts the flush: the remaining queued bindings are skipped and the
+ *   exception surfaces at the setter's call site, so one broken binding would
+ *   silently freeze every other island subscribed to that signal. Re-run errors
+ *   are therefore caught and routed to reportError()/onError() and the flush
+ *   continues.
+ *
+ * Verified by: src/reactive/__tests__/effect.test.ts > "a binding that throws on re-run does not abort the flush for other bindings"
+ * Verified by: src/reactive/__tests__/effect.test.ts > "a binding that throws on its first run still propagates to the caller"
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "a binding that throws while being built fails only its own island"
+ * Verified by: src/dom/__tests__/hydrate.test.ts > "a binding that throws on a shared-signal update does not freeze the other island"
  */
 export function internalEffect(fn: () => void): () => void {
-  const dispose = rawEffect(fn);
+  let firstRun = true;
+  const dispose = rawEffect(() => {
+    if (firstRun) {
+      firstRun = false;
+      fn();
+      return;
+    }
+    try {
+      fn();
+    } catch (e) {
+      reportError(e, 'binding');
+    }
+  });
   if (hasActiveRoot()) {
     registerDisposer(dispose);
   }

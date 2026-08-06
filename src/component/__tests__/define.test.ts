@@ -242,6 +242,39 @@ describe('lifecycle error reporting', () => {
     expect(errors[0]!.source).toBe('onMount');
   });
 
+  it('names the component in a lifecycle error report', () => {
+    // ComponentDef.name was documented as a "debug name for devtools
+    // inspection" and read into a local that nothing used — a field a caller
+    // could pass with no effect anywhere. It now identifies the component in
+    // every error this lifecycle reports.
+    const errors: Array<{ source?: string }> = [];
+    onError((_err, info) => { errors.push({ source: info?.source }); });
+
+    const named = defineComponent({
+      name: 'CartWidget',
+      setup: () => {
+        onMount(() => { throw new Error('mount boom'); });
+        onUnmount(() => { throw new Error('unmount boom'); });
+        return document.createElement('div');
+      },
+    });
+    disposeComponent(named());
+
+    expect(errors.map((e) => e.source)).toEqual([
+      'CartWidget: onMount',
+      'CartWidget: onUnmount',
+    ]);
+
+    // An anonymous component still reports the bare phase — no "undefined: ".
+    errors.length = 0;
+    const anonymous = defineComponent(() => {
+      onMount(() => { throw new Error('boom'); });
+      return document.createElement('div');
+    });
+    anonymous();
+    expect(errors.map((e) => e.source)).toEqual(['onMount']);
+  });
+
   it('onUnmount error is reported via onError handler', () => {
     const errors: Array<{ error: unknown; source?: string }> = [];
     onError((err, info) => { errors.push({ error: err, source: info?.source }); });

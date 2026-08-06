@@ -1,0 +1,1827 @@
+{
+  "generatedAt": "2026-08-06T02:32:03.025Z",
+  "node": "v20.16.0",
+  "platform": "win32 x64",
+  "runs": 5,
+  "tree": "fix/ksx-dogfood-findings@686a5dc + uncommitted changes",
+  "entries": [
+    {
+      "file": "bench/element.bench.ts",
+      "group": "attribute-safety guards in isolation",
+      "name": "isEventHandlerAttr on a non-event name (×20000)",
+      "ops": 20000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.23540000000002692,
+      "p95": 0.3673999999999751,
+      "spread": 0.023676280671473995,
+      "runMedians": [
+        0.23540000000002692,
+        0.23490000000003874,
+        0.23230000000000928,
+        0.23699999999996635,
+        0.2377999999999929
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "attribute-safety guards in isolation",
+      "name": "isUrlAttr on a non-URL name (×20000)",
+      "ops": 20000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.24365000000000236,
+      "p95": 0.3130999999999631,
+      "spread": 0.12449071978232036,
+      "runMedians": [
+        0.22090000000002874,
+        0.24614999999994325,
+        0.24839999999994689,
+        0.24365000000000236,
+        0.22350000000000136
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "attribute-safety guards in isolation",
+      "name": "isDangerousUrl on a benign https URL (×20000)",
+      "ops": 20000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 1.0357499999999504,
+      "p95": 1.167599999999993,
+      "spread": 0.03129570049723418,
+      "runMedians": [
+        1.0357499999999504,
+        1.0335000000000036,
+        1.025700000000029,
+        1.0409499999999525,
+        1.057800000000043
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "attribute-safety guards in isolation",
+      "name": "isDangerousUrl on an obfuscated javascript: URL (×20000)",
+      "ops": 20000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 2.233500000000049,
+      "p95": 3.103599999999915,
+      "spread": 0.04790460121305983,
+      "runMedians": [
+        2.234100000000126,
+        2.230750000000171,
+        2.1929000000000087,
+        2.233500000000049,
+        2.297950000000128
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "attribute-safety guards in isolation",
+      "name": "isUnsafeAttrWrite on <a href> with a benign URL (×20000)",
+      "ops": 20000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 1.4036000000000968,
+      "p95": 2.928399999999783,
+      "spread": 0.15604771256120717,
+      "runMedians": [
+        1.392250000000331,
+        1.4254500000001826,
+        1.4036000000000968,
+        1.3748999999997977,
+        1.58945000000017
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): reactive attribute updates",
+      "name": "3 reactive attrs incl. href: signal write → attr writes (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 1.8234499999998661,
+      "p95": 8.270199999999022,
+      "spread": 1.0310053151975005,
+      "runMedians": [
+        2.1401500000010856,
+        1.8234499999998661,
+        1.7496999999993932,
+        3.553649999999834,
+        1.773099999999431
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): reactive attribute updates",
+      "name": "3 reactive attrs, none URL-bearing (control): write (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 1.2919499999989057,
+      "p95": 6.6283000000003085,
+      "spread": 1.673895646607227,
+      "runMedians": [
+        1.2791499999984808,
+        1.3405500000008033,
+        1.2919499999989057,
+        3.3412999999982276,
+        1.249599999999191
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): reactive attribute updates",
+      "name": "href bound to an unchanging URL: write → cache hit (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.013800000000628643,
+      "p95": 0.03470000000015716,
+      "spread": 1.0518518516163065,
+      "runMedians": [
+        0.013900000001740409,
+        0.013800000000628643,
+        0.013500000000931323,
+        0.027699999998731073,
+        0.013500000000931323
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): realistic component subtree",
+      "name": "card subtree: 6 elements, 11 attrs, 1 href, 2 handlers (×200)",
+      "ops": 200,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 12.300049999999828,
+      "p95": 21.72320000000036,
+      "spread": 0.25530984272715695,
+      "runMedians": [
+        12.146049999999377,
+        13.34545000000071,
+        12.300049999999828,
+        13.145650000002206,
+        10.631199999999808
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): static attribute writes",
+      "name": "h('div') with 4 static non-URL attrs (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 2.1908000000003085,
+      "p95": 9.233699999999772,
+      "spread": 1.4764014961994465,
+      "runMedians": [
+        2.1908000000003085,
+        2.1418499999999767,
+        2.0986500000003616,
+        5.197099999999864,
+        3.1542500000000473
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): static attribute writes",
+      "name": "document.createElement + 4 setAttribute, no library (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 2.1086499999996704,
+      "p95": 9.518799999999828,
+      "spread": 1.241517407434701,
+      "runMedians": [
+        2.1086499999996704,
+        2.0835500000002867,
+        2.0350500000004104,
+        4.561600000000908,
+        2.2122999999992317
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): static attribute writes",
+      "name": "h('div') with no props (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.7509000000004562,
+      "p95": 5.51260000000002,
+      "spread": 1.0304964062573876,
+      "runMedians": [
+        0.7476500000002488,
+        0.7443500000008498,
+        0.7509000000004562,
+        1.511399999999412,
+        0.7804999999998472
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): URL-bearing static attribute writes",
+      "name": "h('a') with href + 3 static non-URL attrs (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 2.756550000000061,
+      "p95": 11.168899999996938,
+      "spread": 1.197459051206598,
+      "runMedians": [
+        2.707650000000285,
+        2.756550000000061,
+        2.7198000000007596,
+        5.949950000000172,
+        2.79175000000032
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): URL-bearing static attribute writes",
+      "name": "h('a') with the same 4 attrs, none URL-bearing (control) (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 2.202299999999923,
+      "p95": 9.973599999997532,
+      "spread": 1.4032861371820926,
+      "runMedians": [
+        2.2872499999994034,
+        2.202299999999923,
+        2.1788500000002387,
+        5.236399999999776,
+        2.18329999999969
+      ]
+    },
+    {
+      "file": "bench/element.bench.ts",
+      "group": "h(): URL-bearing static attribute writes",
+      "name": "h('img') with src + srcset + alt (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 2.6405500000000757,
+      "p95": 11.569400000000314,
+      "spread": 0.8446098374551277,
+      "runMedians": [
+        3.5698499999998603,
+        2.6405500000000757,
+        2.627549999999246,
+        4.783349999997881,
+        2.5931500000006054
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression compile",
+      "name": "new Function compile, unique expressions (×200)",
+      "ops": 200,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.08070000000009259,
+      "p95": 0.10259999999993852,
+      "spread": 0.07151979565718523,
+      "runMedians": [
+        0.07949999999999591,
+        0.07830000000001291,
+        0.08070000000009259,
+        0.08159999999998035,
+        0.08389999999997144
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression compile",
+      "name": "CSP parser: mount unique arithmetic expressions (×40)",
+      "ops": 40,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.5918499999999653,
+      "p95": 3.329399999999964,
+      "spread": 0.14077849860978867,
+      "runMedians": [
+        0.5980499999999438,
+        0.5394999999999754,
+        0.5918499999999653,
+        0.5647500000000036,
+        0.615449999999953
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression compile",
+      "name": "CSP parser: mount bare identifiers, plumbing control (×40)",
+      "ops": 40,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.3446999999999889,
+      "p95": 2.7848000000000184,
+      "spread": 0.131196645200045,
+      "runMedians": [
+        0.3339000000000283,
+        0.333849999999984,
+        0.3487999999999829,
+        0.3446999999999889,
+        0.3776500000000169
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression compile",
+      "name": "CSP parser: mount every supported grammar shape (×16)",
+      "ops": 16,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.22225000000003092,
+      "p95": 0.682700000000068,
+      "spread": 0.13993015133829123,
+      "runMedians": [
+        0.21475000000003774,
+        0.24479999999994106,
+        0.23275000000001,
+        0.2178000000000111,
+        0.22225000000003092
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression evaluate: CSP-safe interpreter (shipped)",
+      "name": "8 count-dependent expressions: write → evaluate → text (×20)",
+      "ops": 20,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.04869999999993979,
+      "p95": 0.057999999999992724,
+      "spread": 0.0932017543849343,
+      "runMedians": [
+        0.04869999999993979,
+        0.045600000000035834,
+        0.04984999999999218,
+        0.04849999999987631,
+        0.049299999999902866
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression evaluate: CSP-safe interpreter (shipped)",
+      "name": "8 × bare identifier, plumbing control: write → text (×20)",
+      "ops": 20,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.039300000000139335,
+      "p95": 0.044399999999996,
+      "spread": 0.04404145077782775,
+      "runMedians": [
+        0.039800000000013824,
+        0.039099999999962165,
+        0.038600000000087675,
+        0.04030000000011569,
+        0.039300000000139335
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression evaluate: new Function path (reconstructed)",
+      "name": "8 count-dependent expressions via new Function: write → evaluate → text (×20)",
+      "ops": 20,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.08524999999997362,
+      "p95": 0.18209999999999127,
+      "spread": 0.06658739595667303,
+      "runMedians": [
+        0.08410000000003492,
+        0.08479999999985921,
+        0.08524999999997362,
+        0.08969999999999345,
+        0.08539999999993597
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression evaluate: new Function path (reconstructed)",
+      "name": "8 × bare identifier via new Function, plumbing control (×20)",
+      "ops": 20,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.06610000000000582,
+      "p95": 0.07410000000004402,
+      "spread": 0.04268292682901468,
+      "runMedians": [
+        0.06600000000003092,
+        0.06559999999990396,
+        0.06649999999990541,
+        0.06839999999988322,
+        0.06610000000000582
+      ]
+    },
+    {
+      "file": "bench/expression.bench.ts",
+      "group": "expression evaluate: new Function path (reconstructed)",
+      "name": "8 count-dependent expressions as hand-written closures, floor (×20)",
+      "ops": 20,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.02289999999993597,
+      "p95": 0.031300000000101136,
+      "spread": 0.06696428570744312,
+      "runMedians": [
+        0.02289999999993597,
+        0.022600000000011278,
+        0.022400000000061482,
+        0.023899999999912325,
+        0.023299999999835563
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR keyed list",
+      "name": "100 rows: parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.5718999999999141,
+      "p95": 2.7757000000001426,
+      "spread": 1.354990249955416,
+      "runMedians": [
+        0.5641000000000531,
+        0.5718999999999141,
+        1.3284499999999753,
+        0.6001500000002125,
+        0.5706000000000131
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR keyed list",
+      "name": "100 rows: parse + adopt by data-forma-key",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.7920000000003711,
+      "p95": 2.5546000000003914,
+      "spread": 1.260553790285053,
+      "runMedians": [
+        0.7710500000002867,
+        0.7820499999997992,
+        1.7429999999999382,
+        1.1935499999995045,
+        0.7920000000003711
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR keyed list",
+      "name": "100 rows: client-side createList, no SSR markup (comparison)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.6534500000002481,
+      "p95": 1.9813999999996668,
+      "spread": 1.1906220546660111,
+      "runMedians": [
+        0.6371500000000196,
+        0.6534500000002481,
+        0.8118499999995947,
+        1.394549999999981,
+        0.6365999999998166
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR keyed list",
+      "name": "1000 rows: parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 6.160199999999804,
+      "p95": 14.95129999999972,
+      "spread": 0.648497290195427,
+      "runMedians": [
+        6.122600000000148,
+        6.160199999999804,
+        10.037699999999859,
+        7.347649999999703,
+        6.088999999999942
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR keyed list",
+      "name": "1000 rows: parse + adopt by data-forma-key",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 9.185799999999745,
+      "p95": 22.487299999999777,
+      "spread": 0.9730976172175962,
+      "runMedians": [
+        9.172049999999672,
+        9.185100000000148,
+        12.988950000000386,
+        18.097350000000006,
+        9.185799999999745
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR keyed list",
+      "name": "1000 rows: client-side createList, no SSR markup (comparison)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 7.57589999999982,
+      "p95": 14.40059999999994,
+      "spread": 0.08174418057523405,
+      "runMedians": [
+        7.5228000000001884,
+        7.57589999999982,
+        7.6331499999996595,
+        8.046499999999469,
+        7.438449999999648
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "5 sections × 4 slots (20 bindings): parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.3660499999999729,
+      "p95": 2.349900000000048,
+      "spread": 0.06444013303765973,
+      "runMedians": [
+        0.3660499999999729,
+        0.3631499999999619,
+        0.36814999999998577,
+        0.3840500000000304,
+        0.3608000000000402
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "5 sections × 4 slots (20 bindings): parse + hydrateIsland (adopt)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.39804999999995516,
+      "p95": 2.367399999999975,
+      "spread": 0.03963847643644262,
+      "runMedians": [
+        0.38724999999999454,
+        0.39369999999991023,
+        0.40260000000000673,
+        0.4005999999999972,
+        0.39804999999995516
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "5 sections × 4 slots (20 bindings): client-side render, no SSR markup (comparison)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.3188999999999851,
+      "p95": 0.5561999999999898,
+      "spread": 0.0980136763267434,
+      "runMedians": [
+        0.3158999999999992,
+        0.3071000000000481,
+        0.3371999999999957,
+        0.33035000000006676,
+        0.3188999999999851
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "20 sections × 5 slots (100 bindings): parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 1.5271000000000186,
+      "p95": 3.3672999999998865,
+      "spread": 0.1806528391702281,
+      "runMedians": [
+        1.5092500000000086,
+        1.4705000000000155,
+        1.551499999999919,
+        1.7361499999998387,
+        1.5271000000000186
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "20 sections × 5 slots (100 bindings): parse + hydrateIsland (adopt)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 1.754850000000033,
+      "p95": 3.7865999999999076,
+      "spread": 0.19670036017197565,
+      "runMedians": [
+        1.754850000000033,
+        1.721400000000017,
+        1.783549999999991,
+        2.060000000000059,
+        1.7505999999998494
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "20 sections × 5 slots (100 bindings): client-side render, no SSR markup (comparison)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 1.5008000000000266,
+      "p95": 3.5189000000000306,
+      "spread": 0.48873998342071656,
+      "runMedians": [
+        1.4602499999999736,
+        1.4476000000000795,
+        1.5574000000000296,
+        2.1550999999999476,
+        1.5008000000000266
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "60 sections × 8 slots (480 bindings): parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 6.733049999999821,
+      "p95": 15.077600000000075,
+      "spread": 1.0595375376274,
+      "runMedians": [
+        6.677300000000287,
+        6.685100000000148,
+        6.974500000000035,
+        13.752150000000029,
+        6.733049999999821
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "60 sections × 8 slots (480 bindings): parse + hydrateIsland (adopt)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 11.367250000000013,
+      "p95": 24.53819999999996,
+      "spread": 0.7287811304184311,
+      "runMedians": [
+        11.358449999999948,
+        11.367250000000013,
+        11.788700000000063,
+        19.290950000000066,
+        11.158699999999953
+      ]
+    },
+    {
+      "file": "bench/hydrate.bench.ts",
+      "group": "hydration: adopt an SSR page",
+      "name": "60 sections × 8 slots (480 bindings): client-side render, no SSR markup (comparison)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 7.135699999999815,
+      "p95": 14.703300000000127,
+      "spread": 0.1443698850790676,
+      "runMedians": [
+        7.097400000000107,
+        7.135699999999815,
+        7.829350000000204,
+        7.921499999999924,
+        6.922149999999874
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island activation: inline vs shared props",
+      "name": "10 islands, inline props: parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.36725000000001273,
+      "p95": 2.6946000000000367,
+      "spread": 0.07891801450083562,
+      "runMedians": [
+        0.36725000000001273,
+        0.3595500000000129,
+        0.36785000000000423,
+        0.358600000000024,
+        0.38690000000002556
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island activation: inline vs shared props",
+      "name": "10 islands, inline props: parse + activateIslands",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.5294500000000539,
+      "p95": 2.699200000000019,
+      "spread": 0.06717998075081913,
+      "runMedians": [
+        0.5294500000000539,
+        0.5194999999999936,
+        0.530399999999986,
+        0.5235000000000127,
+        0.5544000000000437
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island activation: inline vs shared props",
+      "name": "10 islands, shared props: parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.3109499999999912,
+      "p95": 1.9074000000000524,
+      "spread": 0.17115320704544268,
+      "runMedians": [
+        0.3009000000000128,
+        0.3109499999999912,
+        0.31260000000003174,
+        0.30829999999997426,
+        0.3523999999999887
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island activation: inline vs shared props",
+      "name": "10 islands, shared props: parse + activateIslands",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.4759999999999991,
+      "p95": 2.489900000000034,
+      "spread": 0.09586546700922195,
+      "runMedians": [
+        0.46680000000003474,
+        0.47059999999999036,
+        0.48469999999997526,
+        0.4759999999999991,
+        0.5115499999999429
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island activation: inline vs shared props",
+      "name": "100 islands, inline props: parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 3.5969499999999925,
+      "p95": 7.147300000000087,
+      "spread": 0.1864629202997967,
+      "runMedians": [
+        3.4290999999999485,
+        3.570449999999937,
+        3.5969499999999925,
+        3.741899999999873,
+        4.068499999999972
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island activation: inline vs shared props",
+      "name": "100 islands, inline props: parse + activateIslands",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 6.72745000000009,
+      "p95": 12.746800000000349,
+      "spread": 0.03493290880147806,
+      "runMedians": [
+        6.595499999999902,
+        6.72745000000009,
+        6.739800000000059,
+        6.6646999999998116,
+        6.825900000000047
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island activation: inline vs shared props",
+      "name": "100 islands, shared props: parse markup only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 3.1935000000000855,
+      "p95": 7.046799999999621,
+      "spread": 0.12365759910268938,
+      "runMedians": [
+        3.4057500000001255,
+        3.030949999999848,
+        3.3413500000006024,
+        3.1935000000000855,
+        3.0377500000001874
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island activation: inline vs shared props",
+      "name": "100 islands, shared props: parse + activateIslands",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 8.03505000000041,
+      "p95": 13.276499999999942,
+      "spread": 0.2226029394610806,
+      "runMedians": [
+        8.385099999999966,
+        8.264099999999871,
+        8.03505000000041,
+        7.038199999999961,
+        6.858400000000074
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island teardown",
+      "name": "100 islands: activate + deactivateAllIslands (round trip)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 6.919949999999972,
+      "p95": 15.009400000000824,
+      "spread": 0.11742886935798307,
+      "runMedians": [
+        7.501300000000356,
+        6.820600000000013,
+        6.960700000000088,
+        6.919949999999972,
+        6.713000000000193
+      ]
+    },
+    {
+      "file": "bench/islands.bench.ts",
+      "group": "island teardown",
+      "name": "100 islands: activate only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 7.524799999999232,
+      "p95": 14.526499999999942,
+      "spread": 0.5255476719091975,
+      "runMedians": [
+        7.524799999999232,
+        6.440900000000511,
+        6.645750000000589,
+        9.825900000000729,
+        7.9181500000004235
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: full teardown",
+      "name": "1000 rows → [] → 1000 rows (drain + refill round trip)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 12.12380000000121,
+      "p95": 21.738899999996647,
+      "spread": 0.07505851889298086,
+      "runMedians": [
+        12.538300000000163,
+        12.12380000000121,
+        12.248399999996764,
+        11.662900000002992,
+        11.843400000005204
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "100 rows: createList → mount → first reconcile",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.5019499999999653,
+      "p95": 2.6135000000000446,
+      "spread": 0.0504907416776086,
+      "runMedians": [
+        0.49809999999996535,
+        0.49414999999999054,
+        0.5042000000000257,
+        0.5190999999999804,
+        0.5019499999999653
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "1000 rows: createList → mount → first reconcile",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 8.941150000000107,
+      "p95": 16.8113000000003,
+      "spread": 0.05717173418684803,
+      "runMedians": [
+        9.413850000000252,
+        8.904749999999922,
+        8.941150000000107,
+        9.16579999999999,
+        8.927350000000047
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "10000 rows: createList → mount → first reconcile",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 208.9030500000008,
+      "p95": 393.9445000000014,
+      "spread": 0.19307373588192717,
+      "runMedians": [
+        219.99405000000115,
+        205.0930499999995,
+        197.3401500000009,
+        208.9030500000008,
+        235.44135000000097
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "1000 rows: h() + appendChild by hand, no list (floor)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 7.976500000000669,
+      "p95": 14.78570000000036,
+      "spread": 0.12298866116771358,
+      "runMedians": [
+        7.973349999998391,
+        7.765349999999671,
+        7.976500000000669,
+        8.720399999998335,
+        8.112750000000233
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "10000 rows: h() + appendChild by hand, no list (floor)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 85.38264999999956,
+      "p95": 128.9363000000012,
+      "spread": 0.10036347611323228,
+      "runMedians": [
+        81.46339999999873,
+        86.98795000000064,
+        81.61674999999923,
+        85.38264999999956,
+        89.63935000000129
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "1000 rows: h() + insertBefore an end marker by hand, no list (floor)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 8.524099999998725,
+      "p95": 16.670700000002398,
+      "spread": 0.2189381058172716,
+      "runMedians": [
+        8.524099999998725,
+        8.073549999999159,
+        8.057300000000396,
+        9.821350000001985,
+        8.781600000000253
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "10000 rows: h() + insertBefore an end marker by hand, no list (floor)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 111.36339999999836,
+      "p95": 173.31530000000203,
+      "spread": 0.3297863558898993,
+      "runMedians": [
+        111.36339999999836,
+        106.00104999999894,
+        111.11619999999857,
+        117.63454999999885,
+        140.9587500000016
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "1000 rows: per-row root + index signal + cache, no DOM (floor)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.2162499999976717,
+      "p95": 0.6208999999944353,
+      "spread": 0.05656324580082274,
+      "runMedians": [
+        0.2194500000005064,
+        0.2153500000022177,
+        0.209500000000844,
+        0.22134999999616412,
+        0.2162499999976717
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "10000 rows: per-row root + index signal + cache, no DOM (floor)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 3.4975999999951455,
+      "p95": 7.383300000001327,
+      "spread": 0.14075057353526563,
+      "runMedians": [
+        3.4975999999951455,
+        3.4714999999960128,
+        3.9530999999988126,
+        3.4653499999985797,
+        3.80934999999954
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "1000 rows: hand-rolled list, everything but the reconciler (floor)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 9.839449999999488,
+      "p95": 17.255099999994854,
+      "spread": 0.10894248411222524,
+      "runMedians": [
+        9.492050000000745,
+        9.401750000000902,
+        10.426000000003114,
+        9.839449999999488,
+        10.015900000002148
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: initial render",
+      "name": "10000 rows: hand-rolled list, everything but the reconciler (floor)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 225.0028999999995,
+      "p95": 428.86989999999787,
+      "spread": 0.24598489829202722,
+      "runMedians": [
+        261.81700000000274,
+        214.4315999999999,
+        225.0028999999995,
+        227.5096999999987,
+        210.12855000000127
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: keyed reconciliation on 100 rows (small-list path)",
+      "name": "shuffle 20 rows (one full reorder)",
+      "ops": 1,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.014299999995273538,
+      "p95": 0.04579999999987194,
+      "spread": 0.8897058814402994,
+      "runMedians": [
+        0.01389999999810243,
+        0.014299999995273538,
+        0.02375000000029104,
+        0.02569999999832362,
+        0.013600000005681068
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: keyed reconciliation on 100 rows (small-list path)",
+      "name": "shuffle 100 rows (one full reorder)",
+      "ops": 1,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.08329999999841675,
+      "p95": 0.21199999999953434,
+      "spread": 0.7068757538694616,
+      "runMedians": [
+        0.08290000000124564,
+        0.08290000000124564,
+        0.08329999999841675,
+        0.14149999999790452,
+        0.08350000000064028
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: keyed reconciliation on 1000 rows",
+      "name": "append 100 + trim back to 1000 (round trip)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 1.0644500000016706,
+      "p95": 4.1679000000003725,
+      "spread": 0.8369167311170276,
+      "runMedians": [
+        0.9989500000010594,
+        1.0644500000016706,
+        0.9697500000002037,
+        1.2171500000004016,
+        1.7813500000011118
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: keyed reconciliation on 1000 rows",
+      "name": "prepend 100 + trim back to 1000 (round trip)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 1.0714499999994587,
+      "p95": 4.033699999999953,
+      "spread": 0.736991439850297,
+      "runMedians": [
+        1.247350000001461,
+        1.0537500000027649,
+        1.0396999999938998,
+        1.0714499999994587,
+        1.8059500000017579
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: keyed reconciliation on 1000 rows",
+      "name": "remove first 100 + restore (round trip)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 1.0128999999978987,
+      "p95": 3.549699999995937,
+      "spread": 0.28980908287256096,
+      "runMedians": [
+        1.0128999999978987,
+        0.9611499999991793,
+        1.2397000000019034,
+        1.0509000000020023,
+        0.9903500000000349
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: keyed reconciliation on 1000 rows",
+      "name": "shuffle 1000 rows (one full reorder)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 2.6594500000028347,
+      "p95": 5.78009999999631,
+      "spread": 0.06452169578070951,
+      "runMedians": [
+        2.775900000000547,
+        2.6574499999987893,
+        2.6939500000044063,
+        2.6594500000028347,
+        2.6076499999981024
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "createList: keyed reconciliation on 1000 rows",
+      "name": "same keys, same order — reconciler fast path",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.09850000000005821,
+      "p95": 0.36139999999431893,
+      "spread": 0.09358569923102841,
+      "runMedians": [
+        0.09850000000005821,
+        0.09660000000076252,
+        0.10244999999849824,
+        0.10399999999935972,
+        0.09510000000227592
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "reconcileList: row removal",
+      "name": "1000 plain rows: build only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 7.973399999998946,
+      "p95": 15.60229999999865,
+      "spread": 0.18104273481844088,
+      "runMedians": [
+        7.973399999998946,
+        7.6261000000013155,
+        9.006750000000466,
+        8.681300000000192,
+        7.626950000001671
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "reconcileList: row removal",
+      "name": "1000 plain rows: build + reconcileList removes all",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 8.392200000002049,
+      "p95": 16.106999999996333,
+      "spread": 0.1768280843457951,
+      "runMedians": [
+        8.609349999998813,
+        8.171500000000378,
+        9.091349999998783,
+        8.392200000002049,
+        7.72530000000188
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "reconcileList: row removal",
+      "name": "1000 plain rows: build + removeChild by hand (pre-hardening cost)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 8.240649999992456,
+      "p95": 15.603300000002491,
+      "spread": 0.06820990913215784,
+      "runMedians": [
+        8.208800000000338,
+        8.050149999999121,
+        8.599249999999302,
+        8.464599999999336,
+        8.240649999992456
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "reconcileList: row removal",
+      "name": "1000 6-node rows: build only (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 48.43325000000186,
+      "p95": 75.18129999999655,
+      "spread": 0.050464876087762144,
+      "runMedians": [
+        49.78610000000481,
+        48.43325000000186,
+        49.110749999999825,
+        47.39434999999503,
+        47.928299999992305
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "reconcileList: row removal",
+      "name": "1000 6-node rows: build + reconcileList removes all",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 51.60059999999794,
+      "p95": 82.45040000000154,
+      "spread": 0.13195967654843166,
+      "runMedians": [
+        56.07100000000355,
+        49.5344499999992,
+        51.60059999999794,
+        53.12819999999192,
+        51.52524999999878
+      ]
+    },
+    {
+      "file": "bench/list.bench.ts",
+      "group": "reconcileList: row removal",
+      "name": "1000 6-node rows: build + removeChild by hand (pre-hardening cost)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 52.45369999999093,
+      "p95": 79.39540000000852,
+      "spread": 0.018139464164370324,
+      "runMedians": [
+        52.28654999999708,
+        52.44669999999314,
+        53.23500000000058,
+        52.45369999999093,
+        53.10779999999795
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "effect creation",
+      "name": "createEffect + dispose (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.12400000000025102,
+      "p95": 0.6004000000002634,
+      "spread": 0.6377440347065421,
+      "runMedians": [
+        0.11525000000006003,
+        0.12400000000025102,
+        0.18875000000002728,
+        0.12720000000012988,
+        0.12125000000014552
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "effect creation",
+      "name": "internalEffect + dispose, the DOM-binding path (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.06585000000018226,
+      "p95": 0.2683999999999287,
+      "spread": 1.7593659942224509,
+      "runMedians": [
+        0.06585000000018226,
+        0.03470000000015716,
+        0.08500000000003638,
+        0.0957499999999527,
+        0.06169999999997344
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "internalEffect: flush-isolation overhead",
+      "name": "1 internalEffect binding(s), as shipped: write (×5000)",
+      "ops": 5000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.14245000000005348,
+      "p95": 0.17570000000023356,
+      "spread": 0.09579955785108635,
+      "runMedians": [
+        0.14245000000005348,
+        0.1356999999998152,
+        0.14069999999992433,
+        0.14455000000020846,
+        0.1487000000001899
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "internalEffect: flush-isolation overhead",
+      "name": "1 rawEffect binding(s), pre-hardening shape: write (×5000)",
+      "ops": 5000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.15430000000014843,
+      "p95": 0.17139999999972133,
+      "spread": 0.06070713809355291,
+      "runMedians": [
+        0.15430000000014843,
+        0.14989999999988868,
+        0.15170000000011896,
+        0.15789999999992688,
+        0.1590000000001055
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "internalEffect: flush-isolation overhead",
+      "name": "100 internalEffect binding(s), as shipped: write (×50)",
+      "ops": 50,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.1089999999999236,
+      "p95": 0.2260999999998603,
+      "spread": 0.037209302326791434,
+      "runMedians": [
+        0.1089999999999236,
+        0.10750000000007276,
+        0.11150000000020555,
+        0.10860000000002401,
+        0.11075000000005275
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "internalEffect: flush-isolation overhead",
+      "name": "100 rawEffect binding(s), pre-hardening shape: write (×50)",
+      "ops": 50,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.09740000000010696,
+      "p95": 0.21019999999998618,
+      "spread": 0.14392324093824385,
+      "runMedians": [
+        0.09795000000008258,
+        0.09569999999985157,
+        0.09380000000010114,
+        0.09740000000010696,
+        0.10730000000012296
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: batching",
+      "name": "100 signals, one write each, unbatched (×30)",
+      "ops": 30,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.2725000000000364,
+      "p95": 0.6205999999997402,
+      "spread": 0.11158056462267912,
+      "runMedians": [
+        0.2603500000001304,
+        0.28270000000009077,
+        0.26510000000007494,
+        0.2725000000000364,
+        0.2893999999996595
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: batching",
+      "name": "100 signals, one write each, batched (×30)",
+      "ops": 30,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.26310000000012224,
+      "p95": 0.35550000000012005,
+      "spread": 0.10090837282712671,
+      "runMedians": [
+        0.25320000000010623,
+        0.26585000000000036,
+        0.25765000000001237,
+        0.26310000000012224,
+        0.27874999999994543
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: batching",
+      "name": "one signal, 100 writes, unbatched (×30)",
+      "ops": 30,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.23460000000000036,
+      "p95": 0.28880000000026484,
+      "spread": 0.0888402625836612,
+      "runMedians": [
+        0.23460000000000036,
+        0.22849999999993997,
+        0.23510000000010223,
+        0.22949999999991633,
+        0.24880000000030122
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: batching",
+      "name": "one signal, 100 writes, batched (×30)",
+      "ops": 30,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.016000000000076398,
+      "p95": 0.022199999999884312,
+      "spread": 0.31847133755913953,
+      "runMedians": [
+        0.019699999999829743,
+        0.01569999999992433,
+        0.016000000000076398,
+        0.015899999999874126,
+        0.020699999999578722
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: deep chain",
+      "name": "computed depth 1: write → re-derive → effect (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.04629999999997381,
+      "p95": 0.051700000000096225,
+      "spread": 0.08520179372224743,
+      "runMedians": [
+        0.04460000000000264,
+        0.04480000000000928,
+        0.04629999999997381,
+        0.046899999999993724,
+        0.0484000000000151
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: deep chain",
+      "name": "computed depth 10: write → re-derive → effect (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.13845000000000596,
+      "p95": 0.2586000000000013,
+      "spread": 0.06082814217655942,
+      "runMedians": [
+        0.13769999999999527,
+        0.14030000000002474,
+        0.1364499999999964,
+        0.13845000000000596,
+        0.14474999999998772
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: deep chain",
+      "name": "computed depth 50: write → re-derive → effect (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.5590500000000702,
+      "p95": 0.6150000000000091,
+      "spread": 0.055965448983331945,
+      "runMedians": [
+        0.5557000000000016,
+        0.5610000000000355,
+        0.5579500000000053,
+        0.5590500000000702,
+        0.5868000000000393
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: equal-value no-op",
+      "name": "write the SAME value, no effect runs (×20000)",
+      "ops": 20000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.06199999999989814,
+      "p95": 0.07169999999996435,
+      "spread": 1.5627530364538689,
+      "runMedians": [
+        0.024699999999938882,
+        0.06330000000025393,
+        0.06199999999989814,
+        0.0625,
+        0.026499999999941792
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: equal-value no-op",
+      "name": "write a CHANGING value, effect runs (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.03699999999980719,
+      "p95": 0.07569999999986976,
+      "spread": 0.07464788732771444,
+      "runMedians": [
+        0.035499999999956344,
+        0.036599999999907595,
+        0.03699999999980719,
+        0.037700000000313594,
+        0.03815000000008695
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: equal-value no-op",
+      "name": "write suppressed by a custom equals (×20000)",
+      "ops": 20000,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.036100000000033106,
+      "p95": 0.03890000000001237,
+      "spread": 0.056818181803501185,
+      "runMedians": [
+        0.035200000000259024,
+        0.03530000000000655,
+        0.036499999999705324,
+        0.036100000000033106,
+        0.03719999999975698
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: wide fan-out",
+      "name": "10 effects on one signal: write (×500)",
+      "ops": 500,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.3605999999999767,
+      "p95": 0.7253000000000611,
+      "spread": 0.10880754932763514,
+      "runMedians": [
+        0.3605999999999767,
+        0.3605999999999767,
+        0.36230000000000473,
+        0.34970000000009804,
+        0.3877499999999827
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: wide fan-out",
+      "name": "100 effects on one signal: write (×50)",
+      "ops": 50,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.38400000000001455,
+      "p95": 0.4574000000000069,
+      "spread": 0.11407407407421472,
+      "runMedians": [
+        0.37810000000001764,
+        0.39580000000000837,
+        0.38400000000001455,
+        0.37125000000003183,
+        0.4136000000000877
+      ]
+    },
+    {
+      "file": "bench/reactive.bench.ts",
+      "group": "signal write → effect flush: wide fan-out",
+      "name": "1000 effects on one signal: write (×5)",
+      "ops": 5,
+      "sampleCount": 600,
+      "runs": 5,
+      "median": 0.41619999999988977,
+      "p95": 0.6030000000000655,
+      "spread": 0.08349050672662438,
+      "runMedians": [
+        0.3976500000001124,
+        0.413300000000163,
+        0.41619999999988977,
+        0.416849999999954,
+        0.430849999999964
+      ]
+    },
+    {
+      "file": "bench/ssr.bench.ts",
+      "group": "renderToString: reactive props and children",
+      "name": "500 list items, plain values",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.3915999999999258,
+      "p95": 0.9107999999996537,
+      "spread": 0.5638105099647305,
+      "runMedians": [
+        0.3870999999999185,
+        0.3915999999999258,
+        0.604099999999562,
+        0.3863000000001193,
+        0.4095999999999549
+      ]
+    },
+    {
+      "file": "bench/ssr.bench.ts",
+      "group": "renderToString: reactive props and children",
+      "name": "500 list items, every prop and child a getter",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.409099999999853,
+      "p95": 1.1772999999993772,
+      "spread": 0.5836785938488788,
+      "runMedians": [
+        0.4017999999996391,
+        0.409099999999853,
+        0.6307000000006155,
+        0.3982500000001892,
+        0.4214000000001761
+      ]
+    },
+    {
+      "file": "bench/ssr.bench.ts",
+      "group": "renderToString: tree size sweep",
+      "name": "10 cards (~3 KB of HTML)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.04609999999996717,
+      "p95": 0.08129999999999882,
+      "spread": 0.5849673202605111,
+      "runMedians": [
+        0.04599999999999227,
+        0.04609999999996717,
+        0.07150000000001455,
+        0.04590000000001737,
+        0.072749999999985
+      ]
+    },
+    {
+      "file": "bench/ssr.bench.ts",
+      "group": "renderToString: tree size sweep",
+      "name": "100 cards (~31 KB of HTML)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 0.4580500000000143,
+      "p95": 0.9610000000000127,
+      "spread": 0.5899240393207605,
+      "runMedians": [
+        0.45820000000000505,
+        0.4475999999999942,
+        0.7116499999999633,
+        0.4505999999999801,
+        0.4580500000000143
+      ]
+    },
+    {
+      "file": "bench/ssr.bench.ts",
+      "group": "renderToString: tree size sweep",
+      "name": "1000 cards (~316 KB of HTML)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 6.0283000000000015,
+      "p95": 9.252700000000004,
+      "spread": 0.5300834927813359,
+      "runMedians": [
+        5.8977500000000305,
+        6.0283000000000015,
+        8.796449999999936,
+        6.224150000000009,
+        5.749000000000024
+      ]
+    },
+    {
+      "file": "bench/ssr.bench.ts",
+      "group": "renderToString: tree size sweep",
+      "name": "5000 cards (~1597 KB of HTML)",
+      "ops": 1,
+      "sampleCount": 60,
+      "runs": 5,
+      "median": 32.21950000000015,
+      "p95": 68.41840000000047,
+      "spread": 0.4991059730751738,
+      "runMedians": [
+        31.66435000000024,
+        32.427900000000136,
+        46.11205000000018,
+        32.21950000000015,
+        30.75969999999984
+      ]
+    },
+    {
+      "file": "bench/ssr.bench.ts",
+      "group": "renderToString: URL-attribute guard cost",
+      "name": "1000 cards, one href each",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 5.809899999999743,
+      "p95": 9.523099999999431,
+      "spread": 0.49015830764908447,
+      "runMedians": [
+        5.854150000000118,
+        5.809899999999743,
+        8.509399999999914,
+        5.710400000000391,
+        5.754950000000008
+      ]
+    },
+    {
+      "file": "bench/ssr.bench.ts",
+      "group": "renderToString: URL-attribute guard cost",
+      "name": "1000 cards, same attrs, none URL-bearing (control)",
+      "ops": 1,
+      "sampleCount": 200,
+      "runs": 5,
+      "median": 5.70719999999983,
+      "p95": 10.185999999999694,
+      "spread": 0.518928311789621,
+      "runMedians": [
+        5.70719999999983,
+        5.706749999999829,
+        8.5662999999995,
+        5.639699999999721,
+        6.043949999999768
+      ]
+    }
+  ]
+}

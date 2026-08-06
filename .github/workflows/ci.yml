@@ -5,6 +5,11 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  schedule:
+    # Nightly, for the mutation-probe corpus only — it runs the whole suite once
+    # per probe, so it is minutes rather than seconds and does not belong on a PR.
+    - cron: '17 3 * * *'
+  workflow_dispatch:
 
 jobs:
   test:
@@ -12,6 +17,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # The lowest entry here is what package.json `engines.node` may claim:
+        # a floor no job executes is an untested promise. Keep them in step.
+        # Verified by: src/__tests__/package-exports.test.ts > "the engines floor is a version CI actually runs"
         node-version: [20, 22, 24]
     steps:
       - uses: actions/checkout@v5
@@ -22,26 +30,66 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test:coverage
+      # `build` ends in scripts/verify-dist.mjs, which asserts the properties
+      # the docs claim about the shipped artifacts (self-contained CDN bundle,
+      # build-time __DEV__, no eval or new Function in ANY build, every exports target
+      # present). A doc-breaking build fails here.
       - run: npm run build
+      - run: npm run check:size
 
-      - name: Check bundle size
-        run: |
-          # Separate, honest gates. Previously only index.js was enforced while
-          # the (much larger) runtime bundle was printed but never gated.
-          MAX_INDEX=12000     # main entry, ~7.6KB today
-          MAX_RUNTIME=28000   # CDN runtime bundle, ~24KB today
-          INDEX_SIZE=$(gzip -c dist/index.js | wc -c)
-          RUNTIME_SIZE=$(gzip -c dist/formajs-runtime.global.js | wc -c)
-          echo "dist/index.js: ${INDEX_SIZE} bytes gzipped (limit ${MAX_INDEX})"
-          echo "dist/formajs-runtime.global.js: ${RUNTIME_SIZE} bytes gzipped (limit ${MAX_RUNTIME})"
-          if [ "$INDEX_SIZE" -gt "$MAX_INDEX" ]; then
-            echo "::error::index.js ${INDEX_SIZE} exceeds limit ${MAX_INDEX} bytes"
-            exit 1
-          fi
-          if [ "$RUNTIME_SIZE" -gt "$MAX_RUNTIME" ]; then
-            echo "::error::runtime bundle ${RUNTIME_SIZE} exceeds limit ${MAX_RUNTIME} bytes"
-            exit 1
-          fi
+  # The mutation-probe corpus (probes/corpus.json). Per-PR this is the cheap
+  # half: every probe's anchor must still apply to the file it names, which
+  # takes seconds and catches the failure mode where a refactor silently turns
+  # a mutant into a no-op and the detection rate climbs for free.
+  # The expensive half — actually applying each probe and running the suite —
+  # is the nightly job below.
+  # Verified by: src/__tests__/probe-corpus.test.ts > "every probe still applies to the file it names"
+  probes-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/run-probes.mjs --check
+
+  # Nightly mutation run with a detection floor. A survivor is a property
+  # nothing in the suite defends, so the floor is a ratchet: it may go up.
+  probes:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/run-probes.mjs --floor=85
+      - uses: actions/upload-artifact@v6
+        if: always()
+        with:
+          name: mutation-probe-results
+          path: probes/results.json
+          retention-days: 30
+
+  # Packaging surface. Split out because it is Node-version independent and
+  # would have caught the node10 / global-subpath / missing-package.json
+  # export defects the 2026-08 hardening audit found.
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npm run build
+      - run: npm run check:pack
 
   e2e:
     runs-on: ubuntu-latest

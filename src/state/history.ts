@@ -12,6 +12,9 @@ import { createSignal, internalEffect, batch } from 'forma/reactive';
 // Snapshot helper — clone plain values so a later in-place mutation of a value
 // stored in (or restored from) the history stack cannot corrupt other entries.
 // Non-plain objects (Date/RegExp/Map/Set/class instances) pass by reference.
+//
+// Verified by: src/state/__tests__/history.test.ts > "in-place mutation of a pushed object does not corrupt past history entries"
+// Verified by: src/state/__tests__/history.test.ts > "undo returns a value that, when mutated, does not corrupt the stack"
 // ---------------------------------------------------------------------------
 
 function cloneEntry<V>(v: V, seen?: WeakSet<object>): V {
@@ -85,6 +88,7 @@ export function createHistory<T>(
   const [sourceGet, sourceSet] = source;
   // Clamp to >= 1 so the current entry is always retained (maxLength 0 would
   // empty the stack and leave the cursor at -1).
+  // Verified by: src/state/__tests__/history.test.ts > "keeps the current entry when maxLength is 0 or negative"
   const maxLength = Math.max(1, options?.maxLength ?? 100);
 
   // ---------- Internal mutable state (not signals) ----------

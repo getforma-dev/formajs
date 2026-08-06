@@ -19,10 +19,6 @@ import {
   popSuspenseContext,
 } from 'forma/reactive/suspense-context';
 
-// Re-export context utilities so consumers can import from dom/suspense
-export { getSuspenseContext, pushSuspenseContext, popSuspenseContext } from 'forma/reactive/suspense-context';
-export type { SuspenseContext } from 'forma/reactive/suspense-context';
-
 // ---------------------------------------------------------------------------
 // createSuspense
 // ---------------------------------------------------------------------------

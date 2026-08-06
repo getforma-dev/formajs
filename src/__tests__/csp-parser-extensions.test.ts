@@ -2,8 +2,6 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   mount,
   unmount,
-  setUnsafeEval,
-  setUnsafeEvalMode,
   getDiagnostics,
   clearDiagnostics,
 } from '../runtime';
@@ -16,8 +14,6 @@ describe('CSP-safe parser extensions', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
-    setUnsafeEvalMode('locked-off');
-    setUnsafeEval(false);
     clearDiagnostics();
     container = document.createElement('div');
     document.body.appendChild(container);
@@ -26,8 +22,6 @@ describe('CSP-safe parser extensions', () => {
   afterEach(() => {
     unmount(container);
     container.remove();
-    setUnsafeEvalMode('mutable');
-    setUnsafeEval(false);
   });
 
   // ── Chained method calls ──

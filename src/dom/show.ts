@@ -14,7 +14,7 @@
  */
 
 import { internalEffect, untrack, createRoot, registerDisposer } from 'forma/reactive';
-import { hydrating, type ShowDescriptor } from './hydrate.js';
+import { hydrating } from './hydrate.js';
 
 /**
  * Conditionally render content based on a reactive boolean.
