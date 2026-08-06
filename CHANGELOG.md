@@ -173,7 +173,7 @@ survivors it is 90/93). Four of the defects the work found were live.
   `renderToString`, `h()` static, `h()` reactive, hydration adoption, the
   `data-bind:` binder, and `$el.setAttribute()` in the CSP-safe grammar — and
   each guarantee used to be asserted thoroughly on exactly one of them. That
-  habit produced 7 of the 25 code defects in `docs/HARDENING-AUDIT.md`. Dangerous
+  habit produced 7 of the 25 code defects in `docs/archive/2026-08-05-hardening-audit.md`. Dangerous
   URLs (8 vectors x all 8 `URL_ATTRS`), safe-URL negative space, event-handler
   names, attribute-name breakout, boolean-attribute semantics and text escaping
   are now asserted once, parameterised over every sink, with a completeness test
@@ -367,8 +367,10 @@ test that proves them.
   whose whole body is a method call, which the CSP-safe grammar does not accept;
   they are now marked as needing the opt-in.
 - Corrected: every CDN pin (was `1.0.7`), the alien-signals repository link, the
-  size figures (the runtime is 25.6 KB gzipped, not "~24 KB"; the core entry is
-  24.7 KB untree-shaken, not "~8 KB"), the island coverage figure, the
+  size figures (the core entry is untree-shaken, not "~8 KB", and the runtime is
+  not "~24 KB" — the table in `README.md` carries the current measurement and the
+  date it was taken; the allowlist interpreter landed after that first correction
+  and moved the runtime figures again), the island coverage figure, the
   `@getforma/core/tc39` shape (it exports `State` and `Computed` — there is no
   `Signal` namespace), and the Supported Versions table (it listed only `1.0.x`
   while 1.5.0 was on npm).
@@ -382,6 +384,29 @@ test that proves them.
   claims — version pins, artifact names, export coverage, the tc39 shape, the
   coverage figure, the size limits — so this class of drift fails CI instead of
   waiting for an audit.
+- **`README.md` is a landing page again — 1,183 lines down to 182.** The
+  narrative moved to `docs/API.md`, `docs/HTML-RUNTIME.md`, `docs/ISLANDS.md`,
+  `docs/CDN-AND-EXPORTS.md`, `docs/COMPARISONS.md` and `docs/STABILITY.md`,
+  indexed from `docs/README.md`, with every `Verified by` citation carried across
+  unchanged. Nothing was rewritten for style, so the move is diffable. The
+  README keeps the badges, the size table, the intro example, install, the three
+  entry points, the benchmark citations, the CSP promise and the index.
+  All six pages joined `docs-truth.test.ts`'s `DOCS` map in the same change:
+  moving a citation out of a checked file into an unchecked one would have
+  quietly undone the thing this restructure exists to do. The flagship showcase
+  and the directive table are still *extracted from the file at test time* and
+  mounted — they now live in and are extracted from `docs/HTML-RUNTIME.md`.
+- The hardening ledger moved to `docs/archive/2026-08-05-hardening-audit.md` now
+  that all 55 entries are closed; a completed audit sitting next to the reference
+  docs reads as current documentation. Its citations are still resolved by path.
+- Dropped the README's "WASM render … unreachable before 1.6.0" claim: `./wasm`
+  is an `exports` subpath now, and the release number it would first ship in is
+  not decided. `docs/STABILITY.md` states the checkable part — no released
+  version through 1.5.0 exported the subpath, and it needs
+  `window.__FORMA_WASM__`.
+- `CSP.md`'s version-history table ends in a row labelled `Unreleased` rather
+  than `> 1.5.0`, and a test now pins that label and the released row below it to
+  `package.json`, so cutting a release without updating the table fails CI.
 
 ### Note on 1.1.0
 

@@ -7,10 +7,10 @@
 <body>
 
 <!--
-  The README's flagship block, verbatim apart from the script src.
+  The documented flagship block, verbatim apart from the script src and the ids.
 
-  src/__tests__/readme-flagship.test.ts extracts the same markup from README.md
-  and mounts it in happy-dom; this file is its counterpart in a real browser,
+  src/__tests__/readme-flagship.test.ts extracts the same markup from
+  docs/HTML-RUNTIME.md and mounts it in happy-dom; this file is its counterpart in a real browser,
   served under a real `Content-Security-Policy: script-src 'self'` response
   header so the browser's own CSP engine — not a stub — decides whether the
   runtime is allowed to run. e2e/csp.spec.ts asserts zero violations.

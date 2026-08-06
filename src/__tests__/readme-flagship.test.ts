@@ -1,25 +1,31 @@
 /**
  * The shop window, executed.
  *
- * README.md's headline block — "Here's what you get from a single HTML file
- * with one script tag" — is EXTRACTED FROM THE FILE AT TEST TIME and mounted.
- * Nothing here is a copy of the markup, so the README and the proof cannot
- * drift: editing the block into something the grammar does not accept fails
- * this suite, and so does deleting it.
+ * The flagship "everything in one file" block — the search-and-filter page that
+ * needs no build step — is EXTRACTED FROM ITS DOCUMENTATION PAGE AT TEST TIME
+ * and mounted. Nothing here is a copy of the markup, so the page and the proof
+ * cannot drift: editing the block into something the grammar does not accept
+ * fails this suite, and so does deleting it.
  *
  * That matters because it already happened. The block used to contain
  * `items.filter(i => i.toLowerCase().includes(query.toLowerCase()))`; when the
  * `new Function` fallback was switched off by default, the regex parser
  * rejected the arrow function, the page rendered "Found undefined results" and
- * an empty list, and the fix of record was to rewrite the README rather than
- * the engine. This file is the mechanism that stops that being possible twice.
+ * an empty list, and the fix of record was to rewrite the documentation rather
+ * than the engine. This file is the mechanism that stops that happening twice.
+ *
+ * The block lived in README.md until the 2026-08-06 documentation split moved
+ * it to docs/HTML-RUNTIME.md; this file keeps its name because the closed
+ * hardening ledger (docs/archive/2026-08-05-hardening-audit.md) cites it by
+ * path, and a citation that no longer resolves is worse than an old name.
  */
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as runtime from '../runtime';
 
-const README = readFileSync(resolve(process.cwd(), 'README.md'), 'utf8');
+const DOC_PATH = 'docs/HTML-RUNTIME.md';
+const DOC = readFileSync(resolve(process.cwd(), DOC_PATH), 'utf8');
 
 /**
  * Pull the fenced ```html block that follows the flagship heading.
@@ -28,9 +34,9 @@ const README = readFileSync(resolve(process.cwd(), 'README.md'), 'utf8');
  * reason: a line number is stale the first time anyone edits the file above it.
  */
 function extractFlagshipBlock(markdown: string): string {
-  const heading = "**Here's what you get from a single HTML file with one script tag:**";
+  const heading = '## Everything in one file';
   const at = markdown.indexOf(heading);
-  if (at < 0) throw new Error('README.md no longer contains the flagship heading');
+  if (at < 0) throw new Error(`${DOC_PATH} no longer contains the flagship heading`);
   const open = markdown.indexOf('```html', at);
   if (open < 0) throw new Error('no fenced html block follows the flagship heading');
   const start = markdown.indexOf('\n', open) + 1;
@@ -41,7 +47,7 @@ function extractFlagshipBlock(markdown: string): string {
 
 /** The block minus its `<script src>` line — the runtime is imported instead. */
 function mountableMarkup(): string {
-  return extractFlagshipBlock(README)
+  return extractFlagshipBlock(DOC)
     .split('\n')
     .filter((line) => !line.includes('<script'))
     .join('\n')
@@ -52,7 +58,7 @@ function tick(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }
 
-describe('README flagship example', () => {
+describe('the documented flagship example', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
@@ -88,16 +94,16 @@ describe('README flagship example', () => {
 
   it('extracts a block that still contains the arrow-function filter', () => {
     // The guard on the guard. If someone "fixes" a failure here by deleting the
-    // arrow function from the README, the extraction still succeeds and every
+    // arrow function from the page, the extraction still succeeds and every
     // other case below still passes — so the one thing that cannot be allowed
     // to disappear quietly is asserted directly.
-    const block = extractFlagshipBlock(README);
+    const block = extractFlagshipBlock(DOC);
     expect(block).toContain('items.filter(i => i.toLowerCase().includes(query.toLowerCase()))');
     expect(block).toContain('data-model="{query}"');
     expect(block).toContain('data-forma-state=');
   });
 
-  it('the README block renders exactly what the README says it renders', async () => {
+  it('the documented block renders exactly what this page says it renders', async () => {
     await mountFlagship();
 
     expect(countText()).toBe('Found 5 results');

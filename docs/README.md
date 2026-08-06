@@ -21,8 +21,8 @@ go next*. Everything with depth is here.
 | [`../SECURITY.md`](../SECURITY.md) | Threat model, what is guarded, what is explicitly not |
 | [`../CSP.md`](../CSP.md) | Running under a strict Content-Security-Policy, and what to do when an expression is refused |
 | [PERFORMANCE.md](PERFORMANCE.md) | Benchmarked hot paths, each with its run-to-run noise floor so a later comparison can tell a regression from a bad afternoon |
-| [HARDENING-AUDIT.md](HARDENING-AUDIT.md) | The 2026-08 hardening ledger: every finding, its fix, and the test that pins it |
 | [TEST-SUITE-AUDIT.md](TEST-SUITE-AUDIT.md) | The mutation-probe audit of this suite and the remediation plan it produced |
+| [archive/2026-08-05-hardening-audit.md](archive/2026-08-05-hardening-audit.md) | The 2026-08 hardening ledger: every finding, its fix, and the test that pins it. **Closed and archived** — all 55 entries are FIXED and the fixes are in `CHANGELOG.md`. Its citations are still machine-checked. |
 
 ## Design records
 

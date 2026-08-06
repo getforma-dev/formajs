@@ -13,7 +13,7 @@
  *
  * Historically each guarantee was asserted thoroughly on exactly ONE of them.
  * That single habit produced 7 of the 25 code defects in
- * `docs/HARDENING-AUDIT.md`, including the only non-documentation Critical
+ * `docs/archive/2026-08-05-hardening-audit.md`, including the only non-documentation Critical
  * (`client-url-attr-xss-h`: `h('a', {href:'javascript:alert(1)'})` emitted the
  * attribute verbatim while the SSR path had blocked it since day one) — and,
  * when this file was written, two more that no per-path suite could see:

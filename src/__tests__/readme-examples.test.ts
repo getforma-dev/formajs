@@ -1,15 +1,24 @@
 /**
- * Executable proof for the README code samples that are NOT the flagship block
- * or the directive table.
+ * Executable proof for the documented code samples that are NOT the flagship
+ * block or the directive table.
  *
  * Those two have their own files, and for a stronger reason than tidiness: they
- * extract their markup FROM README.md at test time, so they cannot drift.
+ * extract their markup FROM docs/HTML-RUNTIME.md at test time, so they cannot
+ * drift.
  *   - src/__tests__/readme-flagship.test.ts
  *   - src/__tests__/readme-directive-table.test.ts
  *
  * What is left here is the samples that are prose-adjacent snippets rather than
- * one addressable block: the intro counter, the documented grammar surface, and
- * the `createHistory` API example.
+ * one addressable block. They are COPIED, not extracted, so the markup below is
+ * the assertion — moving a sample between pages does not touch this file, but
+ * editing one does mean editing it here too. After the 2026-08-06 documentation
+ * split they live in:
+ *   - the counter          → README.md "Three ways to use it" and
+ *                            docs/HTML-RUNTIME.md (the opening block)
+ *   - the grammar surface  → docs/HTML-RUNTIME.md "The expression grammar is an
+ *                            allowlist, not a blocklist"
+ *   - `data-fetch`         → docs/HTML-RUNTIME.md "Directive reference"
+ *   - `createHistory`      → docs/API.md "History — undo / redo"
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createSignal } from 'forma/reactive';
@@ -20,7 +29,7 @@ function tick(): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, 0));
 }
 
-describe('README HTML Runtime snippets', () => {
+describe('documented HTML runtime snippets', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {
@@ -36,7 +45,8 @@ describe('README HTML Runtime snippets', () => {
     vi.unstubAllGlobals();
   });
 
-  // The counter under "3. HTML Runtime (no build step)".
+  // The counter in the README's "Three ways to use it" table, which is also the
+  // opening block of docs/HTML-RUNTIME.md. Both cite this test.
   it('the intro counter works without eval', async () => {
     container.innerHTML = `
       <div data-forma-state='{ "count": 0 }'>
@@ -215,7 +225,7 @@ describe('README HTML Runtime snippets', () => {
     expect(container.querySelectorAll('[data-forma-handler-error]')).toHaveLength(0);
   });
 
-  it('the forms the README says are permanently unsupported really are', async () => {
+  it('the forms this page says are permanently unsupported really are', async () => {
     // The "Permanently unsupported" list is a promise about the security model,
     // not a to-do. Each of these is a capability the design refuses on purpose,
     // and each must be REPORTED rather than silently doing nothing.
@@ -248,9 +258,9 @@ describe('README HTML Runtime snippets', () => {
 });
 
 // ---------------------------------------------------------------------------
-// README.md "History (Undo / Redo)"
+// docs/API.md "History — undo / redo"
 // ---------------------------------------------------------------------------
-describe('README createHistory example', () => {
+describe('the documented createHistory example', () => {
   it('runs exactly as documented', () => {
     const [text, setText] = createSignal('');
     const { undo, redo, canUndo, canRedo } = createHistory([text, setText]);

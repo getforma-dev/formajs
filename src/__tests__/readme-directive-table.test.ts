@@ -1,23 +1,28 @@
 /**
- * The README's "Full directive reference" table, executed row by row.
+ * The documented directive reference table, executed row by row.
  *
- * Every `Example` cell is EXTRACTED FROM README.md AT TEST TIME, mounted on a
- * real element inside a scope that declares the state it names, and required to
- * bind with no diagnostic. A documentation table is a list of promises; this is
- * the file that keeps them.
+ * Every `Example` cell is EXTRACTED FROM docs/HTML-RUNTIME.md AT TEST TIME,
+ * mounted on a real element inside a scope that declares the state it names,
+ * and required to bind with no diagnostic. A documentation table is a list of
+ * promises; this is the file that keeps them.
  *
  * Three rows — `$el`, `$dispatch`, `$refs` — used to carry a dagger and a
  * footnote saying they only worked with the `new Function` fallback switched
  * on, because a handler whose whole body is a method call had no branch in the
  * regex parser. The allowlist interpreter has one, so the dagger is gone and
  * those rows are asserted here like every other.
+ *
+ * The table lived in README.md until the 2026-08-06 documentation split; this
+ * file keeps its name because the closed hardening ledger and the grammar
+ * design record cite it by path.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import * as runtime from '../runtime';
 
-const README = readFileSync(resolve(process.cwd(), 'README.md'), 'utf8');
+const DOC_PATH = 'docs/HTML-RUNTIME.md';
+const DOC = readFileSync(resolve(process.cwd(), DOC_PATH), 'utf8');
 
 interface Row {
   directive: string;
@@ -26,9 +31,11 @@ interface Row {
 
 /** Pull `| directive | description | example |` rows out of the reference table. */
 function extractDirectiveRows(markdown: string): Row[] {
-  const open = markdown.indexOf('<summary><strong>Full directive reference</strong></summary>');
-  if (open < 0) throw new Error('README.md no longer has a "Full directive reference" section');
-  const close = markdown.indexOf('</details>', open);
+  const open = markdown.indexOf('## Directive reference');
+  if (open < 0) throw new Error(`${DOC_PATH} no longer has a "Directive reference" section`);
+  // Stop at the section's closing rule so a later table cannot leak in.
+  const end = markdown.indexOf('\n---', open);
+  const close = end < 0 ? markdown.length : end;
   const table = markdown.slice(open, close);
 
   const rows: Row[] = [];
@@ -43,7 +50,7 @@ function extractDirectiveRows(markdown: string): Row[] {
   return rows;
 }
 
-const ROWS = extractDirectiveRows(README);
+const ROWS = extractDirectiveRows(DOC);
 
 /**
  * State every example in the table names, in one scope. Keys are deliberately
@@ -81,7 +88,7 @@ function tick(): Promise<void> {
   return new Promise((r) => setTimeout(r, 0));
 }
 
-describe('README directive reference table', () => {
+describe('the documented directive reference table', () => {
   let container: HTMLDivElement;
 
   beforeEach(() => {

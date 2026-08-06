@@ -24,6 +24,36 @@ npm run build   # build dist/ (ends with scripts/verify-dist.mjs)
 - `npm run check:pack` — `publint` + `@arethetypeswrong/cli`
 - `npm run typecheck` — type check without emitting (covers `tsup.config.ts` and `scripts/`)
 
+## Where the documentation lives
+
+`README.md` is the landing page only: what this is, how to install it, the size
+table, the three entry points in brief, and an index. Everything with depth is
+under [`docs/`](docs/README.md), which is also the index of design records and
+the archive.
+
+| If you are changing… | Edit |
+|---|---|
+| `h()`, signals, stores, components, async, portals, the escape hatches | [`docs/API.md`](docs/API.md) |
+| a `data-*` directive or the expression grammar | [`docs/HTML-RUNTIME.md`](docs/HTML-RUNTIME.md) |
+| island activation, hydration, server props | [`docs/ISLANDS.md`](docs/ISLANDS.md) |
+| a CDN artifact or an `exports` subpath | [`docs/CDN-AND-EXPORTS.md`](docs/CDN-AND-EXPORTS.md) |
+| the stability of anything | [`docs/STABILITY.md`](docs/STABILITY.md) |
+| a benchmark or a number | [`docs/PERFORMANCE.md`](docs/PERFORMANCE.md) |
+| what a strict CSP allows | [`CSP.md`](CSP.md) and `docs/HTML-RUNTIME.md`, together |
+
+Two of those pages are **executable**: the flagship block and the directive
+table in `docs/HTML-RUNTIME.md` are extracted from the file at test time and
+mounted, so editing them into something the grammar does not accept fails the
+suite. That is deliberate — see `src/__tests__/readme-flagship.test.ts` and
+`src/__tests__/readme-directive-table.test.ts`, which keep their names because
+the archived hardening ledger cites them by path.
+
+This repo is one of four. The stack-wide
+[testing policy](https://github.com/getforma-dev/forma/blob/main/docs/TESTING.md)
+applies here too, and the `Verified by:` citation contract below is this repo's
+implementation of it — FormaJS uses it more heavily than any of its siblings, so
+if the two ever disagree, the stricter one wins.
+
 ## Code Style
 
 - Use `h()` for all DOM creation — never `document.createElement` in library code
@@ -92,8 +122,8 @@ written.
 
 ### Markdown carries the same rule
 
-`README.md`, `SECURITY.md`, `CSP.md`, this file, and `docs/HARDENING-AUDIT.md`
-use the backticked path form:
+`README.md`, `SECURITY.md`, `CSP.md`, this file, every page under [`docs/`](docs/README.md)
+and the archived hardening ledger use the backticked path form:
 
 ```
 Verified by: `src/security/__tests__/url-safety.test.ts` > "blocks data:image/svg+xml when no tag is supplied"
@@ -128,13 +158,18 @@ next to every row precisely so that check is possible.
 
 `src/__tests__/docs-truth.test.ts` resolves **every** citation against the test
 file and test name it names, and fails on any that does not resolve. It covers
-the five markdown files above plus `docs/PERFORMANCE.md`, every `.ts`/`.mjs` file
-under `src/` and `scripts/`, `tsup.config.ts`, and the workflow YAML under
-`.github/workflows/` —
-a citation in a YAML comment is a claim like any other. It also checks the claims
-that can be read straight off the repo: version pins (including the CDN pin in
-the `src/runtime.ts` header), artifact names, export coverage, the `runtime.ts`
-section map, coverage figures and size limits.
+`README.md`, `SECURITY.md`, `CSP.md`, this file, `docs/PERFORMANCE.md`, the six
+reference pages under `docs/` and the archived hardening ledger, plus every
+`.ts`/`.mjs` file under `src/` and `scripts/`, `tsup.config.ts`, and the workflow
+YAML under `.github/workflows/` — a citation in a YAML comment is a claim like
+any other. It also checks the claims that can be read straight off the repo:
+version pins (including the CDN pin in the `src/runtime.ts` header), artifact
+names, export coverage, the `runtime.ts` section map, coverage figures and size
+limits.
+
+**Adding a documentation page means adding it to that test's `DOCS` map**, in
+the same change. A page outside the map is a page whose citations nobody checks,
+which is worse than a page with none.
 
 Verified by: `src/__tests__/docs-truth.test.ts` > "every citation names a test file that exists and a test that is in it"
 Verified by: `src/__tests__/docs-truth.test.ts` > "every code comment citation resolves to a test that exists"

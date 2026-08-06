@@ -4,7 +4,7 @@
  *
  * Each entry in `probes/corpus.json` is one surgical edit that breaks a real
  * property of this codebase, and most of them are edits that reproduce a defect
- * this repo actually shipped (see `docs/HARDENING-AUDIT.md`). The harness
+ * this repo actually shipped (see `docs/archive/2026-08-05-hardening-audit.md`). The harness
  * applies each one, runs the whole suite, records whether the suite went red,
  * and restores the file.
  *

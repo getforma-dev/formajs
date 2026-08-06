@@ -27,7 +27,7 @@ move. **Experimental** means do not build on it yet.
 | SSR (`renderToString`, `renderToStream`) | **Beta** | Functional; the API may still evolve |
 | Streaming SSR under strict CSP | **Known gap** | Suspense swap scripts carry no `nonce`, so a strict `script-src 'nonce-…'` blocks them and out-of-order content never swaps in. Use non-streaming SSR under strict CSP; do not add `'unsafe-inline'`. See [`../CSP.md`](../CSP.md). |
 | TC39 Signals compat (`State`, `Computed`) | **Beta** | Tracks an evolving TC39 proposal |
-| WASM render (`@getforma/core/wasm`) | **Experimental** | Needs `window.__FORMA_WASM__` |
+| WASM render (`@getforma/core/wasm`) | **Experimental** | Needs `window.__FORMA_WASM__`; first shipped in the next release ‡ |
 
 † The island figure counts the test cases in `activate`, `activate-isolation`,
 `activate-reactivate`, `activate-triggers`, `activate-visible`,
@@ -36,6 +36,15 @@ move. **Experimental** means do not build on it yet.
 `shared-signals-across-islands` under `src/dom/__tests__/`.
 
 Verified by `src/__tests__/docs-truth.test.ts` > "the island coverage figure matches the island test files"
+
+‡ `./wasm` is an `exports` subpath in `package.json` today, but that is a
+working-tree fact, not a published one: the subpath had no build entry, no dist
+output and no `exports` key in any release from 0.7.1 through 1.5.0, so
+`import "@getforma/core/wasm"` always failed. It first resolves in whatever
+release cuts the current `## [Unreleased]` CHANGELOG entry. The row says "the
+next release" rather than a number because the number is not decided, and a
+guessed version in a stability table is how the previous claim ("unreachable
+before 1.6.0") stopped being checkable.
 
 ## About the numbers on this page
 

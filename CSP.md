@@ -2,7 +2,7 @@
 
 FormaJS needs no `unsafe-inline` and no `unsafe-eval`, in **any** build. There is no switch that could change that: expressions in `data-*` attributes are evaluated by an allowlist AST interpreter, and **no shipped artifact contains `eval`, `new Function` or `with()`**. The opt-in fallback that used to exist has been deleted, not disabled.
 
-The README's flagship example — arrow-function callback and all — is served in CI under a real `Content-Security-Policy: script-src 'self'` response header, and the browser console is asserted to report zero violations.
+The flagship example in [docs/HTML-RUNTIME.md](./docs/HTML-RUNTIME.md) — arrow-function callback and all — is served in CI under a real `Content-Security-Policy: script-src 'self'` response header, and the browser console is asserted to report zero violations.
 
 Verified by `src/__tests__/runtime-csp-default.test.ts` > "no build can reach new Function, with any configuration"
 Verified by `src/__tests__/runtime-csp-default.test.ts` > "never constructs a function, not even one that would have succeeded"
@@ -95,7 +95,7 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 
 The `console.error` beside the attribute names the cause with a stable code and a column: `FORMA_E_SYNTAX` (the parser refused the text), `FORMA_E_UNRESOLVED` (an identifier that is not state, not a magic and not one of the frozen namespaces — `document`, `window` and `fetch` land here), `FORMA_E_METHOD_DENIED` / `FORMA_E_PROPERTY_DENIED` (not on the allowlist for that receiver), `FORMA_E_KEY_DENIED` (`constructor`, `__proto__`, `call`, …), `FORMA_E_ASSIGN_DENIED` (unknown or read-only target), `FORMA_E_LIMIT` / `FORMA_E_BUDGET` (a parse or evaluation budget).
 
-**Fix:** Rewrite it within the grammar (see the README's *The expression grammar is an allowlist, not a blocklist*) or precompute the value server-side. There is no fallback to opt into: adding `'unsafe-eval'` to your policy will not make it run, because FormaJS has no code path that would use it. Call `getDiagnostics()` for the full list, or listen for the `formajs:diagnostic` event.
+**Fix:** Rewrite it within the grammar (see [docs/HTML-RUNTIME.md](./docs/HTML-RUNTIME.md), *The expression grammar is an allowlist, not a blocklist*) or precompute the value server-side. There is no fallback to opt into: adding `'unsafe-eval'` to your policy will not make it run, because FormaJS has no code path that would use it. Call `getDiagnostics()` for the full list, or listen for the `formajs:diagnostic` event.
 
 ---
 
@@ -146,8 +146,15 @@ If you see this with FormaJS v1.0.9+, the issue is outside FormaJS — check for
 
 ## Version History
 
+The last row carries the same label as `CHANGELOG.md`'s `## [Unreleased]`
+heading, and moves to a version number when that entry does. A test pins both
+ends of that rule: the newest row says `Unreleased`, and the row below it ends
+at the version in `package.json`.
+
+Verified by `src/__tests__/docs-truth.test.ts` > "CSP.md's version history ends at the shipped version, then Unreleased"
+
 | Version | CSP Status |
 |---------|------------|
 | < 1.0.9 | String styles use `cssText` — **requires `unsafe-inline` in `style-src`** |
 | 1.0.9 – 1.5.0 | All styles use CSSOM. Scripts need no `unsafe-inline`, **but the standard runtime shipped with the `new Function` fallback ENABLED**, so any expression outside the regex parser's grammar silently evaluated to `undefined` under a policy without `unsafe-eval`. |
-| > 1.5.0 | The regex parser and the fallback are **deleted**. Every build evaluates expressions with an allowlist AST interpreter — arrow-function callbacks, object literals, `$event`, bare method-call handlers and the frozen `Math`/`JSON`/`Object`/`Array` namespaces all run with no `unsafe-eval` — and anything outside the grammar is reported with a code and a column instead of silently dropped. **Fully CSP-safe, no `unsafe-inline` and no `unsafe-eval`, with nothing left to misconfigure.** |
+| Unreleased | The regex parser and the fallback are **deleted**. Every build evaluates expressions with an allowlist AST interpreter — arrow-function callbacks, object literals, `$event`, bare method-call handlers and the frozen `Math`/`JSON`/`Object`/`Array` namespaces all run with no `unsafe-eval` — and anything outside the grammar is reported with a code and a column instead of silently dropped. **Fully CSP-safe, no `unsafe-inline` and no `unsafe-eval`, with nothing left to misconfigure.** |

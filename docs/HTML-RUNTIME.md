@@ -15,7 +15,11 @@ config files. Just open it in a browser.
 
 That is a working reactive counter with no JavaScript file and no build step.
 It shares the signal graph with the `h()` and JSX entry points — this is not a
-separate, lesser runtime.
+separate, lesser runtime. The same counter is the HTML-runtime entry in the
+[README](../README.md)'s "three ways to use it" section, pinned rather than
+`@latest`; both cite the test below, which mounts this markup and clicks it.
+
+Verified by `src/__tests__/readme-examples.test.ts` > "the intro counter works without eval"
 
 ## Everything in one file
 
@@ -61,13 +65,14 @@ rendering *with filtering*, event handling, dynamic classes, dynamic attributes
 and `localStorage` persistence — no JavaScript written, no build tools
 installed.
 
-That block is not illustrative. It is **extracted from `README.md` at test
-time** and mounted, so the documentation and its proof cannot drift; a second
-copy is served in Playwright under a real
+That block is not illustrative. It is **extracted from this file at test time**
+and mounted, so the documentation and its proof cannot drift — editing it into
+something the grammar does not accept fails the suite, and so does deleting it.
+A second copy is served in Playwright under a real
 `Content-Security-Policy: script-src 'self'` response header, with the browser
 console asserted to report zero violations.
 
-Verified by `src/__tests__/readme-flagship.test.ts` > "the README block renders exactly what the README says it renders"
+Verified by `src/__tests__/readme-flagship.test.ts` > "the documented block renders exactly what this page says it renders"
 Verified by `src/__tests__/readme-flagship.test.ts` > "typing in the data-model input filters the list and the count"
 Verified by `src/__tests__/readme-flagship.test.ts` > "binds every directive in the block with zero diagnostics"
 
@@ -133,7 +138,7 @@ any global outside the frozen table. A request to support X is answered by
 adding X to a table, never by widening dispatch — see
 [`../CONTRIBUTING.md`](../CONTRIBUTING.md).
 
-Verified by `src/__tests__/readme-examples.test.ts` > "the forms the README says are permanently unsupported really are"
+Verified by `src/__tests__/readme-examples.test.ts` > "the forms this page says are permanently unsupported really are"
 Verified by `src/expr/__tests__/adversarial.test.ts` > "no global is reachable by name"
 
 An expression outside the grammar is **not evaluated, and it says so**. It logs
@@ -182,9 +187,11 @@ Verified by `src/__tests__/build-artifacts.test.ts` > "no build emits new Functi
 | `$dispatch` | Fire CustomEvent (bubbles, crosses Shadow DOM) | `data-on:click="{$dispatch('selected', {id})}"` |
 | `$refs` | Named element references | `data-on:click="{$refs.myInput.focus()}"` |
 
-Every `Example` cell in the README's copy of this table is extracted by the test
-suite and mounted; all of them bind with no diagnostic, including the last
-three, which needed the eval fallback until the allowlist interpreter landed.
+Every `Example` cell above is extracted from this file by the test suite and
+mounted on the element shape its directive needs; all of them bind with no
+diagnostic, including the last three, which needed the eval fallback until the
+allowlist interpreter landed. A row whose example stops parsing fails the suite
+by name.
 
 `$el`, `$event` and `$refs` hand expressions a **wrapped** element rather than
 the live node, and the wrapper survives every hop, so `$el.ownerDocument`,

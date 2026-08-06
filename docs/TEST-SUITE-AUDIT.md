@@ -22,7 +22,7 @@
 > throughout; that is deliberate.
 
 **Scope:** `formajs` @ `17f8783` (1007 vitest tests / 102 files, plus 33 Playwright tests that `npm test` does not run) and `forma-tools/packages/compiler` @ `53f3f9d` (239 tests / 9 files).
-**Evidence base:** 42 hand-rolled mutation probes + a full Stryker run on formajs; 32 binary probes on the compiler, replayed through the real Rust FMIR consumer; a defect-by-defect retrospective on all 41 findings in `docs/HARDENING-AUDIT.md`; a static taxonomy sweep of all 1003 parsed test bodies.
+**Evidence base:** 42 hand-rolled mutation probes + a full Stryker run on formajs; 32 binary probes on the compiler, replayed through the real Rust FMIR consumer; a defect-by-defect retrospective on all 41 findings in `docs/archive/2026-08-05-hardening-audit.md`; a static taxonomy sweep of all 1003 parsed test bodies.
 **Line numbers are as of those commits.** The tree has moved since (`hydrate.test.ts` has grown); test *names* are the durable citation and are used throughout.
 
 ---
