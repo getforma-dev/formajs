@@ -3,6 +3,14 @@ name: CI
 on:
   push:
     branches: [main]
+    # Doc-only pushes to main do not need six runners. Deliberately NOT on
+    # `pull_request`: a skipped workflow leaves a required status check
+    # permanently pending and the PR can never merge. Extend to pull_request
+    # only after confirming branch protection allows it.
+    paths-ignore:
+      - '**/*.md'
+      - 'docs/**'
+      - 'LICENSE'
   pull_request:
     branches: [main]
   schedule:
@@ -11,9 +19,25 @@ on:
     - cron: '17 3 * * *'
   workflow_dispatch:
 
+# This repo previously had NO concurrency group on CI (only docs.yml had one,
+# `group: pages`), so every superseded push kept its runners. On 2026-08-06 the
+# four Forma repos asked for ~44 concurrent jobs against a 20-job limit and
+# jobs sat 20-58 minutes waiting for a runner; that queue time was misread as
+# hanging jobs. `github.ref` keeps the nightly schedule (ref = main) from
+# cancelling itself against a same-minute push, and vice versa, only in the
+# sense that the newer run wins — which is the behaviour we want.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: ubuntu-latest
+    # MEASURED locally: typecheck 4s, test:coverage 9s, build 6s, check:size
+    # 1s — 20s of actual work. `npm ci` measured 5s locally, 30-60s on a
+    # runner. Realistic worst case ~2m; 10 is 5x, and the whole job is
+    # deterministic with no server and no browser.
+    timeout-minutes: 10
     strategy:
       fail-fast: false
       matrix:
@@ -46,6 +70,9 @@ jobs:
   # Verified by: src/__tests__/probe-corpus.test.ts > "every probe still applies to the file it names"
   probes-check:
     runs-on: ubuntu-latest
+    # MEASURED locally: `node scripts/run-probes.mjs --check` = under 1s for
+    # all 93 probes. The job is `npm ci` and nothing else. 8 is >4x a 1.5m run.
+    timeout-minutes: 8
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -60,7 +87,14 @@ jobs:
   probes:
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
-    timeout-minutes: 60
+    # MEASURED locally: the full run — apply each of the 93 probes, run the
+    # whole vitest suite, revert — completed in 411s (6.9m) at 90/90 = 100%
+    # detection. A 2-core hosted runner is roughly 2-3x slower than the machine
+    # that measured it, so budget 15-20m; 35 is ~2x that. The previous value,
+    # 60, was a round number nobody had measured — and it was this fleet's ONLY
+    # timeout-minutes anywhere, sitting on the one job that never runs per-PR,
+    # so effective per-PR timeout coverage was exactly zero.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -79,8 +113,17 @@ jobs:
   # Packaging surface. Split out because it is Node-version independent and
   # would have caught the node10 / global-subpath / missing-package.json
   # export defects the 2026-08 hardening audit found.
+  #
+  # `needs: test` is a runner-demand fix, not a correctness one: it re-runs the
+  # same build `test` already ran, so there is nothing to learn from it when
+  # `test` is red. Gating it takes this workflow's peak concurrent demand from
+  # 6 jobs to 4.
   package:
     runs-on: ubuntu-latest
+    needs: test
+    # MEASURED locally: build 6s, check:pack (publint + attw) 4s. `attw --pack`
+    # shells out to `npm pack`. Realistic worst case ~2m; 10 is 5x.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -93,6 +136,14 @@ jobs:
 
   e2e:
     runs-on: ubuntu-latest
+    needs: test
+    # MEASURED locally: `npm run test:e2e` = 15s wall (build + copy + 30 specs
+    # in 7.3s, all green). In CI the healthy run measured 5.4m end to end, of
+    # which playwright install was 0.3m. The Playwright config gives webServer
+    # no explicit timeout, so it inherits the 60s default — `npx serve` failing
+    # to bind fails the run at 60s and cannot hang. 12 is >2x the measured CI
+    # number and ~50x the local one.
+    timeout-minutes: 12
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -100,6 +151,18 @@ jobs:
           node-version: 24
           cache: npm
       - run: npm ci
+
+      # Cache the browser binaries (~130 MB) keyed on the resolved Playwright
+      # version. `--with-deps` still runs so the OS packages are present; only
+      # the download is skipped on a hit.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@v6

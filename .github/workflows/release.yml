@@ -4,11 +4,42 @@ on:
   push:
     tags: ['v*']
 
+# cancel-in-progress is deliberately FALSE. A publish is never superseded, and
+# cancelling `npm publish` between the tarball upload and the registry commit
+# is how a version ends up half-created and unrecoverable without a bump.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
-    # Required reviewers / deployment secrets are configured on this
-    # environment, so a tag push cannot publish unattended.
+    # MEASURED: on 2026-08-06 run #16 this job passed EVERY gate — npm ci,
+    # typecheck, test, playwright install, test:e2e, build, check:size,
+    # check:pack, version-matches-tag — and then failed at `npm publish` after
+    # 1.2m. Locally the gates sum to ~40s of work; in CI the equivalent jobs
+    # measured ~5.4m for e2e alone. Realistic worst case ~8m; 20 is ~2.5x and
+    # bounds a slow registry without ever cutting a publish short.
+    timeout-minutes: 20
+    # NOTE — this comment used to claim "Required reviewers / deployment
+    # secrets are configured on this environment, so a tag push cannot publish
+    # unattended." That was FALSE and it mattered: the GitHub API shows
+    # `npm-publish` with `protection_rules: []`, auto-created at
+    # 2026-08-06T16:39:47Z the instant this workflow first referenced it.
+    # Nothing gates it, no human click is needed, and a tag push DOES publish
+    # unattended. Environment approval was never why nothing published.
+    #
+    # The environment is kept because npm's trusted-publisher entry binds to
+    # the OIDC claim, and that claim includes the environment name. If the npm
+    # side is configured with an empty environment while this job declares
+    # `npm-publish`, the claim will not match and publish fails with an auth
+    # error that looks nothing like a configuration error.
+    #
+    # OWNER DECISION REQUIRED, pick one and make the comment true again:
+    #   (a) add Required reviewers under Settings -> Environments -> npm-publish,
+    #       which makes the original claim true; or
+    #   (b) delete the environment here and on npmjs.com, and accept that a tag
+    #       push publishes unattended (which is what happens today).
     environment: npm-publish
     env:
       # Cross-repo dispatch PAT (optional). Surfaced as env so the notify step
@@ -21,6 +52,8 @@ jobs:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
         with:
+          # npm >= 11.5.1 is required for OIDC trusted publishing; Node 24
+          # ships it. Do not lower this.
           node-version: 24
           cache: npm
           registry-url: https://registry.npmjs.org
@@ -31,7 +64,15 @@ jobs:
 
       # The e2e suite is the only thing that exercises the built artifacts in a
       # real browser. The CI badge implies it gates the code, so release must
-      # run it too — a hydration regression it catches must not ship.
+      # run it too — a hydration regression it catches must not ship. This gate
+      # is NOT weakened: the browser cache below only skips a download.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e   # builds, then drives dist/formajs-runtime.global.js
 
@@ -48,6 +89,12 @@ jobs:
             exit 1
           fi
 
+      # Recorded for the failure explainer below: an OIDC publish that fails
+      # because npm is too old looks identical to one that fails on auth.
+      - name: Record toolchain
+        run: |
+          echo "node $(node -v) / npm $(npm -v) — OIDC trusted publishing needs npm >= 11.5.1"
+
       # Trusted publishing: uses OIDC for auth, no npm token needed.
       # Provenance is generated automatically.
       # Configure at: npmjs.com/package/@getforma/core → Settings → Trusted Publisher
@@ -56,6 +103,26 @@ jobs:
       # dist AFTER the gates above measured it. The bytes that get published are
       # then exactly the bytes check:size and check:pack inspected.
       - run: npm publish --access public --ignore-scripts
+
+      # run #16 failed here and the run page said only "failure". These causes
+      # need different responses and only one of them is fixed by re-running.
+      - name: Explain a publish failure
+        if: failure()
+        run: |
+          echo "::error title=@getforma/core publish failed::Read the npm error above, then match it here."
+          echo "5xx / ETIMEDOUT / 'Unable to get OIDC token' / 'Service Unavailable'"
+          echo "  -> GitHub Actions or npm incident. The Actions API mints the OIDC token that npm"
+          echo "     exchanges for a registry credential, so an Actions outage breaks publish auth."
+          echo "     RE-RUN THIS RUN. Do not re-tag; the tag is fine."
+          echo "ENEEDAUTH / E403 / 'Unable to authenticate, need: Basic realm=npm'"
+          echo "  -> Trusted publishing is not configured, OR it is configured with the wrong"
+          echo "     environment. This job runs in environment 'npm-publish', so the entry at"
+          echo "     npmjs.com/package/@getforma/core -> Settings -> Trusted Publisher must name"
+          echo "     repository getforma-dev/formajs, workflow .github/workflows/release.yml,"
+          echo "     AND environment npm-publish — exactly. An empty environment field there"
+          echo "     will NOT match this job. Human step; re-running will not fix it."
+          echo "E409 / 'cannot publish over the previously published versions'"
+          echo "  -> This version already shipped. Bump the version and re-tag."
 
       - name: Notify create-forma-app to update dependency
         # Skip silently when no dispatch PAT is configured (OIDC covers npm

@@ -14,6 +14,12 @@ permissions:
   pages: write
   id-token: write
 
+# Deliberately keyed on `pages` rather than on workflow+ref, unlike every other
+# workflow in this fleet. A GitHub Pages site is a singleton deployment target:
+# two concurrent deploys conflict no matter which refs produced them, and this
+# group serialises against any future Pages workflow too. The trigger is
+# push-to-main plus workflow_dispatch, so ref is always `main` in practice and
+# the two keys are equivalent here anyway.
 concurrency:
   group: pages
   cancel-in-progress: true
@@ -24,6 +30,11 @@ jobs:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
+    # MEASURED locally: `npm ci` 5s, `npx typedoc` runs over the same src the
+    # 4s typecheck covers. The job is npm ci + typedoc + a Pages upload.
+    # Realistic worst case ~3m; 10 is >3x, and the Pages deploy API is the only
+    # part that can stall.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
