@@ -1,7 +1,7 @@
 {
   "name": "@getforma/core",
   "author": "Forma <victor@getforma.dev>",
-  "version": "2.0.0",
+  "version": "2.0.1",
   "description": "Real DOM reactive library — fine-grained signals, islands architecture, SSR hydration. No virtual DOM, no diffing. Untree-shaken core ~25KB gzipped; CDN HTML runtime ~31KB gzipped with a CSP-safe allowlist expression interpreter, zero eval (measured by scripts/check-size.mjs).",
   "type": "module",
   "main": "./dist/index.cjs",
