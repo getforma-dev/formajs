@@ -17,8 +17,8 @@ application must verify the released or linked fix before the finding is closed.
 
 | ID | Found in | Owner | Finding and regression | Status |
 |---|---|---|---|---|
-| FD-001 | Forma Vector Studio | `formajs` | A synchronous `data-bind:*` effect could remove an attribute from the live `NamedNodeMap`, shifting indices and skipping an adjacent `data-class:*` or `data-on:*` directive. Verified by `src/__tests__/runtime-bind-security.test.ts` > "does not skip adjacent directives when a binding removes an attribute". | Fixed on `fix/vector-dogfood-runtime-directives`; review pending. |
-| FD-002 | Forma Vector Studio | `formajs` | Split runtime chunks were not declared in `sideEffects`, so a linked consumer could drop required bare side-effect imports. Wildcard promises are now validated against actual distribution artifacts by `scripts/verify-dist.mjs`. | Fixed on `fix/vector-dogfood-runtime-directives`; review pending. |
+| FD-001 | Forma Vector Studio | `formajs` | A synchronous `data-bind:*` effect could remove an attribute from the live `NamedNodeMap`, shifting indices and skipping an adjacent `data-class:*` or `data-on:*` directive. Verified by `src/__tests__/runtime-bind-security.test.ts` > "does not skip adjacent directives when a binding removes an attribute". | Fixed in [Formajs PR #9](https://github.com/getforma-dev/formajs/pull/9); review pending. |
+| FD-002 | Forma Vector Studio | `formajs` | Split runtime chunks were not declared in `sideEffects`, so a linked consumer could drop required bare side-effect imports. Wildcard promises are now validated against actual distribution artifacts by `scripts/verify-dist.mjs`. | Fixed in [Formajs PR #9](https://github.com/getforma-dev/formajs/pull/9); review pending. |
 
 ## Resolved cross-repo findings
 
