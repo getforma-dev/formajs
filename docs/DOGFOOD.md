@@ -19,6 +19,7 @@ application must verify the released or linked fix before the finding is closed.
 |---|---|---|---|---|
 | FD-001 | Forma Vector Studio | `formajs` | A synchronous `data-bind:*` effect could remove an attribute from the live `NamedNodeMap`, shifting indices and skipping an adjacent `data-class:*` or `data-on:*` directive. Verified by `src/__tests__/runtime-bind-security.test.ts` > "does not skip adjacent directives when a binding removes an attribute". | Fixed in [Formajs PR #9](https://github.com/getforma-dev/formajs/pull/9); review pending. |
 | FD-002 | Forma Vector Studio | `formajs` | Split runtime chunks were not declared in `sideEffects`, so a linked consumer could drop required bare side-effect imports. Wildcard promises are now validated against actual distribution artifacts by `scripts/verify-dist.mjs`. | Fixed in [Formajs PR #9](https://github.com/getforma-dev/formajs/pull/9); review pending. |
+| FD-003 | Forma Tools full-stack E2E | `forma-tools` | Local fixture sync requested the removed `dist/formajs.global.js` artifact and therefore tested a stale committed fixture. The shared sync path now bundles the shipped `forma.esm.js` into the required `FormaJS` IIFE for local and CI runs. | Fixed in [Forma Tools PR #6](https://github.com/getforma-dev/forma-tools/pull/6); review pending. |
 
 ## Resolved cross-repo findings
 
