@@ -4,6 +4,19 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-08-08
+
+### Fixed
+
+- Snapshot an element's attributes before binding colon directives. A synchronous
+  `data-bind:*` effect can add or remove an attribute; iterating the browser's live
+  `NamedNodeMap` could therefore skip an adjacent `data-class:*` or `data-on:*`
+  directive. Forma Vector Studio exposed this integration defect and now has the
+  released runtime fix available through npm.
+- Declare generated split runtime chunks as side effects and verify those declarations
+  against the actual distribution, preventing linked consumers from dropping required
+  bare side-effect imports.
+
 ## [2.0.0] - 2026-08-06
 
 A hardening release. A five-lens audit of 1.5.0 (docs-vs-behaviour, security,

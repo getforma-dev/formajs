@@ -24,7 +24,7 @@ Verified by `src/__tests__/readme-examples.test.ts` > "the intro counter works w
 ## Everything in one file
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.0/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.1/dist/formajs-runtime.global.js"></script>
 
 <div data-forma-state='{
   "query": "",
@@ -155,7 +155,7 @@ The hardened build is the same runtime under a second, tree-shaken bundling. It
 is no longer a stronger guarantee — every build is equally eval-free:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.0/dist/formajs-runtime-hardened.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.1/dist/formajs-runtime-hardened.global.js"></script>
 ```
 
 Verified by `src/__tests__/build-artifacts.test.ts` > "no build emits new Function or a with() scope wrapper"
