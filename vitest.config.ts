@@ -20,10 +20,13 @@ export default defineConfig({
       ],
     },
   },
-  esbuild: {
-    jsx: 'transform',
-    jsxFactory: 'h',
-    jsxFragment: 'Fragment',
+  oxc: {
+    jsx: {
+      runtime: 'classic',
+      pragma: 'h',
+      pragmaFrag: 'Fragment',
+      development: false,
+    },
   },
   resolve: {
     alias: [

@@ -87,6 +87,22 @@ describe('data-bind: attribute injection', () => {
     expect(a.getAttribute('href')).toBe('https://example.com');
     expect(a.getAttribute('title')).toBe('hello');
   });
+
+  it('does not skip adjacent directives when a binding removes an attribute', () => {
+    container.innerHTML = `
+      <div data-forma-state='{"active": false}'>
+        <button id="t" data-active="initial" data-bind:data-active="{active}"
+          data-class:on="{active}" data-on:click="active = true">activate</button>
+      </div>`;
+    mount(container);
+    const button = container.querySelector('#t')! as HTMLButtonElement;
+
+    expect(button.hasAttribute('data-active')).toBe(false);
+    button.click();
+
+    expect(button.hasAttribute('data-active')).toBe(true);
+    expect(button.classList.contains('on')).toBe(true);
+  });
 });
 
 describe('data-list row-template attribute injection', () => {

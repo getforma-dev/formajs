@@ -65,10 +65,11 @@ function collectPaths(node, out = []) {
 // 1. Every path package.json promises actually exists
 // ---------------------------------------------------------------------------
 
+const sideEffectPaths = pkg.sideEffects.map((p) => p.replace(/^\.\//, ''));
 const promised = new Set([
   ...collectPaths(pkg.exports),
   ...Object.values(pkg.typesVersions?.['*'] ?? {}).flat(),
-  ...pkg.sideEffects.map((p) => p.replace(/^\.\//, '')),
+  ...sideEffectPaths.filter((p) => !p.includes('*')),
   pkg.main.replace(/^\.\//, ''),
   pkg.module.replace(/^\.\//, ''),
   pkg.types.replace(/^\.\//, ''),
@@ -78,6 +79,14 @@ for (const rel of [...promised].sort()) {
   if (rel === 'package.json') continue;
   if (!existsSync(resolve(ROOT, rel))) {
     fail(`package.json points at ${rel}, which the build did not produce`);
+  }
+}
+
+for (const pattern of sideEffectPaths.filter((p) => p.includes('*'))) {
+  const escaped = pattern.replace(/[.+?^${}()|[\]\\]/g, '\\$&').replaceAll('*', '.*');
+  const matcher = new RegExp(`^${escaped}$`);
+  if (!jsArtifacts().some((rel) => matcher.test(rel))) {
+    fail(`package.json sideEffects pattern ${pattern} matched no build artifact`);
   }
 }
 
