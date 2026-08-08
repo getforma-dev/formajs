@@ -149,7 +149,9 @@
     "./dist/runtime.js",
     "./dist/runtime.cjs",
     "./dist/runtime-hardened.js",
-    "./dist/runtime-hardened.cjs"
+    "./dist/runtime-hardened.cjs",
+    "./dist/chunk-*.js",
+    "./dist/chunk-*.cjs"
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsup && node scripts/post-build.mjs && node scripts/verify-dist.mjs",
@@ -224,20 +226,21 @@
     "alien-signals": "~3.1.2"
   },
   "overrides": {
+    "esbuild": "^0.28.1",
     "rollup": "^4.59.0"
   },
   "devDependencies": {
     "@arethetypeswrong/cli": "^0.18.5",
-    "@playwright/test": "^1.58.2",
-    "@vitest/coverage-v8": "^4.0.18",
-    "esbuild": "0.27.3",
+    "@playwright/test": "^1.62.1",
+    "@vitest/coverage-v8": "^4.1.10",
+    "esbuild": "^0.28.1",
     "fake-indexeddb": "^6.2.3",
-    "happy-dom": "^20.8.3",
+    "happy-dom": "^20.11.2",
     "publint": "^0.3.23",
     "serve": "^14.2.6",
     "tsup": "^8.5.1",
-    "typedoc": "^0.28.17",
-    "typescript": "^5.7.3",
-    "vitest": "^4.0.18"
+    "typedoc": "^0.28.20",
+    "typescript": "^5.9.3",
+    "vitest": "^4.1.10"
   }
 }

@@ -1625,7 +1625,10 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // Single-pass over attributes for data-on:*, data-class:*, data-bind:*
   // When directive map is available, skip the loop entirely if none of these are present.
   const hasColonDirectives = !known || hasAnyPrefix(known, 'data-on:', 'data-class:', 'data-bind:');
-  const attrs = el.attributes;
+  // Snapshot the NamedNodeMap before binding. data-bind effects run
+  // synchronously and can add/remove attributes; iterating the live map would
+  // otherwise skip the following directive when its indices shift.
+  const attrs = Array.from(el.attributes);
   if (hasColonDirectives) for (let i = 0; i < attrs.length; i++) {
     const attr = attrs[i]!;
     const name = attr.name;
