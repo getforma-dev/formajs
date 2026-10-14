@@ -4,6 +4,29 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`browserOnly(component)`, the browser-only marker** (DR-1, L-1, FORMA-119).
+  Wraps a component that renders in the browser alone; one name, so a search
+  finds every use. `@getforma/compiler` 0.3.7 and later emit
+  `const X = browserOnly(Impl)` as a registered island whose server output is
+  its empty host element with its declared props (`data-forma-props`).
+  Registered as it is (`activateIslands({ X })`), activation calls it with the
+  island's element and props, and it renders `Impl(props)` in the host's place;
+  called as a component in a client-rendered tree it renders `Impl(props)`;
+  with no document it renders nothing. Additive: no existing export changes.
+  The core entry grows 103 B gzipped (27,703 to 27,806 B of its 30,000 B gate)
+  and the browser ESM bundle 99 B; the CDN runtimes do not change.
+
+### Documentation
+
+- **`docs/ISLANDS.md` states what adoption skips today** (FORMA-016): a plain
+  array child (`.map()` without `createList`), `createErrorBoundary`,
+  `createSwitch`, `createPortal` and `createSuspense`, and a reactive child
+  that returns an element; what a server-rendered page gets with each, the
+  build code compiler 0.3.7 reports for it, and what to write instead. It also
+  documents `browserOnly()`.
+
 ### CI
 
 - **Actions pinned to commits; every job declares its token** (DR-32, SR21,
