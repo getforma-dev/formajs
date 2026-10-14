@@ -16,8 +16,14 @@ import { createPolicy, factory, registry } from './trusted-html.js';
 export interface RuntimeParser {
   /** The markup, trimmed, minted through `forma-runtime`. */
   html: string;
-  /** A fresh parse of {@link html}. */
-  parse(): DocumentFragment;
+  /**
+   * A fresh parse of {@link html}: in an inert `<template>`, or, given
+   * `context`, in that element's own context (`Range.createContextualFragment`,
+   * a Trusted Types sink that takes the minted value), so what the parse
+   * yields is what the element would have parsed itself and the nodes can be
+   * written as they are, never as a string parsed again.
+   */
+  parse(context?: Element): DocumentFragment;
   /**
    * The `srcdoc` of an iframe that {@link parse} produced, minted through
    * `forma-runtime`; null for any other element. Its value came out of
@@ -47,11 +53,19 @@ export function runtimeParser(value: unknown): RuntimeParser | null {
       const parsed = new WeakSet<Element>();
       return {
         html,
-        parse() {
-          const tpl = document.createElement('template');
-          tpl.innerHTML = html;
-          for (const frame of tpl.content.querySelectorAll('iframe')) parsed.add(frame);
-          return tpl.content;
+        parse(context) {
+          let content: DocumentFragment;
+          if (context) {
+            const range = context.ownerDocument.createRange();
+            range.selectNodeContents(context);
+            content = range.createContextualFragment(html);
+          } else {
+            const tpl = document.createElement('template');
+            tpl.innerHTML = html;
+            content = tpl.content;
+          }
+          for (const frame of content.querySelectorAll('iframe')) parsed.add(frame);
+          return content;
         },
         srcdoc(el) {
           const doc = parsed.has(el) ? el.getAttribute('srcdoc') : null;

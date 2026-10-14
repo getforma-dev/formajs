@@ -382,6 +382,22 @@ diagnostic's message quotes the module's expression, so the host treats every
 `sandbox="allow-scripts"`, checking each message's schema, tearing the frame
 down on a second load) is the application's.
 
+A module renders no `<link>` and no `srcdoc`. WebKit opened a connection to
+any host a `<link rel="preconnect">` named (its `href` written or bound) from
+inside the frame, which no CSP directive governs, and for one inside an
+`<iframe srcdoc>`'s child document too. An unreviewed mount parses its markup
+once, in the root's own context, removes every `<link>` and every `srcdoc`
+attribute from those nodes (nested `<template>` contents included), writes
+the nodes themselves rather than a string the root would parse again (a
+second parse can create a `<link>` the first did not show, through foreign
+content and foster parenting), and checks the live subtree after every write:
+anything found there is removed and the render refused, the root cleared. A
+`data-bind:srcdoc` is refused in this tier before it runs. Each is reported,
+`FORMA_E_UNREVIEWED_LINK` or `FORMA_E_UNREVIEWED_SRCDOC` (the frame forwards
+it to the host as an `error`). Under the frame's policy no `<link>` would have
+done anything else; an `<iframe>` still renders, with `src` refused by the
+policy and no document of its own.
+
 A module styles itself with `style` attributes only. The frame's policy
 allows styles by nonce (`style-src 'nonce-…'`, with `style-src-attr
 'unsafe-inline'`), and the runtime, allowed by its hash, has no nonce to give
@@ -391,6 +407,12 @@ Verified by `src/__tests__/runtime-frame.test.ts` > "takes one port from its par
 Verified by `src/__tests__/runtime-frame.test.ts` > "ignores a port from any window but its parent, and every port after the first"
 Verified by `src/__tests__/runtime-frame.test.ts` > "refuses every message but the module, and changes nothing"
 Verified by `src/__tests__/runtime-frame.test.ts` > "forwards the runtime's diagnostics, never a module's own formajs:diagnostic"
+Verified by `src/__tests__/runtime-frame.test.ts` > "a module's <link> never reaches the frame document, and the host hears why"
+Verified by `src/__tests__/runtime-frame.test.ts` > "a module's srcdoc never reaches the frame document, and the host hears why"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount renders no <link>: each is removed before the markup reaches the document"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount parses its markup once, in the root's context, and writes no string to the root"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount renders no srcdoc: the attribute is removed, a binding that would write one is refused, and each is reported"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount fails closed: a <link> that reaches the root after the strip is removed, reported, and the markup refused"
 Verified by `src/__tests__/runtime-frame.test.ts` > "the frame runtime is one classic script a server can inline as it is"
 Verified by `src/__tests__/runtime-frame.test.ts` > "two builds of the frame runtime are byte-identical"
 
