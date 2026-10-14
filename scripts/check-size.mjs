@@ -68,6 +68,14 @@ export const GATES = [
     note: 'CDN browser ESM bundle (self-contained, inlines alien-signals)',
   },
   {
+    // The preview frame's runtime (FORMA-128), written inline into every
+    // preview document. Gated from its first measurement (37,526 B), rounded
+    // up to the next 500 B, as L-51 sets the runtime gates.
+    entry: 'dist/formajs-frame.global.js',
+    limit: 38000,
+    note: 'preview frame runtime (one classic script, inlined by the server)',
+  },
+  {
     // This artifact was gated NOWHERE — not here, not in ci.yml, not in
     // release.yml — while being the build the docs pointed CSP-strict users at
     // and the target of the `runtime-csp` exports subpath.

@@ -2613,5 +2613,95 @@
   "find": "    else if (c === ')' && --depth < 0) return false;",
   "replace": "    else if (c === ')') --depth;",
   "note": "a selector that closes what it did not open (.x)) counts as local, a malformed selector not failing closed. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
+ },
+ {
+  "id": "frame/port-from-anyone",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (event.source !== win.parent || win.parent === (win as unknown) || event.ports.length !== 1) return;",
+  "replace": "    if (event.ports.length !== 1) return;",
+  "note": "the frame takes a port from any window, not only its parent: a frame the module nests, or the frame itself, hands it a channel. Verified by: src/__tests__/runtime-frame.test.ts > \"ignores a port from any window but its parent, and every port after the first\""
+ },
+ {
+  "id": "frame/many-ports",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (event.source !== win.parent || win.parent === (win as unknown) || event.ports.length !== 1) return;",
+  "replace": "    if (event.source !== win.parent || win.parent === (win as unknown) || event.ports.length < 1) return;",
+  "note": "a message carrying several ports is taken. Verified by: src/__tests__/runtime-frame.test.ts > \"ignores a port from any window but its parent, and every port after the first\""
+ },
+ {
+  "id": "frame/keeps-listening",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    win.removeEventListener('message', onWindow);\n",
+  "replace": "",
+  "note": "the frame keeps listening on its window after the first port, so a later port replaces the host's channel. Verified by: src/__tests__/runtime-frame.test.ts > \"ignores a port from any window but its parent, and every port after the first\""
+ },
+ {
+  "id": "frame/extra-keys",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      && Object.keys(data).length === 2 && data.type === 'module' && typeof data.html === 'string'",
+  "replace": "      && data.type === 'module' && typeof data.html === 'string'",
+  "note": "a message with more than the module's two fields is accepted. Verified by: src/__tests__/runtime-frame.test.ts > \"refuses every message but the module, and changes nothing\""
+ },
+ {
+  "id": "frame/any-type",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      && Object.keys(data).length === 2 && data.type === 'module' && typeof data.html === 'string'",
+  "replace": "      && Object.keys(data).length === 2 && typeof data.html === 'string'",
+  "note": "a message of any type carrying html renders. Verified by: src/__tests__/runtime-frame.test.ts > \"refuses every message but the module, and changes nothing\""
+ },
+ {
+  "id": "frame/reviewed-tier",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "mountMarkup(root, html, { tier: 'unreviewed', config: { name: 'preview' } })",
+  "replace": "mountMarkup(root, html, { tier: 'reviewed', config: { name: 'preview' } })",
+  "note": "the frame mounts unreviewed content in tier (b), with every grant A2 gives by default: its data-fetch is sent. Verified by: src/__tests__/runtime-frame.test.ts > \"takes one port from its parent, renders each module in tier (c) and answers only ready, resize and error\""
+ },
+ {
+  "id": "frame/diagnostics-dropped",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    fail(String(detail?.code), `${String(detail?.reason)}: ${String(detail?.expr)}`);",
+  "replace": "",
+  "note": "the module's diagnostics and denials never reach the host. Verified by: src/__tests__/runtime-frame.test.ts > \"takes one port from its parent, renders each module in tier (c) and answers only ready, resize and error\""
+ },
+ {
+  "id": "frame/auto-mount",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "if (typeof document !== 'undefined'\n  && !(typeof __FORMA_FRAME_BUILD__ === 'boolean' && __FORMA_FRAME_BUILD__)) {",
+  "replace": "if (typeof document !== 'undefined') {",
+  "note": "the preview frame's runtime mounts the page's data-forma-state on load and watches body, so markup injected outside the root is bound. Verified by: src/__tests__/runtime-frame.test.ts > \"the frame runtime is one classic script a server can inline as it is\""
+ },
+ {
+  "id": "frame/source-map",
+  "file": "tsup.config.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    entry: { 'formajs-frame': 'src/runtime-frame.ts' },\n    format: ['iife'],\n    outDir: 'dist',\n    minify: false,\n    sourcemap: false,",
+  "replace": "    entry: { 'formajs-frame': 'src/runtime-frame.ts' },\n    format: ['iife'],\n    outDir: 'dist',\n    minify: false,\n    sourcemap: true,",
+  "note": "the frame runtime ends in a sourceMappingURL comment, which an opaque-origin frame would try to fetch. Verified by: src/__tests__/runtime-frame.test.ts > \"the frame runtime is one classic script a server can inline as it is\""
  }
 ]

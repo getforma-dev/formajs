@@ -17,6 +17,13 @@
 export const DEV_BUILD_FLAG = '__FORMA_DEV_BUILD__';
 
 /**
+ * Free identifier the preview frame's runtime is built with as `true`, and
+ * every other artifact as `false` (FORMA-128). Folded at each site, as the dev
+ * flag is.
+ */
+export const FRAME_BUILD_FLAG = '__FORMA_FRAME_BUILD__';
+
+/**
  * Identifier `src/reactive/dev.ts` uses only inside its raw-source NODE_ENV
  * fallback. If it is still present in a built artifact, the fallback survived
  * and `__DEV__` is being computed at runtime — which is exactly the bug
@@ -31,6 +38,7 @@ export const RAW_SOURCE_DEV_GLOBAL = '__FORMA_DEV__';
  */
 export const PROD_DEFINE = Object.freeze({
   [DEV_BUILD_FLAG]: 'false',
+  [FRAME_BUILD_FLAG]: 'false',
 });
 
 /**
@@ -40,6 +48,18 @@ export const PROD_DEFINE = Object.freeze({
  */
 export const DEV_DEFINE = Object.freeze({
   [DEV_BUILD_FLAG]: 'true',
+  [FRAME_BUILD_FLAG]: 'false',
+});
+
+/**
+ * esbuild `define` entries for the preview frame's runtime (FORMA-128): a
+ * production build in which `src/runtime.ts` does not mount the page's
+ * `data-forma-state` on load or watch `body`, and `src/runtime-frame.ts`
+ * connects to its host.
+ */
+export const FRAME_DEFINE = Object.freeze({
+  [DEV_BUILD_FLAG]: 'false',
+  [FRAME_BUILD_FLAG]: 'true',
 });
 
 /**
@@ -90,6 +110,15 @@ export const CDN_URL_ARTIFACTS = Object.freeze([
  * keep it external too, so a process holding both builds still has one copy of
  * alien-signals.
  */
+/**
+ * The preview frame's runtime (FORMA-128, tier (c)): one classic,
+ * self-contained script that a server writes inline into the frame document
+ * (forma-server's `PageResponse::frame`, FORMA-125) and a build copies into an
+ * application's assets as `forma-runtime.js` (FORMA-175). Reached by path, not
+ * through the exports map, as the other IIFEs are.
+ */
+export const FRAME_RUNTIME_OUTPUT = 'dist/formajs-frame.global.js';
+
 export const EXTERNAL_DEPS_OUTPUTS = Object.freeze([
   'dist/index.js',
   'dist/index.cjs',

@@ -194,6 +194,8 @@ import { sourceIsDev, warnDeprecated } from './deprecated';
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a production build carries neither the grant report nor reconcile's warning"
  */
 declare const __FORMA_DEV_BUILD__: boolean | undefined;
+/** True only in the preview frame's runtime (FORMA-128); see `tsup.config.ts`. */
+declare const __FORMA_FRAME_BUILD__: boolean | undefined;
 
 // ── Attribute safety & scope ──
 
@@ -2919,8 +2921,13 @@ function unmount(el: Element): void {
   }
 }
 
-// Auto-init in browser contexts on DOMContentLoaded (or immediately if already loaded).
-if (typeof document !== 'undefined') {
+// Auto-init in browser contexts on DOMContentLoaded (or immediately if already
+// loaded): the tierless auto-mount, deprecated, removed in 3.0.0. Not in the
+// preview frame's runtime, built with the frame flag, which binds only the
+// module its host sends (FORMA-128).
+// Verified by: src/__tests__/runtime-frame.test.ts > "the frame runtime is one classic script a server can inline as it is"
+if (typeof document !== 'undefined'
+  && !(typeof __FORMA_FRAME_BUILD__ === 'boolean' && __FORMA_FRAME_BUILD__)) {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initRuntime);
   } else {

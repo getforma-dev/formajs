@@ -25,6 +25,7 @@ import {
   DEV_CONDITION,
   DEV_OUT_DIR,
   EXTERNAL_DEPS_OUTPUTS,
+  FRAME_RUNTIME_OUTPUT,
   RAW_SOURCE_DEV_GLOBAL,
 } from './build-defines.mjs';
 import { parseImportSpecifiers, collectGraph } from './check-size.mjs';
@@ -141,6 +142,26 @@ if (!existsSync(resolve(ROOT, BROWSER_ESM_OUTPUT))) {
   if (specifiers.length > 0) {
     fail(`${BROWSER_ESM_OUTPUT} is not self-contained; it imports ${specifiers.join(', ')}`);
   }
+}
+
+// The preview frame's runtime (FORMA-128) is written inline, as it is, into a
+// <script> that a policy allows by its SHA-256 hash (forma-server's
+// PageResponse::frame, which refuses it with FRAME-103 otherwise): it is one
+// classic script that nothing can end early or turn into a comment, carries no
+// source map comment to fetch, and never auto-mounts the page.
+if (!existsSync(resolve(ROOT, FRAME_RUNTIME_OUTPUT))) {
+  fail(`missing ${FRAME_RUNTIME_OUTPUT} — the preview frame would have no runtime`);
+} else {
+  const frame = read(FRAME_RUNTIME_OUTPUT);
+  const lower = frame.toLowerCase();
+  for (const sequence of ['</script', '<!--']) {
+    if (lower.includes(sequence)) fail(`${FRAME_RUNTIME_OUTPUT} contains ${sequence}, so it cannot be inlined as it is`);
+  }
+  if (/sourceMappingURL/.test(frame)) fail(`${FRAME_RUNTIME_OUTPUT} carries a sourceMappingURL comment`);
+  if (parseImportSpecifiers(frame).length > 0 || /^\s*(?:import|export)\b/m.test(frame)) {
+    fail(`${FRAME_RUNTIME_OUTPUT} is not one classic, self-contained script`);
+  }
+  if (frame.includes('DOMContentLoaded')) fail(`${FRAME_RUNTIME_OUTPUT} still auto-mounts the page`);
 }
 
 // The Node-facing entries must keep their dependencies external, so that every
