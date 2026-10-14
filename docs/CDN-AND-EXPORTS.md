@@ -64,6 +64,14 @@ All five are production builds, and none has a development twin: a page that
 loads core from a CDN gets none of core's development warnings. The
 [development build](#development-build) is reached through the npm package.
 
+One more file sits beside them and is not a CDN script:
+`formajs-frame.global.js`, the preview frame's runtime (FORMA-128). A server
+writes it inline into the opaque-origin preview document, where it renders
+the module its host sends in tier `'unreviewed'`; it never mounts the page on
+load. An application's build that copies it as `forma-runtime.js` (FORMA-175)
+copies this file, not the CDN alias above that shares that name and
+auto-mounts. See [HTML-RUNTIME.md](HTML-RUNTIME.md#mounting-markup-you-did-not-write-tiers-and-grants).
+
 Verified by `src/__tests__/docs-truth.test.ts` > "the All builds table lists exactly the CDN artifacts the build emits"
 Verified by `src/__tests__/build-config.test.ts` > "builds a self-contained browser ESM bundle for the CDN recipe"
 

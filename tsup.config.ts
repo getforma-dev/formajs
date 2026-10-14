@@ -3,6 +3,7 @@ import {
   DEV_DEFINE,
   DEV_OUT_DIR,
   FORMA_ALIAS,
+  FRAME_DEFINE,
   PROD_DEFINE,
 } from './scripts/build-defines.mjs';
 
@@ -164,6 +165,27 @@ const PRODUCTION: Options[] = [
     sourcemap: true,
     target: 'es2022',
     define: defines(),
+    esbuildOptions(options) {
+      applyEsbuildOptions(options);
+    },
+  },
+  // The preview frame's runtime (FORMA-128, tier (c)): one classic script a
+  // server writes inline into the frame document, under a policy that allows
+  // it by its SHA-256 hash, so it is self-contained, carries no source map
+  // comment, and is the same bytes from the same sources. Built with the frame
+  // flag, so it never mounts the page's `data-forma-state` on load or watches
+  // `body`: it binds only the module its host sends, in tier (c). No global.
+  //
+  // Verified by: src/__tests__/runtime-frame.test.ts > "the frame runtime is one classic script a server can inline as it is"
+  // Verified by: src/__tests__/runtime-frame.test.ts > "two builds of the frame runtime are byte-identical"
+  {
+    entry: { 'formajs-frame': 'src/runtime-frame.ts' },
+    format: ['iife'],
+    outDir: 'dist',
+    minify: false,
+    sourcemap: false,
+    target: 'es2022',
+    define: { ...FRAME_DEFINE },
     esbuildOptions(options) {
       applyEsbuildOptions(options);
     },

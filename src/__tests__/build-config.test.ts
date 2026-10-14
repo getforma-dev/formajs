@@ -49,7 +49,7 @@ describe('tsup configuration', () => {
       const expected = config.outDir === DEV_OUT_DIR ? 'true' : 'false';
       expect(config.define?.[DEV_BUILD_FLAG], `${config.outDir} ${JSON.stringify(entryNames(config))}`).toBe(expected);
     }
-    expect(configs.map((c) => c.outDir).sort()).toEqual(['dist', 'dist', 'dist', 'dist', 'dist', DEV_OUT_DIR, DEV_OUT_DIR]);
+    expect(configs.map((c) => c.outDir).sort()).toEqual(['dist', 'dist', 'dist', 'dist', 'dist', 'dist', DEV_OUT_DIR, DEV_OUT_DIR]);
   });
 
   it('builds a development twin of every config the exports map reaches, differing only in the dev flag, the directory and the declarations', () => {
@@ -82,9 +82,10 @@ describe('tsup configuration', () => {
       expect(twin!.dts).toBe(false);
       expect(twin!.sourcemap).toBe(false);
     }
-    // The CDN bundles are reached by URL, not through exports, and have no twin.
+    // The CDN bundles, and the preview frame's runtime a server inlines, are
+    // reached by path, not through exports, and have no twin.
     const cdn = production.filter((c) => !twinned.includes(c)).flatMap(entryNames);
-    expect(cdn.sort()).toEqual(['forma.esm', 'formajs-runtime', 'formajs-runtime-hardened']);
+    expect(cdn.sort()).toEqual(['forma.esm', 'formajs-frame', 'formajs-runtime', 'formajs-runtime-hardened']);
     for (const twin of twins) for (const name of entryNames(twin)) expect(cdn).not.toContain(name);
   });
 

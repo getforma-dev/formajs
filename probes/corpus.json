@@ -37,7 +37,7 @@
   ],
   "find": "const FORBIDDEN_PROP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);",
   "replace": "const FORBIDDEN_PROP_KEYS = new Set<string>([]);",
-  "note": "SECURITY.md 'Island props sanitized' \u2014 stripping removed"
+  "note": "SECURITY.md 'Island props sanitized' — stripping removed"
  },
  {
   "id": "activate/props-reviver-recursive",
@@ -75,7 +75,7 @@
   "tags": [],
   "find": "  startBatch();\n  try {\n    fn();\n  } finally {\n    endBatch();\n  }",
   "replace": "  fn();",
-  "note": "batch() no longer batches \u2014 effects run per write"
+  "note": "batch() no longer batches — effects run per write"
  },
  {
   "id": "bus/emit-no-snapshot",
@@ -83,7 +83,7 @@
   "tags": [],
   "find": "      for (const handler of [...set]) {",
   "replace": "      for (const handler of set) {",
-  "note": "bus emit iterates live Set \u2014 off() during emit corrupts iteration"
+  "note": "bus emit iterates live Set — off() during emit corrupts iteration"
  },
  {
   "id": "bus/once-no-off",
@@ -117,7 +117,7 @@
   "tags": [],
   "find": "      const camel = prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());",
   "replace": "      const camel = prop;",
-  "note": "kebab-case CSS props no longer camelised \u2014 string styles silently drop"
+  "note": "kebab-case CSS props no longer camelised — string styles silently drop"
  },
  {
   "id": "el/static-onattr-guard-off",
@@ -125,8 +125,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  warnRawAttr(key, value);\n\n  // true \u2192 empty string attribute, else stringified value",
-  "replace": "  warnRawAttr(key, value);\n\n  // true \u2192 empty string attribute, else stringified value",
+  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  warnRawAttr(key, value);\n\n  // true → empty string attribute, else stringified value",
+  "replace": "  warnRawAttr(key, value);\n\n  // true → empty string attribute, else stringified value",
   "note": "h() static path writes ONCLICK as an inline handler"
  },
  {
@@ -383,7 +383,7 @@
   ],
   "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
   "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u214f]/);",
-  "note": "the case-mapped letterlike symbols (\u03a9 U+2126, K U+212A, \u00c5 U+212B) are charged as symbols that map to themselves. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+  "note": "the case-mapped letterlike symbols (Ω U+2126, K U+212A, Å U+212B) are charged as symbols that map to themselves. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
  },
  {
   "id": "expr/costly-set-too-broad",
@@ -403,7 +403,7 @@
   ],
   "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
   "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff]/);",
-  "note": "one curly apostrophe, dash, \u20ac or \u2122 puts a record's lowercasing in the costly tier, refusing an ordinary English search past about 1,700 records (review R4-1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+  "note": "one curly apostrophe, dash, € or ™ puts a record's lowercasing in the costly tier, refusing an ordinary English search past about 1,700 records (review R4-1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
  },
  {
   "id": "expr/data-args-charged",
@@ -701,7 +701,7 @@
   "tags": [],
   "find": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V {",
   "replace": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V { if (v && typeof v === 'object') return v;",
-  "note": "history entries alias live objects \u2014 undo/redo returns mutated state"
+  "note": "history entries alias live objects — undo/redo returns mutated state"
  },
  {
   "id": "http/ws-random-unchecked",
@@ -771,7 +771,7 @@
   "tags": [
    "security"
   ],
-  "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) \u2014 use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
+  "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) — use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
   "replace": "",
   "note": "hydration writes ONCLICK as an inline handler"
  },
@@ -1102,7 +1102,7 @@
   "tags": [],
   "find": "  if (e.ctrlKey !== parsed.ctrl) return false;",
   "replace": "",
-  "note": "ctrl modifier ignored \u2014 's' fires a 'ctrl+s' binding"
+  "note": "ctrl modifier ignored — 's' fires a 'ctrl+s' binding"
  },
  {
   "id": "keyboard/no-meta-check",
@@ -1138,7 +1138,7 @@
   ],
   "find": "      if (lisFlags[i]) {",
   "replace": "      if (!lisFlags[i]) {",
-  "note": "the LIS rows are the ones skipped-as-in-place \u2014 final order corrupted",
+  "note": "the LIS rows are the ones skipped-as-in-place — final order corrupted",
   "all": true
  },
  {
@@ -1149,7 +1149,7 @@
   ],
   "find": "  for (const li of lisOfReused) {\n    lisFlags[reusedPositions[li]!] = 1;\n  }",
   "replace": "",
-  "note": "every reused row is moved \u2014 LIS optimisation dead",
+  "note": "every reused row is moved — LIS optimisation dead",
   "all": true
  },
  {
@@ -1158,7 +1158,7 @@
   "tags": [],
   "find": "export function longestIncreasingSubsequence(arr: number[]): number[] {",
   "replace": "export function longestIncreasingSubsequence(arr: number[]): number[] { if (arr.length > 1) return [];",
-  "note": "LIS always empty \u2014 every keyed item moves (O(n) DOM churn, identity loss)"
+  "note": "LIS always empty — every keyed item moves (O(n) DOM churn, identity loss)"
  },
  {
   "id": "list/no-onInsert-hook",
@@ -1205,8 +1205,8 @@
   "tags": [],
   "find": "  if (oldLen < SMALL_LIST_THRESHOLD) {",
   "replace": "  if (oldLen < 1) {",
-  "note": "small-list path never taken \u2014 all lists go through the Map path",
-  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes \u2014 that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+  "note": "small-list path never taken — all lists go through the Map path",
+  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
  },
  {
   "id": "list/small-threshold-huge",
@@ -1214,8 +1214,8 @@
   "tags": [],
   "find": "  if (oldLen < SMALL_LIST_THRESHOLD) {",
   "replace": "  if (oldLen < 100000) {",
-  "note": "large-list Map path never taken \u2014 all lists go through the flat scan",
-  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes \u2014 that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+  "note": "large-list Map path never taken — all lists go through the flat scan",
+  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
  },
  {
   "id": "mount/container-namespace-ignored",
@@ -1262,7 +1262,7 @@
   "find": "    if (value !== undefined) {\n      (el.style as any)[key] = value;\n    }",
   "replace": "    (el.style as any)[key] = value;",
   "note": "undefined style values written through",
-  "equivalent": "CSSOM stringifies an assigned value, and \"undefined\" is not a valid declaration value, so the property is left unchanged either way. The guard saves a wasted assignment, not a wrong one \u2014 see the note on setStyle in src/dom-utils/mutate.ts."
+  "equivalent": "CSSOM stringifies an assigned value, and \"undefined\" is not a valid declaration value, so the property is left unchanged either way. The guard saves a wasted assignment, not a wrong one — see the note on setStyle in src/dom-utils/mutate.ts."
  },
  {
   "id": "mutate/setText-uses-innerHTML",
@@ -1358,7 +1358,7 @@
   "tags": [],
   "find": "    return () => {\n      removeMountedNode();\n    };",
   "replace": "    return () => { /* mutation: portal never detaches its node */ };",
-  "note": "portal never detaches the previous node \u2014 the target accumulates on every re-render and on dispose"
+  "note": "portal never detaches the previous node — the target accumulates on every re-render and on dispose"
  },
  {
   "id": "portal/target-namespace-ignored",
@@ -1376,7 +1376,7 @@
   "tags": [],
   "find": "  const resolvedTarget = typeof target === 'string'\n    ? document.querySelector(target)\n    : (target ?? document.body);",
   "replace": "  const resolvedTarget = typeof target === 'string'\n    ? document.body\n    : (target ?? document.body);",
-  "note": "string portal selector ignored \u2014 always body"
+  "note": "string portal selector ignored — always body"
  },
  {
   "id": "reactive/batch-flush-under-caller-root",
@@ -1394,7 +1394,7 @@
   "tags": [],
   "find": "export function untrack",
   "replace": "export function untrackDISABLED_UNUSED_SHIM_NOT_EXPORTED_PLACEHOLDER",
-  "note": "compile-break sentinel (expect CAUGHT \u2014 harness sanity check)"
+  "note": "compile-break sentinel (expect CAUGHT — harness sanity check)"
  },
  {
   "id": "reconcile/remove-all-skips-hook",
@@ -1552,7 +1552,7 @@
   ],
   "find": "const DANGEROUS_SCHEME_RE = /^(?:javascript|vbscript|data:text\\/html)/i;",
   "replace": "const DANGEROUS_SCHEME_RE = /(?:javascript|vbscript|data:text\\/html)/i;",
-  "note": "substring match \u2014 https://example.com/guides/javascript now blocked"
+  "note": "substring match — https://example.com/guides/javascript now blocked"
  },
  {
   "id": "sec/svg-any-tag-is-image",
@@ -1764,7 +1764,7 @@
   ],
   "find": "    .replace(/&/g, '&amp;')\n    .replace(/\"/g, '&quot;')\n    .replace(/</g, '&lt;')",
   "replace": "    .replace(/</g, '&lt;')",
-  "note": "SSR attribute values no longer escape double quotes \u2014 attribute breakout"
+  "note": "SSR attribute values no longer escape double quotes — attribute breakout"
  },
  {
   "id": "ssr/escapeAttr-drop-lt",
@@ -1784,7 +1784,7 @@
   ],
   "find": "    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#x27;');",
   "replace": "    .replace(/\"/g, '&quot;');",
-  "note": "SSR text nodes no longer escape < > & ' \u2014 raw XSS"
+  "note": "SSR text nodes no longer escape < > & ' — raw XSS"
  },
  {
   "id": "ssr/escapeHtml-drop-apos",
@@ -1854,7 +1854,7 @@
   ],
   "find": "  if (typeof node === 'string') { parts.push(escapeHtml(node)); return; }",
   "replace": "  if (typeof node === 'string') { parts.push(node); return; }",
-  "note": "SSR text children emitted raw \u2014 live <script> in the page"
+  "note": "SSR text children emitted raw — live <script> in the page"
  },
  {
   "id": "ssr/void-element-closed",
@@ -1892,7 +1892,7 @@
   ],
   "find": "  if ((v as any)[PROXY]) return false;\n  return true;\n}",
   "replace": "  if ((v as any)[PROXY]) return false;\n  return !Array.isArray(v);\n}",
-  "note": "arrays no longer plain \u2014 array reactivity path dead"
+  "note": "arrays no longer plain — array reactivity path dead"
  },
  {
   "id": "store/deepClone-identity",
@@ -1900,7 +1900,7 @@
   "tags": [],
   "find": "function deepClone(obj: unknown, seen?: WeakSet<object>): unknown {",
   "replace": "function deepClone(obj: unknown, seen?: WeakSet<object>): unknown { if (obj && typeof obj === 'object') return obj;",
-  "note": "store deepClone becomes identity \u2014 snapshots alias live state"
+  "note": "store deepClone becomes identity — snapshots alias live state"
  },
  {
   "id": "store/no-array-method-patch",
@@ -1916,7 +1916,7 @@
   "tags": [],
   "find": "      let entry = cache.get(val);",
   "replace": "      let entry = undefined as any;",
-  "note": "switch branch cache disabled \u2014 new node identity each visit"
+  "note": "switch branch cache disabled — new node identity each visit"
  },
  {
   "id": "switch/cases-outside-namespace",
@@ -1934,7 +1934,7 @@
   "tags": [],
   "find": "        let scooped = 0;\n        while (startMarker.nextSibling && startMarker.nextSibling !== endMarker) {\n          currentNode.appendChild(startMarker.nextSibling);\n          scooped++;\n        }",
   "replace": "        let scooped = 0;",
-  "note": "cached fragment branch not scooped back \u2014 3rd visit renders empty/duplicated"
+  "note": "cached fragment branch not scooped back — 3rd visit renders empty/duplicated"
  },
  {
   "id": "traverse/siblings-includes-self",
@@ -2685,6 +2685,96 @@
   "note": "a selector that closes what it did not open (.x)) counts as local, a malformed selector not failing closed. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
  },
  {
+  "id": "frame/port-from-anyone",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (event.source !== win.parent || win.parent === (win as unknown) || event.ports.length !== 1) return;",
+  "replace": "    if (event.ports.length !== 1) return;",
+  "note": "the frame takes a port from any window, not only its parent: a frame the module nests, or the frame itself, hands it a channel. Verified by: src/__tests__/runtime-frame.test.ts > \"ignores a port from any window but its parent, and every port after the first\""
+ },
+ {
+  "id": "frame/many-ports",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (event.source !== win.parent || win.parent === (win as unknown) || event.ports.length !== 1) return;",
+  "replace": "    if (event.source !== win.parent || win.parent === (win as unknown) || event.ports.length < 1) return;",
+  "note": "a message carrying several ports is taken. Verified by: src/__tests__/runtime-frame.test.ts > \"ignores a port from any window but its parent, and every port after the first\""
+ },
+ {
+  "id": "frame/keeps-listening",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    win.removeEventListener('message', onWindow);\n",
+  "replace": "",
+  "note": "the frame keeps listening on its window after the first port, so a later port replaces the host's channel. Verified by: src/__tests__/runtime-frame.test.ts > \"ignores a port from any window but its parent, and every port after the first\""
+ },
+ {
+  "id": "frame/extra-keys",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      && Object.keys(data).length === 2 && data.type === 'module' && typeof data.html === 'string'",
+  "replace": "      && data.type === 'module' && typeof data.html === 'string'",
+  "note": "a message with more than the module's two fields is accepted. Verified by: src/__tests__/runtime-frame.test.ts > \"refuses every message but the module, and changes nothing\""
+ },
+ {
+  "id": "frame/any-type",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      && Object.keys(data).length === 2 && data.type === 'module' && typeof data.html === 'string'",
+  "replace": "      && Object.keys(data).length === 2 && typeof data.html === 'string'",
+  "note": "a message of any type carrying html renders. Verified by: src/__tests__/runtime-frame.test.ts > \"refuses every message but the module, and changes nothing\""
+ },
+ {
+  "id": "frame/reviewed-tier",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "mountMarkup(root, markup, { tier: 'unreviewed', config: { name: 'preview' } })",
+  "replace": "mountMarkup(root, markup, { tier: 'reviewed', config: { name: 'preview' } })",
+  "note": "the frame mounts unreviewed content in tier (b), with every grant A2 gives by default: its data-fetch is sent. Verified by: src/__tests__/runtime-frame.test.ts > \"takes one port from its parent, renders each module in tier (c) and answers only ready, resize and error\""
+ },
+ {
+  "id": "frame/diagnostics-dropped",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    fail(String(detail?.code), `${String(detail?.reason)}: ${String(detail?.expr)}`);",
+  "replace": "",
+  "note": "the module's diagnostics and denials never reach the host. Verified by: src/__tests__/runtime-frame.test.ts > \"takes one port from its parent, renders each module in tier (c) and answers only ready, resize and error\""
+ },
+ {
+  "id": "frame/auto-mount",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "&& !_manualMount\n  && !(typeof __FORMA_FRAME_BUILD__ === 'boolean' && __FORMA_FRAME_BUILD__)) {",
+  "replace": "&& !_manualMount) {",
+  "note": "the preview frame's runtime mounts the page's data-forma-state on load and watches body, so markup injected outside the root is bound. Verified by: src/__tests__/runtime-frame.test.ts > \"the frame runtime is one classic script a server can inline as it is\""
+ },
+ {
+  "id": "frame/source-map",
+  "file": "tsup.config.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    entry: { 'formajs-frame': 'src/runtime-frame.ts' },\n    format: ['iife'],\n    outDir: 'dist',\n    minify: false,\n    sourcemap: false,",
+  "replace": "    entry: { 'formajs-frame': 'src/runtime-frame.ts' },\n    format: ['iife'],\n    outDir: 'dist',\n    minify: false,\n    sourcemap: true,",
+  "note": "the frame runtime ends in a sourceMappingURL comment, which an opaque-origin frame would try to fetch. Verified by: src/__tests__/runtime-frame.test.ts > \"the frame runtime is one classic script a server can inline as it is\""
+ },
+ {
   "id": "tiered/mount-switch-ignored",
   "file": "src/runtime.ts",
   "tags": [
@@ -2720,8 +2810,8 @@
   "tags": [
    "security"
   ],
-  "find": "if (typeof document !== 'undefined' && !_manualMount) {",
-  "replace": "if (typeof document !== 'undefined') {",
+  "find": "if (typeof document !== 'undefined' && !_manualMount\n",
+  "replace": "if (typeof document !== 'undefined'\n",
   "note": "a page with the switch still runs the auto-mount on load. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound\""
  },
  {
@@ -3102,7 +3192,7 @@
   ],
   "find": "      cache['innerHTML'] = null;\n",
   "replace": "",
-  "note": "a reactive dangerouslySetInnerHTML going A \u2192 null \u2192 A stays empty: the null branch keeps A's markup cached (FORMA-176). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"A \u2192 null \u2192 A shows A again, client-rendered and adopted\""
+  "note": "a reactive dangerouslySetInnerHTML going A → null → A stays empty: the null branch keeps A's markup cached (FORMA-176). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"A → null → A shows A again, client-rendered and adopted\""
  },
  {
   "id": "adopt/inner-html-rewritten",
@@ -3213,5 +3303,15 @@
   "find": "  if (current === '') return false;\n",
   "replace": "",
   "note": "adoption parses a string through a template before writing it onto the walker's empty element: two Trusted Types reports for one write, where client rendering raises one (formajs#32 second review). Verified by: src/dom/__tests__/trusted-html.test.ts > \"adopting a string onto the walker's empty element raises one Trusted Types report, as client rendering does\""
+ },
+ {
+  "id": "frame/spoofed-diagnostic-forwarded",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (event.target !== event.currentTarget) return;\n",
+  "replace": "",
+  "note": "a module's own $dispatch('formajs:diagnostic', {code, reason, expr}) reaches the host as an error the runtime never raised, with a code and text the module chose (formajs#31 review). Verified by: src/__tests__/runtime-frame.test.ts > \"forwards the runtime's diagnostics, never a module's own formajs:diagnostic\""
  }
 ]

@@ -360,6 +360,39 @@ All notable changes to this project will be documented in this file.
   after it throws", "bindings a tierless path made under the root go first,
   with what they rendered").
 
+- **The preview frame's runtime, `dist/formajs-frame.global.js`** (FORMA-128;
+  DR-14 tier (c), L-12, L-33, L-44; v2 SR32). Content nobody reviewed renders
+  only in an opaque-origin frame with no network, whose document
+  forma-server's `PageResponse::frame` writes (FORMA-125) with this runtime
+  inline. It is one classic, self-contained script, the same bytes from the
+  same sources (a policy allows it by its SHA-256 hash), with no `</script`,
+  `<!--`, `import` or source map comment, and it creates no script of its own;
+  built with a frame flag, it never mounts the page on load or watches `body`.
+  It renders into `<div id="forma-frame">`: it takes one `MessageChannel` port
+  from the first message its parent posts carrying exactly one, accepts on it
+  only `{ type: 'module', html }` (mounted with `tier: 'unreviewed'`, no
+  grants; later ones update it), and sends only `ready`, `resize` (the
+  document's height) and `error` (`FRAME_E_MESSAGE`, `FRAME_E_RENDER`, and the
+  diagnostics the runtime raised for the module, by code; never a module's own
+  `$dispatch('formajs:diagnostic', …)`, though a diagnostic quotes the
+  module's expression, so a host treats `error` text as untrusted). A module
+  styles itself with `style` attributes only: under the frame's nonce-only
+  `style-src` its `<style>` blocks do not apply. `scripts/verify-dist.mjs` checks the
+  published file can be inlined as it is. Copying it into an application's
+  assets as `forma-runtime.js` is the build's half (FORMA-175). It mints the
+  module with `trustedHtml()`, so the frame's policy may require Trusted Types.
+  Size: 38,953 B gzipped, gated at 39,000 B (`scripts/check-size.mjs`, the
+  README's table).
+  Tests: `src/__tests__/runtime-frame.test.ts` ("takes one port from its
+  parent, renders each module in tier (c) and answers only ready, resize and
+  error", "ignores a port from any window but its parent, and every port after
+  the first", "refuses every message but the module, and changes nothing", "on
+  an origin that is not opaque it renders nothing and says so", "the frame
+  runtime is one classic script a server can inline as it is" and its control,
+  "two builds of the frame runtime are byte-identical"), `e2e/frame.spec.ts`
+  (a sandboxed iframe under a hash-only `script-src` and `connect-src 'none'`,
+  in three engines), nine new probes (`frame/*`), all caught.
+
 - **`browserOnly(component)`, the browser-only marker** (DR-1, L-1, FORMA-119).
   Wraps a component that renders in the browser alone; one name, so a search
   finds every use. `@getforma/compiler` 0.3.7 and later emit
