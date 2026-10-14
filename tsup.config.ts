@@ -1,5 +1,7 @@
-import { defineConfig } from 'tsup';
+import { defineConfig, type Options } from 'tsup';
 import {
+  DEV_DEFINE,
+  DEV_OUT_DIR,
   FORMA_ALIAS,
   PROD_DEFINE,
 } from './scripts/build-defines.mjs';
@@ -7,9 +9,11 @@ import {
 const formaAlias = { ...FORMA_ALIAS };
 
 /**
- * Every shipped artifact is built with `__FORMA_DEV_BUILD__` replaced by the
- * literal `false` (PROD_DEFINE), which is what makes `__DEV__` a build-time
- * constant instead of a runtime NODE_ENV read.
+ * Every production artifact is built with `__FORMA_DEV_BUILD__` replaced by
+ * the literal `false` (PROD_DEFINE), which is what makes `__DEV__` a build-time
+ * constant instead of a runtime NODE_ENV read. The development twins at the end
+ * of this file replace it with `true` (DEV_DEFINE) instead; see
+ * `developmentTwin`.
  *
  * There is no longer an eval-posture define: the `new Function` fallback was
  * deleted from the source, so no build has one to switch on and the "hardened"
@@ -55,7 +59,7 @@ const PURE_FACTORIES = ['createSignal', 'createComputed', 'createStore', 'create
 // so a clean inside any one of them races the outputs of the others (it used to
 // delete config 4's declaration files after they were written, leaving the
 // build's result dependent on scheduler timing).
-export default defineConfig([
+const PRODUCTION: Options[] = [
   // ESM + CJS + type declarations — tree-shakeable imports (production).
   // `alien-signals` stays EXTERNAL here on purpose: every Node/bundler consumer
   // must share a single copy of the reactive graph. The self-contained browser
@@ -164,4 +168,43 @@ export default defineConfig([
       applyEsbuildOptions(options);
     },
   },
+];
+
+/**
+ * The development build (FORMA-169): a twin of each config the `exports` map
+ * reaches (the ones that emit declarations: the code-split ESM/CJS entries and
+ * the hardened runtime), written to dist/dev/ with `__FORMA_DEV_BUILD__`
+ * replaced by `true`. Same sources, same esbuild options, same entry names, so
+ * the only difference between `dist/X` and `dist/dev/X` is that `__DEV__` is
+ * true and the development warnings it guards are kept. Each subpath's
+ * `development` condition points at the twin; the declarations are the
+ * production build's, shared.
+ *
+ * The twins ship no source maps. Their code is what the maps would map to
+ * anyway (syntax-minified only, real names, one statement a line), and maps
+ * would add 2.7 MB to the unpacked package against 0.78 MB for the JavaScript.
+ *
+ * The twins are separate tsup configs, so the production configs above, and
+ * every byte they write, are what they were before the twins existed.
+ *
+ * The CDN bundles (the IIFEs and forma.esm.js) have no twin: they are reached
+ * by URL, not through `exports`, and `docs/STABILITY.md` says they are
+ * production builds only.
+ *
+ * Verified by: src/__tests__/build-config.test.ts > "builds a development twin of every config the exports map reaches, differing only in the dev flag, the directory and the declarations"
+ * Verified by: src/__tests__/development-build.test.ts > "every subpath resolves to production files without the condition and to their development twins with it"
+ */
+function developmentTwin(config: Options): Options {
+  return {
+    ...config,
+    outDir: DEV_OUT_DIR,
+    dts: false,
+    sourcemap: false,
+    define: { ...DEV_DEFINE },
+  };
+}
+
+export default defineConfig([
+  ...PRODUCTION,
+  ...PRODUCTION.filter((config) => config.dts === true).map(developmentTwin),
 ]);

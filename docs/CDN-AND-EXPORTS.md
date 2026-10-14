@@ -60,6 +60,10 @@ Available from `unpkg.com/@getforma/core@VERSION/dist/` and
 URL only — none of them is behind an `exports` subpath, because the IIFE
 bundles are classic scripts that must not go through a module resolver.
 
+All five are production builds, and none has a development twin: a page that
+loads core from a CDN gets none of core's development warnings. The
+[development build](#development-build) is reached through the npm package.
+
 Verified by `src/__tests__/docs-truth.test.ts` > "the All builds table lists exactly the CDN artifacts the build emits"
 Verified by `src/__tests__/build-config.test.ts` > "builds a self-contained browser ESM bundle for the CDN recipe"
 
@@ -107,6 +111,60 @@ doubled.get(); // 10
 ```
 
 Verified by `src/__tests__/docs-truth.test.ts` > "the tc39 subpath exports State and Computed, not a Signal namespace"
+
+---
+
+## Development build
+
+Every subpath above has a development twin. Each `import` and `require`
+branch reads:
+
+```json
+"import": {
+  "types": "./dist/index.d.ts",
+  "development": "./dist/dev/index.js",
+  "default": "./dist/index.js"
+}
+```
+
+The file under `dist/dev/` is built from the same sources with the same
+options as its production twin, except that `__DEV__` is `true`, so it keeps
+the warnings a production build drops: hydration mismatches, props the
+renderer drops, raw-HTML sinks, the `FORMA_W_DEPRECATED_` codes
+([STABILITY.md](STABILITY.md#development-builds)). The type declarations are
+shared, so TypeScript sees one package either way.
+
+| Resolver | Selects the development build |
+|---|---|
+| Vite's dev server | Yes, by itself: its default conditions include `development` unless the mode is `production` |
+| webpack 5 with `mode: 'development'` | Yes, by itself |
+| esbuild | Only with `conditions: ['development', 'module']`. Listing any condition drops esbuild's automatic `module`, so list it too |
+| `@getforma/build` | In watch mode |
+| Node (tests, scripts, server rendering) | Only with `node --conditions=development` (or the same in `NODE_OPTIONS`) |
+
+A resolver that does not ask for the condition resolves exactly the files it
+resolved before the development build existed, and those files are byte for
+byte what they were.
+
+**One build per process.** Core keeps its reactive state in module scope, so
+the two builds in one process are two unrelated copies of it. A resolver
+applies one set of conditions to every specifier, and a development file
+imports only development files, so one resolver always loads one build. Two
+resolvers in one process can still disagree: a development server that
+bundles your code with the condition but lets Node load an external
+dependency without it. Give both the same conditions (for Node,
+`NODE_OPTIONS=--conditions=development`); if they differ, core logs
+*"Duplicate @getforma/core instance detected"*.
+
+The development build is slower where `__DEV__` checks something on every
+call, such as `createList`'s duplicate-key check
+([PERFORMANCE.md](PERFORMANCE.md)). It adds the JavaScript of every subpath a
+second time to the package, without source maps: the files keep their
+identifiers and one statement a line, so they read as they are.
+
+Verified by `src/__tests__/development-build.test.ts` > "every subpath resolves to production files without the condition and to their development twins with it"
+Verified by `src/__tests__/development-build.test.ts` > "a process resolving with the development condition loads one copy of core, and it is the development build"
+Verified by `src/__tests__/development-build.test.ts` > "a process that loads both builds is told so by the duplicate-instance warning"
 
 ---
 

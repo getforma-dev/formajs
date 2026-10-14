@@ -11,100 +11,120 @@
     ".": {
       "import": {
         "types": "./dist/index.d.ts",
+        "development": "./dist/dev/index.js",
         "default": "./dist/index.js"
       },
       "require": {
         "types": "./dist/index.d.cts",
+        "development": "./dist/dev/index.cjs",
         "default": "./dist/index.cjs"
       }
     },
     "./runtime": {
       "import": {
         "types": "./dist/runtime.d.ts",
+        "development": "./dist/dev/runtime.js",
         "default": "./dist/runtime.js"
       },
       "require": {
         "types": "./dist/runtime.d.cts",
+        "development": "./dist/dev/runtime.cjs",
         "default": "./dist/runtime.cjs"
       }
     },
     "./runtime-hardened": {
       "import": {
         "types": "./dist/runtime-hardened.d.ts",
+        "development": "./dist/dev/runtime-hardened.js",
         "default": "./dist/runtime-hardened.js"
       },
       "require": {
         "types": "./dist/runtime-hardened.d.cts",
+        "development": "./dist/dev/runtime-hardened.cjs",
         "default": "./dist/runtime-hardened.cjs"
       }
     },
     "./runtime-csp": {
       "import": {
         "types": "./dist/runtime-hardened.d.ts",
+        "development": "./dist/dev/runtime-hardened.js",
         "default": "./dist/runtime-hardened.js"
       },
       "require": {
         "types": "./dist/runtime-hardened.d.cts",
+        "development": "./dist/dev/runtime-hardened.cjs",
         "default": "./dist/runtime-hardened.cjs"
       }
     },
     "./wasm": {
       "import": {
         "types": "./dist/wasm.d.ts",
+        "development": "./dist/dev/wasm.js",
         "default": "./dist/wasm.js"
       },
       "require": {
         "types": "./dist/wasm.d.cts",
+        "development": "./dist/dev/wasm.cjs",
         "default": "./dist/wasm.cjs"
       }
     },
     "./tc39": {
       "import": {
         "types": "./dist/tc39-compat.d.ts",
+        "development": "./dist/dev/tc39-compat.js",
         "default": "./dist/tc39-compat.js"
       },
       "require": {
         "types": "./dist/tc39-compat.d.cts",
+        "development": "./dist/dev/tc39-compat.cjs",
         "default": "./dist/tc39-compat.cjs"
       }
     },
     "./ssr": {
       "import": {
         "types": "./dist/ssr/index.d.ts",
+        "development": "./dist/dev/ssr/index.js",
         "default": "./dist/ssr/index.js"
       },
       "require": {
         "types": "./dist/ssr/index.d.cts",
+        "development": "./dist/dev/ssr/index.cjs",
         "default": "./dist/ssr/index.cjs"
       }
     },
     "./http": {
       "import": {
         "types": "./dist/http.d.ts",
+        "development": "./dist/dev/http.js",
         "default": "./dist/http.js"
       },
       "require": {
         "types": "./dist/http.d.cts",
+        "development": "./dist/dev/http.cjs",
         "default": "./dist/http.cjs"
       }
     },
     "./storage": {
       "import": {
         "types": "./dist/storage.d.ts",
+        "development": "./dist/dev/storage.js",
         "default": "./dist/storage.js"
       },
       "require": {
         "types": "./dist/storage.d.cts",
+        "development": "./dist/dev/storage.cjs",
         "default": "./dist/storage.cjs"
       }
     },
     "./server": {
       "import": {
         "types": "./dist/server.d.ts",
+        "development": "./dist/dev/server.js",
         "default": "./dist/server.js"
       },
       "require": {
         "types": "./dist/server.d.cts",
+        "development": "./dist/dev/server.cjs",
         "default": "./dist/server.cjs"
       }
     },
@@ -151,12 +171,19 @@
     "./dist/runtime-hardened.js",
     "./dist/runtime-hardened.cjs",
     "./dist/chunk-*.js",
-    "./dist/chunk-*.cjs"
+    "./dist/chunk-*.cjs",
+    "./dist/dev/runtime.js",
+    "./dist/dev/runtime.cjs",
+    "./dist/dev/runtime-hardened.js",
+    "./dist/dev/runtime-hardened.cjs",
+    "./dist/dev/chunk-*.js",
+    "./dist/dev/chunk-*.cjs"
   ],
   "scripts": {
     "build": "node scripts/clean-dist.mjs && tsup && node scripts/post-build.mjs && node scripts/verify-dist.mjs",
     "check:size": "node scripts/check-size.mjs",
-    "check:pack": "publint && attw --pack .",
+    "check:pack": "publint && attw --pack . && node scripts/check-pack-development.mjs",
+    "check:baseline": "node scripts/dist-baseline.mjs",
     "pack:release": "npm run build && npm pack --pack-destination releases",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
