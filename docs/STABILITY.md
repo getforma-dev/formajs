@@ -69,8 +69,9 @@ replaces it. A production build logs nothing: its JavaScript is byte for byte
 what it was before the deprecation, and `scripts/verify-dist.mjs` fails a build
 that leaks a code into one. An installed package also shows the deprecation in
 its type declarations, development or production: every function these entries
-export is marked `@deprecated`, which editors strike through. The `FORMA_W_`
-codes are listed here and nowhere else.
+export is marked `@deprecated`, which editors strike through. The
+`FORMA_W_DEPRECATED_*` codes are listed here; the other `FORMA_W_` codes, for
+the forms 3.0.0 refuses, are under [Deprecated forms](#deprecated-forms).
 
 Verified by `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its deprecation once in development, with its code"
 Verified by `src/__tests__/deprecated-entries.test.ts` > "a production build of each deprecated entry carries no warning"

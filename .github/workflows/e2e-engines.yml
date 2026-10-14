@@ -97,7 +97,18 @@ jobs:
               exit 1
             fi
             echo "::warning::installing $BROWSER's system packages failed or ran past 4 minutes; retrying once"
-            sudo dpkg --configure -a
+            # `timeout` runs as the runner user and cannot signal the root
+            # `apt-get` that `sudo` started, so after a cut it may still hold
+            # the dpkg lock; then `dpkg --configure -a` fails on that lock,
+            # and under errexit the step ended here, so the retry never ran
+            # (A2 audit F17a, FORMA-180). Its failure is tolerated and the
+            # lock waited out, up to 60 seconds, before attempt 2.
+            sudo dpkg --configure -a || true
+            for waited in $(seq 1 60); do
+              if ! sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then break; fi
+              if [ "$waited" = 60 ]; then echo "::warning::the dpkg lock is still held after 60s; attempt 2 runs anyway"; fi
+              sleep 1
+            done
           done
           fresh=(/var/cache/apt/archives/*.deb)
           if [ "${#fresh[@]}" -gt 0 ]; then cp "${fresh[@]}" ~/.cache/playwright-apt/; fi

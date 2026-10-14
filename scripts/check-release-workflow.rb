@@ -13,8 +13,9 @@
 # code and no third-party action beyond the ones it needs, waits for every other
 # job, downloads only this run's packed artefact, checks it against the pack
 # job's record before it publishes, and cannot go on to publish after a failed
-# step or job; and unless the pack job uploads that artefact with
-# `overwrite: true`, so re-running all jobs after a failure replaces it. Ruby's standard library parses the YAML, so the check adds nothing
+# step or job; unless the pack job uploads that artefact with
+# `overwrite: true`, so re-running all jobs after a failure replaces it; and
+# unless every `npm ci` is followed by `npm audit signatures` in its job. Ruby's standard library parses the YAML, so the check adds nothing
 # to the supply chain it guards. The repository-specific part is CONFIG.
 require 'yaml'
 
@@ -385,6 +386,27 @@ def check_pack_job(doc, config, out)
   end
 end
 
+# Every `npm ci` in the workflow is followed, in a later step of the same job,
+# by `npm audit signatures`, so a package whose registry record carries no
+# signature, or one the registry's keys do not verify, fails the job before
+# anything runs from the tree (A2 audit F11, FORMA-180). The audit must be its own
+# step, so nothing on its line can swallow its exit status.
+def check_audit_signatures(doc, config, out)
+  return unless config[:registry] == :npm
+
+  jobs_of(doc).each do |name, job|
+    steps = steps_of(job)
+    steps.each_with_index do |step, i|
+      next unless run_of(step) =~ /\bnpm\s+ci\b/
+
+      audited = steps.drop(i + 1).any? { |s| run_of(s).strip =~ /\Anpm audit signatures\z/ }
+      next if audited
+
+      out << "K5 job `#{name}` step #{i + 1} runs `npm ci` with no later step `npm audit signatures` in the job; every install must be checked against the registry's signatures"
+    end
+  end
+end
+
 def violations(doc, config = CONFIG)
   out = []
   return ['W0 the workflow is not a mapping'] unless doc.is_a?(Hash)
@@ -393,6 +415,7 @@ def violations(doc, config = CONFIG)
   check_permissions(doc, config, out)
   check_publish_job(doc, config, out)
   check_pack_job(doc, config, out)
+  check_audit_signatures(doc, config, out)
   check_cache_free(doc, config[:publish_job], out, setup_node_off_required: false)
   check_cache_free(doc, config[:pack_job], out, setup_node_off_required: true)
   check_runtime(doc, config[:publish_job], out)
@@ -525,6 +548,21 @@ NPM_SEEDS = [
     with = publish_steps(d).find { |s| action_of(s) == 'actions/checkout' }['with']
     with.delete('sparse-checkout')
     with.delete('sparse-checkout-cone-mode')
+  end],
+  ['an npm ci in the pack job with no npm audit signatures after it', 'K5', lambda do |d|
+    pack_job(d)['steps'].reject! { |s| run_of(s).strip == 'npm audit signatures' }
+  end],
+  ['the audit before the install instead of after it', 'K5', lambda do |d|
+    steps = pack_job(d)['steps']
+    audit = steps.delete_at(steps.index { |s| run_of(s).strip == 'npm audit signatures' })
+    steps.insert(steps.index { |s| run_of(s) =~ /\bnpm\s+ci\b/ }, audit)
+  end],
+  ['an audit whose failure a `|| true` swallows', 'K5', lambda do |d|
+    pack_job(d)['steps'].find { |s| run_of(s).strip == 'npm audit signatures' }['run'] = 'npm audit signatures || true'
+  end],
+  ['an npm ci in a new job with no audit', 'K5', lambda do |d|
+    d['jobs']['extra'] = { 'permissions' => { 'contents' => 'read' }, 'runs-on' => 'ubuntu-latest', 'steps' => [{ 'run' => 'npm ci' }, { 'run' => 'npm test' }] }
+    publish_job(d)['needs'] = needs_of(publish_job(d)) + ['extra']
   end],
 ].freeze
 
