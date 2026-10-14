@@ -54,6 +54,15 @@ All notable changes to this project will be documented in this file.
 - `createList` with `updateOnItemChange: 'rerender'` disposes a replaced row's
   effects. (Local checkpoint `042e353`.)
 
+### Tests
+
+- Regression fixture for the native-call cost path (FORMA-001, stage 0; DR-16):
+  `src/expr/__tests__/native-preflight.test.ts` requires `Array.from({length: 12000000})`
+  to be refused with `FORMA_E_BUDGET` (passes today) and to be refused before
+  `Array.from` runs. The interpreter checks a native's result only after the
+  call returns, so today the array is built first; that case is marked
+  `it.fails` until FORMA-004's preflight lands.
+
 ## [2.0.1] - 2026-08-08
 
 ### Fixed
