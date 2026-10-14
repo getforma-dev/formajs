@@ -10,6 +10,7 @@
 
 import { internalEffect, __DEV__ } from 'forma/reactive';
 import { hydrating } from './hydrate.js';
+import { isFormControlProperty, writeFormControlProperty } from './form-control.js';
 import {
   isDangerousUrl,
   isEventHandlerAttr,
@@ -599,6 +600,14 @@ for (const attr of BOOLEAN_ATTRS) {
 
 /** Apply a single prop to an element (supports both HTML and SVG). */
 function applyProp(el: Element, key: string, value: unknown): void {
+  if (isFormControlProperty(el, key)) {
+    if (typeof value === 'function') {
+      internalEffect(() => writeFormControlProperty(el, key, (value as () => unknown)()));
+    } else {
+      writeFormControlProperty(el, key, value);
+    }
+    return;
+  }
   // "Twin Chassis" exploit: inline check for the #1 most common prop
   // String === is ~2ns vs Map.get() ~8ns. Saves 75% dispatch time for 'class'.
   if (key === 'class') { handleClass(el, key, value); return; }
@@ -930,11 +939,19 @@ export function h(
   // to diff against the previous value on re-runs. An element with no dynamic
   // prop therefore never allocates a cache object.
   // Verified by: src/dom/__tests__/element.test.ts > "allocates no attribute cache for an element with only static props"
+  let formProps: string[] | undefined;
   if (props) {
     let hasDynamic = false;
     for (const key in props) {
       if (key === 'ref') continue;
       const value = props[key];
+
+      // A select cannot select an option until its children exist, and input
+      // type/multiple must be configured before writing live form state.
+      if (isFormControlProperty(el, key)) {
+        (formProps ??= []).push(key);
+        continue;
+      }
 
       // Event handlers: no cache needed, direct binding. Case-sensitive by
       // design — see applyProp; other casings are dropped downstream instead of
@@ -979,7 +996,11 @@ export function h(
     }
   }
 
-  // Call ref after element is fully constructed
+  if (formProps && props) {
+    for (const key of formProps) applyProp(el, key, props[key]);
+  }
+
+  // Call ref after element is fully constructed, including live form values.
   if (props && typeof props['ref'] === 'function') {
     (props['ref'] as (el: Element) => void)(el);
   }

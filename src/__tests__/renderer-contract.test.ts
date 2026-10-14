@@ -333,7 +333,7 @@ describe('renderer contract: the table covers every sink', () => {
     const NON_SINKS: Record<string, string> = {
       'src/dom-utils/mutate.ts': 'setAttr() helper — covered by mutate.test.ts',
       'src/dom/activate.ts': 'writes only data-forma-* status, a fixed internal name',
-      'src/dom/list.ts': 'copies attributes DOM→DOM between two already-guarded elements',
+      'src/dom/form-control.ts': 'writes only fixed value/checked/selected names, covered by h/adopt sinks and form-control.test.ts',
       'src/dom/reconcile.ts': 'copies attributes DOM→DOM between two already-guarded elements',
     };
     const DOM_SINK_FILES = [

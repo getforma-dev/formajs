@@ -9,6 +9,7 @@
 
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
 import { h } from './element.js';
+import { isFormControlProperty, writeFormControlProperty } from './form-control.js';
 import { reconcileList, createList } from './list.js';
 import { createShow } from './show.js';
 import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
@@ -274,6 +275,16 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
     // (h() does the same after it finishes building the element).
     if (key === 'ref') {
       if (typeof value === 'function') ref = value as (el: Element) => void;
+      continue;
+    }
+
+    // Form values are live DOM properties, not ordinary SSR attributes.
+    if (isFormControlProperty(el, key)) {
+      if (typeof value === 'function') {
+        internalEffect(() => writeFormControlProperty(el, key, (value as () => unknown)()));
+      } else {
+        writeFormControlProperty(el, key, value);
+      }
       continue;
     }
 
@@ -992,9 +1003,6 @@ export function adoptNode(
     return;
   }
 
-  // Attach dynamic props
-  applyDynamicProps(ssrEl, desc.props);
-
   // Walk children via DOM cursor (instead of children[index])
   let cursor: ChildNode | null = ssrEl.firstChild;
 
@@ -1176,6 +1184,10 @@ export function adoptNode(
       }
     }
   }
+
+  // Options/children must be adopted before binding a select's live value.
+  // Refs also observe the fully bound child tree, just as they do in h().
+  applyDynamicProps(ssrEl, desc.props);
 }
 
 // ---------------------------------------------------------------------------
@@ -1267,4 +1279,3 @@ export function hydrateIsland(component: () => unknown, target: Element): Elemen
   target.removeAttribute('data-forma-ssr');
   return target;
 }
-
