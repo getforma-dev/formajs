@@ -15,6 +15,7 @@ import { isFormControlProperty, writeFormControlProperty } from './form-control.
 import {
   isDangerousUrl,
   isEventHandlerAttr,
+  isRawHtmlAttr,
   isUnsafeAttrWrite,
   isUrlAttr,
 } from '../security/url-safety.js';
@@ -595,10 +596,12 @@ function handleGenericAttr(el: Element, key: string, value: unknown): void {
       if (cache[key] === strVal) return;
       if (!urlAttr || !isDangerousUrl(strVal, el.localName)) {
         cache[key] = strVal;
-        // `srcdoc` takes trustedHtml() (DR-19): an object is written as
-        // htmlOf() gives it, so a TrustedHTML reaches the attribute typed.
+        // The string the URL guard checked is the string written: an object
+        // is converted once, above. Only trusted HTML for `srcdoc` is written
+        // as itself, so a TrustedHTML reaches that sink typed (DR-19).
+        // Verified by: src/__tests__/renderer-contract.test.ts > "writes %s as the string the URL guard checked, not a second conversion"
         warnRawAttr(key, v);
-        el.setAttribute(key, typeof v === 'object' ? htmlOf(v) : strVal);
+        el.setAttribute(key, typeof v === 'object' && isRawHtmlAttr(key) && isTrustedHtml(v) ? htmlOf(v) : strVal);
         return;
       }
       if (__DEV__) warnDropped(el, key, 'unsafe-URL');
@@ -745,9 +748,11 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
     if (__DEV__) warnDropped(el, key, 'unsafe-URL');
     return;
   }
-  // `srcdoc` takes trustedHtml() (DR-19): an object is written as htmlOf()
-  // gives it, so a TrustedHTML reaches the attribute typed.
-  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);
+  // The string the URL guard checked is the string written: an object is
+  // converted once, above. Only trusted HTML for `srcdoc` is written as
+  // itself, so a TrustedHTML reaches that sink typed (DR-19).
+  // Verified by: src/__tests__/renderer-contract.test.ts > "writes %s as the string the URL guard checked, not a second conversion"
+  el.setAttribute(key, typeof value === 'object' && isRawHtmlAttr(key) && isTrustedHtml(value) ? htmlOf(value) : strVal);
 }
 
 /** Append a single child to a parent node. */

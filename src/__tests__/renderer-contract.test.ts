@@ -132,6 +132,12 @@ interface Sink {
    * that owe the bare-attribute contract.
    */
   declarative: boolean;
+  /**
+   * True when the value can be any JavaScript object, with a `toString` of its
+   * own. `data-bind` and `$el.setAttribute` take values from JSON state and the
+   * expression grammar, which cannot carry one.
+   */
+  objectValues: boolean;
 }
 
 const containers: HTMLElement[] = [];
@@ -201,6 +207,7 @@ const SINKS: Sink[] = [
     name: 'ssr',
     programmaticNames: true,
     declarative: true,
+    objectValues: true,
     write: (tag, name, value) =>
       parse(renderToString(sh(tag, { [name]: value, [BENIGN_ATTR]: BENIGN_VALUE }))),
     writeText: (tag, text) => parse(renderToString(sh(tag, null, text))),
@@ -209,6 +216,7 @@ const SINKS: Sink[] = [
     name: 'h-static',
     programmaticNames: true,
     declarative: true,
+    objectValues: true,
     write: (tag, name, value) => h(tag, { [name]: value, [BENIGN_ATTR]: BENIGN_VALUE }),
     writeText: (tag, text) => h(tag, null, text),
   },
@@ -216,6 +224,7 @@ const SINKS: Sink[] = [
     name: 'h-reactive',
     programmaticNames: true,
     declarative: true,
+    objectValues: true,
     write: (tag, name, value) =>
       owned(() => h(tag, { [name]: () => value, [BENIGN_ATTR]: () => BENIGN_VALUE })),
     writeText: (tag, text) => owned(() => h(tag, null, () => text)),
@@ -224,6 +233,7 @@ const SINKS: Sink[] = [
     name: 'adopt',
     programmaticNames: true,
     declarative: true,
+    objectValues: true,
     write: (tag, name, value) =>
       owned(() => {
         // Adoption only ever binds FUNCTION props: static ones are already in
@@ -244,6 +254,7 @@ const SINKS: Sink[] = [
     name: 'data-bind',
     programmaticNames: false,
     declarative: true,
+    objectValues: false,
     write: (tag, name, value) => {
       const box = host();
       box.innerHTML =
@@ -268,6 +279,7 @@ const SINKS: Sink[] = [
     name: '$el.setAttribute',
     programmaticNames: true,
     declarative: false,
+    objectValues: false,
     write: (tag, name, value) => {
       const el = document.createElement(tag);
       host().appendChild(el);
@@ -294,6 +306,7 @@ const SINKS: Sink[] = [
 
 const NAME_SINKS = SINKS.filter((s) => s.programmaticNames);
 const DECLARATIVE_SINKS = SINKS.filter((s) => s.declarative);
+const OBJECT_SINKS = SINKS.filter((s) => s.objectValues);
 
 beforeEach(() => {
   vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -417,6 +430,37 @@ describe.each(SINKS)('renderer contract [$name]: dangerous URLs', (sink) => {
     expect(readAttr(sink.write('img', 'src', SVG_DATA_URL), 'src')).toBe(SVG_DATA_URL);
     expect(readAttr(sink.write('a', 'href', SVG_DATA_URL), 'href')).toBeNull();
     expect(readAttr(sink.write('object', 'data', SVG_DATA_URL), 'data')).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------
+// G1b — the string the URL guard checked is the string written
+// ---------------------------------------------------------------------------
+
+/**
+ * An object whose string is `first` the first time it is converted and
+ * `later` every time after: a sink that converts a value once for its guard
+ * and again for its write checks one string and writes another.
+ */
+function changingString(first: string, later: string): { toString(): string } {
+  let converted = false;
+  return {
+    toString() {
+      const out = converted ? later : first;
+      converted = true;
+      return out;
+    },
+  };
+}
+
+describe.each(OBJECT_SINKS)('renderer contract [$name]: one conversion per write', (sink) => {
+  it.each([...URL_ATTRS])('writes %s as the string the URL guard checked, not a second conversion', (attr) => {
+    // formajs#29's review (B1): the srcdoc path wrote every object as itself,
+    // so setAttribute converted it a second time, after isDangerousUrl had
+    // passed the first string.
+    const el = sink.write(ATTR_TAG[attr]!, attr, changingString('https://example.com/', 'javascript:alert(1)'));
+    expect(readAttr(el, attr)).toBe('https://example.com/');
+    expect(readAttr(el, BENIGN_ATTR)).toBe(BENIGN_VALUE);
   });
 });
 

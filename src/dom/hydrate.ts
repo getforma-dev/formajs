@@ -21,9 +21,9 @@ import {
   writeFormControlProperty,
 } from './form-control.js';
 import { reconcileList, createList } from './list.js';
-import { htmlOf, warnRawAttr } from './trusted-html.js';
+import { htmlOf, isTrustedHtml, warnRawAttr } from './trusted-html.js';
 import { createShow } from './show.js';
-import { isEventHandlerAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
+import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
 
 
 
@@ -386,11 +386,12 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
           el.removeAttribute(attrKey);
           return;
         }
-        // `srcdoc` takes trustedHtml() as h() does (DR-19): an object is
-        // written as htmlOf() gives it, so a TrustedHTML reaches it typed.
+        // The string the URL guard checked is the string written; only
+        // trusted HTML for `srcdoc` is written as itself, as h() does (DR-19).
         // Verified by: src/dom/__tests__/trusted-html.test.ts > "an adopted island's srcdoc binding writes trustedHtml() typed and warns once for a string"
+        // Verified by: src/__tests__/renderer-contract.test.ts > "writes %s as the string the URL guard checked, not a second conversion"
         warnRawAttr(attrKey, v);
-        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);
+        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);
       }
     });
   }
