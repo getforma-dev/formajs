@@ -207,6 +207,109 @@ describe('SR16: binding only under the root handed in', () => {
   });
 });
 
+describe("SR16 in 2.x: the page's mount switch", () => {
+  // Each case loads a fresh copy of the runtime, as a page does, after setting
+  // up the page it starts on. The copy this file imports, which auto-mounts,
+  // is stopped meanwhile, so the page has one runtime.
+  const served = `<div data-forma-state='{"n":1}'><p id="served" data-text="{n}">raw</p></div><div id="root"></div>`;
+  const injected = (id: string): string => `<div data-forma-state='{"n":2}'><p id="${id}" data-text="{n}">raw</p></div>`;
+
+  async function freshRuntime(): Promise<typeof runtime> {
+    vi.resetModules();
+    return import('../runtime');
+  }
+
+  it("with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound", async () => {
+    runtime.destroyRuntime();
+    const script = document.createElement('script');
+    script.setAttribute('data-forma-mount', 'manual');
+    document.head.appendChild(script);
+    document.body.innerHTML = served;
+    const fresh = await freshRuntime();
+    try {
+      await settle();
+      // No auto-mount on load: the server's own data-forma-state is not bound.
+      expect(text('served')).toBe('raw');
+      const widget = fresh.mountMarkup(document.getElementById('root')!,
+        `<div data-forma-state='{"w":3}'><p id="inside" data-text="{w}">-</p></div>`, { tier: 'reviewed', grants: {} });
+      expect(text('inside')).toBe('3');
+
+      // No body observer: markup injected beside the root stays unbound.
+      document.body.insertAdjacentHTML('beforeend', injected('outside'));
+      await settle();
+      expect(text('outside')).toBe('raw');
+
+      // The tierless calls refuse, and bind nothing.
+      const scratch = document.createElement('div');
+      document.body.appendChild(scratch);
+      for (const call of [
+        () => fresh.mount(document.body),
+        () => fresh.initRuntime(),
+        () => fresh.reconcile(scratch, injected('reconciled')),
+      ]) {
+        expect(call).toThrow(/FORMA_E_MOUNT_MANUAL/);
+      }
+      expect(scratch.innerHTML).toBe('');
+      expect([text('served'), text('outside')]).toEqual(['raw', 'raw']);
+
+      // Read once: removing the switch later turns nothing back on.
+      script.remove();
+      document.body.insertAdjacentHTML('beforeend', injected('later'));
+      await settle();
+      expect(text('later')).toBe('raw');
+      expect(() => fresh.mount(document.body)).toThrow(/FORMA_E_MOUNT_MANUAL/);
+      widget.unmount();
+    } finally {
+      fresh.destroyRuntime();
+      script.remove();
+    }
+
+    // The control: the same page without the switch auto-mounts, as at 2.0.x.
+    document.body.innerHTML = served;
+    const auto = await freshRuntime();
+    try {
+      expect(text('served')).toBe('1');
+      document.body.insertAdjacentHTML('beforeend', injected('observed'));
+      await settle();
+      expect(text('observed')).toBe('2');
+    } finally {
+      auto.destroyRuntime();
+      document.body.replaceChildren();
+      vi.resetModules();
+      runtime.initRuntime();
+    }
+  });
+
+  it("the mount switch is read once, from the runtime's own script element", async () => {
+    // A CDN build reads its own <script> (document.currentScript). Here that
+    // element is not in the document, so nothing but the own-element read can
+    // see it.
+    runtime.destroyRuntime();
+    const own = document.createElement('script');
+    own.setAttribute('data-forma-mount', 'manual');
+    Object.defineProperty(document, 'currentScript', { configurable: true, get: () => own });
+    document.body.innerHTML = served;
+    try {
+      const fresh = await freshRuntime();
+      expect(text('served')).toBe('raw');
+      expect(() => fresh.mount(document.body)).toThrow(/FORMA_E_MOUNT_MANUAL/);
+      fresh.destroyRuntime();
+
+      // Any other value is the default.
+      own.setAttribute('data-forma-mount', 'auto');
+      document.body.innerHTML = served;
+      const auto = await freshRuntime();
+      expect(text('served')).toBe('1');
+      auto.destroyRuntime();
+    } finally {
+      delete (document as unknown as Record<string, unknown>).currentScript;
+      document.body.replaceChildren();
+      vi.resetModules();
+      runtime.initRuntime();
+    }
+  });
+});
+
 describe('L-36: $el, $event and $refs stop at the mount root', () => {
   it("$el.closest('body') reaches nothing without dom", () => {
     const expr = `$el.closest('body') ? 'reached' : 'confined'`;
@@ -783,6 +886,17 @@ describe('tiers and configuration', () => {
     // The tierless bindings were disposed, not left running on detached nodes.
     old.click();
     expect(oldN.textContent).toBe('1');
+  });
+
+  it('takes trustedHtml() markup beside a string, and nothing else', () => {
+    const root = page();
+    const handle = mountOn(root, runtime.trustedHtml(probe('6 * 7')), { tier: 'reviewed', grants: {} });
+    expect(text('out')).toBe('42');
+    handle.update(runtime.trustedHtml(`<div data-forma-state='{"v":"next"}'><p id="out" data-text="{v}">-</p></div>`));
+    expect(text('out')).toBe('next');
+    const lookAlike = { toString: () => probe('1') } as unknown as string;
+    expect(() => handle.update(lookAlike)).toThrow(/FORMA_E_MOUNT_ARGS/);
+    expect(text('out')).toBe('next');
   });
 
   it('unmount() disposes every binding and empties the root; update() after it throws', () => {

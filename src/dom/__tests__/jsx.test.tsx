@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { h, Fragment, createSignal, createRoot, createShow, createList, mount } from '../../index';
+import { h, Fragment, createSignal, createRoot, createShow, createList, mount, trustedHtml } from '../../index';
 
 describe('JSX', () => {
   it('renders a basic element', () => {
@@ -139,5 +139,16 @@ describe('JSX', () => {
     const jsxEl = <div class="test"><span>hello</span></div>;
     const hEl = h('div', { class: 'test' }, h('span', null, 'hello'));
     expect((jsxEl as HTMLElement).outerHTML).toBe(hEl.outerHTML);
+  });
+
+  it('the raw props take trustedHtml() as well as a string (FORMA-126)', () => {
+    // The JSX typings take both forms (src/jsx.d.ts); `npm run typecheck`
+    // compiles this file, so a typing that refused either fails there.
+    const typed = <div dangerouslySetInnerHTML={{ __html: trustedHtml('<b>typed</b>') }} /> as HTMLElement;
+    const plain = <div dangerouslySetInnerHTML={{ __html: '<i>plain</i>' }} /> as HTMLElement;
+    const frame = <iframe sandbox="" srcdoc={trustedHtml('<p>doc</p>')} /> as HTMLIFrameElement;
+    expect(typed.innerHTML).toBe('<b>typed</b>');
+    expect(plain.innerHTML).toBe('<i>plain</i>');
+    expect(frame.getAttribute('srcdoc')).toBe('<p>doc</p>');
   });
 });

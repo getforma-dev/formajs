@@ -160,6 +160,7 @@
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
+import { isTrustedHtml, trustedHtml, warnRuntimeSrcdoc, type TrustedHtml } from './dom/trusted-html';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 import {
   clearExpressionCache,
@@ -454,6 +455,43 @@ if (typeof runtimeConfig.diagnostics === 'boolean') {
 }
 const _autoContainment = runtimeConfig.autoContainment === true;
 
+/**
+ * The page's mount switch (FORMA-128): `data-forma-mount="manual"` on a
+ * `<script>` element turns every tierless binding path off, so only
+ * `mountMarkup()` binds: no auto-mount on load, no `body` observer, and
+ * `mount()`, `initRuntime()` and `reconcile()` throw `FORMA_E_MOUNT_MANUAL`.
+ * Without it the runtime auto-mounts as at 2.0.x.
+ *
+ * It is read once, here, when the runtime first runs, before any bind, and
+ * never again: removing or changing the attribute later changes nothing. It
+ * comes from the runtime's own `<script>` element where there is one (the
+ * CDN builds, `document.currentScript`), else from any `<script>` that
+ * carries it (an ESM build has no element of its own; the switch goes on the
+ * module script that loads the application). Only `manual` counts, and any
+ * one element saying so is enough, so the switch only ever removes binding
+ * paths: markup cannot use it to turn one back on. It needs no inline script.
+ *
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "the mount switch is read once, from the runtime's own script element"
+ */
+function readMountSwitch(): boolean {
+  if (typeof document === 'undefined') return false;
+  const own = document.currentScript as HTMLScriptElement | null;
+  if (own?.getAttribute('data-forma-mount') === 'manual') return true;
+  return document.querySelector('script[data-forma-mount="manual"]') !== null;
+}
+const _manualMount = readMountSwitch();
+
+/** Refuse a tierless binding call on a page whose mount switch is `manual`. */
+function assertTierless(what: string): void {
+  if (_manualMount) {
+    throw mountError(
+      'FORMA_E_MOUNT_MANUAL',
+      `${what} binds with every power, and this page mounts only through mountMarkup() (data-forma-mount="manual")`,
+    );
+  }
+}
+
 // ── Mount boundaries ──
 //
 // What a tiered mount (FORMA-128; decision brief DR-14, DR-15, L-36, L-47)
@@ -544,7 +582,7 @@ export interface MountHandle {
   readonly tier: MountTier;
   readonly name: string;
   /** Render new markup into the root: reconciled, so scopes whose shape is unchanged keep their state. */
-  update(markup: string): void;
+  update(markup: string | TrustedHtml): void;
   /** Dispose every binding of the mount and empty its root. */
   unmount(): void;
   /** Development builds: the grants used so far. Production builds: `null`. */
@@ -1485,6 +1523,10 @@ function cloneAttributeTemplates(el: Element, item: unknown): void {
         if (isUnsafeAttrBinding(attr.name, value, node.tagName.toLowerCase())) {
           node.removeAttribute(attr.name);
         } else {
+          // A row's `srcdoc` is a raw entry no trustedHtml() can reach:
+          // written as the string it is, and warned of (FORMA-126).
+          // Verified by: src/__tests__/runtime-srcdoc.test.ts > "a list row's srcdoc writes its string and warns once with the runtime code"
+          warnRuntimeSrcdoc(attr.name);
           node.setAttribute(attr.name, value);
         }
       }
@@ -2202,6 +2244,10 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         if (isUnsafeAttrBinding(attrName, str, el.tagName.toLowerCase())) {
           el.removeAttribute(attrName);
         } else {
+          // `data-bind:srcdoc` is a raw entry no trustedHtml() can reach:
+          // written as the string it is, and warned of (FORMA-126).
+          // Verified by: src/__tests__/runtime-srcdoc.test.ts > "data-bind:srcdoc writes its string and warns once with the runtime code"
+          warnRuntimeSrcdoc(attrName);
           el.setAttribute(attrName, str);
         }
       });
@@ -2645,6 +2691,8 @@ function hasAnyPrefix(set: Set<string>, ...prefixes: string[]): boolean {
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a mount nested in another binds with its own grants, and the outer one never binds its markup"
  */
 function mountScope(root: Element, mount: MountCtx | null = null): void {
+  // On a page whose mount switch is `manual`, no tierless path binds anything.
+  if (mount === null && _manualMount) return;
   if (ownerOf(root) !== mount) return;
   // Idempotency guard — never double-bind
   if ((root as any).__formaDisposers) {
@@ -2852,6 +2900,7 @@ function stopObserver(): void {
 // ── Main init ──
 
 function initRuntime(): void {
+  assertTierless('initRuntime()');
   if (_autoContainment) {
     applyContainmentHints(document, { skipIfAlreadySet: true });
   }
@@ -2896,6 +2945,7 @@ function destroyRuntime(): void {
  * @param el - The root element to scan (checks itself and all descendants).
  */
 function mount(el: Element): void {
+  assertTierless('mount()');
   if (el.hasAttribute('data-forma-state')) {
     mountScope(el);
   }
@@ -2922,11 +2972,12 @@ function unmount(el: Element): void {
 }
 
 // Auto-init in browser contexts on DOMContentLoaded (or immediately if already
-// loaded): the tierless auto-mount, deprecated, removed in 3.0.0. Not in the
-// preview frame's runtime, built with the frame flag, which binds only the
-// module its host sends (FORMA-128).
+// loaded): the tierless auto-mount, deprecated, removed in 3.0.0; not on a page
+// whose mount switch is `manual`, and not in the preview frame's runtime, built
+// with the frame flag, which binds only the module its host sends (FORMA-128).
+// Verified by: src/__tests__/runtime-tiered-mount.test.ts > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
 // Verified by: src/__tests__/runtime-frame.test.ts > "the frame runtime is one classic script a server can inline as it is"
-if (typeof document !== 'undefined'
+if (typeof document !== 'undefined' && !_manualMount
   && !(typeof __FORMA_FRAME_BUILD__ === 'boolean' && __FORMA_FRAME_BUILD__)) {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initRuntime);
@@ -3017,7 +3068,7 @@ function resetScope(element: Element): void {
 
 // ── Reconciler ──
 
-let _reconciler: ((container: Element, html: string) => void) | null = null;
+let _reconciler: ((container: Element, html: string | TrustedHtml) => void) | null = null;
 
 /** The `body` observer pauses while a reconciler patches, so it does not see the patch. */
 function disconnectObserver(): void {
@@ -3054,7 +3105,9 @@ function getReconciler() {
 }
 
 /**
- * Reconcile a container's DOM against a new HTML string.
+ * Reconcile a container's DOM against new markup. A raw sink: pass
+ * `trustedHtml(markup)` (DR-19); a plain string still works in 2.x and warns
+ * once in development.
  *
  * The tierless path: it binds the markup with every power the runtime has,
  * wherever the container is. It behaves as at 2.0.x; in a development build
@@ -3064,7 +3117,8 @@ function getReconciler() {
  * @deprecated Removed in 3.0.0. Use `mountMarkup(root, markup, { tier, grants })`.
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "reconcile behaves as at 2.0.x and warns once in development"
  */
-function reconcile(container: Element, html: string): void {
+function reconcile(container: Element, html: string | TrustedHtml): void {
+  assertTierless('reconcile()');
   if ((typeof __FORMA_DEV_BUILD__ === 'boolean' && __FORMA_DEV_BUILD__)
     || (typeof __FORMA_DEV_BUILD__ !== 'boolean' && sourceIsDev())) {
     warnDeprecated('FORMA_W_DEPRECATED_RECONCILE');
@@ -3098,19 +3152,22 @@ function reconcile(container: Element, html: string): void {
  * The shared responsibility (v2 10.1): the application chooses the tier and
  * passes grants only for content whose hash matches what its reviewer
  * approved (L-47); Forma enforces what the mount grants. In 2.x the tierless
- * paths (the auto-mount, the `body` observer, `reconcile()`) still run where
- * the page loads them; none of them binds or disposes anything under a tiered
- * root.
+ * paths (the auto-mount, the `body` observer, `mount()`, `reconcile()`) still
+ * run where the page loads them, unless it sets `data-forma-mount="manual"`
+ * (see `readMountSwitch`); none of them binds or disposes anything under a
+ * tiered root.
  *
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "binds only under the root it is handed: markup injected outside it stays unbound"
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount refuses any origin but an opaque one, and any grant"
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "the development report lists exactly the grants a fixture widget used"
  */
-function mountMarkup(root: Element, markup: string, options: MountOptions): MountHandle {
+function mountMarkup(root: Element, markup: string | TrustedHtml, options: MountOptions): MountHandle {
   if (!root || typeof root !== 'object' || root.nodeType !== 1) {
     throw mountError('FORMA_E_MOUNT_ARGS', 'the root must be an element');
   }
-  if (typeof markup !== 'string') throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string');
+  if (typeof markup !== 'string' && !isTrustedHtml(markup)) {
+    throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string or trustedHtml()');
+  }
   const tier = options?.tier;
   if (tier !== 'compiled' && tier !== 'reviewed' && tier !== 'unreviewed') {
     throw mountError('FORMA_E_MOUNT_ARGS', "options.tier must be 'compiled', 'reviewed' or 'unreviewed'");
@@ -3171,8 +3228,8 @@ function mountMarkup(root: Element, markup: string, options: MountOptions): Moun
   const disposeAll = (): void => {
     for (const scope of Array.from(root.querySelectorAll('[data-forma-state]'))) unmountScope(scope, ctx);
   };
-  const render = (html: string): void => {
-    if (!html.trim()) {
+  const render = (html: string | TrustedHtml): void => {
+    if (!String(html).trim()) {
       disposeAll();
       root.replaceChildren();
       return;
@@ -3191,9 +3248,11 @@ function mountMarkup(root: Element, markup: string, options: MountOptions): Moun
     root,
     tier,
     name: ctx.name,
-    update(next: string): void {
+    update(next: string | TrustedHtml): void {
       alive();
-      if (typeof next !== 'string') throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string');
+      if (typeof next !== 'string' && !isTrustedHtml(next)) {
+        throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string or trustedHtml()');
+      }
       render(next);
     },
     unmount(): void {
@@ -3214,6 +3273,8 @@ function mountMarkup(root: Element, markup: string, options: MountOptions): Moun
   };
 }
 
+export type { TrustedHtml };
+
 export {
   initRuntime,
   destroyRuntime,
@@ -3221,6 +3282,7 @@ export {
   unmount,
   reconcile,
   mountMarkup,
+  trustedHtml,
   setDebug,
   yieldToMain,
   applyContainmentHints,

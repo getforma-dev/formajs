@@ -202,6 +202,19 @@ diagnostic, including the last three, which needed the eval fallback until the
 allowlist interpreter landed. A row whose example stops parsing fails the suite
 by name.
 
+**`data-bind:srcdoc`, and `{item…}` in a list row's `srcdoc`, are raw-HTML
+sinks.** The browser parses an iframe's `srcdoc` as a document, so the value,
+an expression's or a row's data (a `data-fetch` response among them), is
+markup, and escaping does not neutralize it. They write it as the string it
+is: no `trustedHtml()` can reach a binding, so a page requiring Trusted Types
+reports or refuses it. A development build of the runtime logs
+`FORMA_W_RAW_RUNTIME_SRCDOC` once, and 3.0.0 refuses `srcdoc` bindings in the
+runtime (FORMA-109): build a frame whose document you vouch for with `h()` and
+`trustedHtml()` ([API.md](API.md#trustedhtml-the-one-raw-entry)).
+
+Verified by `src/__tests__/runtime-srcdoc.test.ts` > "data-bind:srcdoc writes its string and warns once with the runtime code"
+Verified by `src/__tests__/runtime-srcdoc.test.ts` > "a list row's srcdoc writes its string and warns once with the runtime code"
+
 `$el`, `$event` and `$refs` hand expressions a **wrapped** element rather than
 the live node, and the wrapper survives every hop, so `$el.ownerDocument`,
 `$el.innerHTML` and `$refs.myInput.ownerDocument.location.href` are denials with
@@ -249,7 +262,11 @@ widget.unmount(); // every binding disposed, the root emptied
 
 - **Only under the root.** The mount binds the markup it is handed (and what
   `update()` hands it later) under its root, never by watching `body`. The root
-  itself is the application's element, not the mount's.
+  itself is the application's element, not the mount's. The markup is a raw
+  sink, as `reconcile()`'s is: pass `trustedHtml(markup)` for the content your
+  review admitted, which a page enforcing Trusted Types requires; a plain
+  string still works in 2.x and logs `FORMA_W_RAW_RECONCILE` once in a
+  development build.
 - **Configuration only from the call.** The step budget (`config.exprBudget`,
   default 100,000), the expression diagnostics switch (`config.diagnostics`)
   and containment hints (`config.autoContainment`) come from the call; a
@@ -285,6 +302,7 @@ Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant's cook
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant's timeout shortens the abort"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$el.click() is denied without navigate and runs with it"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a mount call names a known tier, an element and markup, and mounts a root once"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "takes trustedHtml() markup beside a string, and nothing else"
 
 **`$el` stops at the mount root** (L-36). Every hop that yields an element
 (`closest()`, `querySelector()`, `querySelectorAll()`, `children`, the first,
@@ -365,18 +383,43 @@ approved, keeping the hash, the grants and the approver together (L-47);
 markup whose hash differs mounts only in tier `'unreviewed'`. Forma enforces
 what the mount grants. It cannot check which tier content deserves.
 
-**In 2.x the tierless paths still run.** `@getforma/core/runtime` still binds
-the page's `data-forma-state` on load and watches `body`, and `reconcile()`
-still binds what it is given with every power, as in 2.0.x; markup injected
-outside a tiered root is bound by those paths where a page loads them. None of
-them binds or disposes anything under a tiered root, and a tierless scope
-around one never binds the mount's elements or hands out `$refs` to them.
+**In 2.x the tierless paths still run, unless the page turns them off.** By
+default `@getforma/core/runtime` binds the page's `data-forma-state` on load and
+watches `body`, and `mount()`, `initRuntime()` and `reconcile()` bind what they
+are given with every power, as in 2.0.x; markup injected outside a tiered root
+is bound by those paths. None of them binds or disposes anything under a
+tiered root, and a tierless scope around one never binds the mount's elements
+or hands out `$refs` to them.
+
+A page that hosts tiered mounts turns every tierless path off with
+`data-forma-mount="manual"` on a `<script>` element:
+
+```html
+<!-- CDN build: on the runtime's own script element -->
+<script src="/vendor/formajs-runtime.global.js" data-forma-mount="manual"></script>
+<!-- ESM build: on the module script that loads the application -->
+<script type="module" src="/app.js" data-forma-mount="manual"></script>
+```
+
+Then nothing binds but `mountMarkup()`: no auto-mount on load, no `body`
+observer, and `mount()`, `initRuntime()` and `reconcile()` throw
+`FORMA_E_MOUNT_MANUAL` before touching the page, so markup injected outside a
+tiered root stays unbound (SR16, in 2.x). The switch is read once, when the
+runtime first runs, before it binds anything: from its own `<script>` element in
+a CDN build, else from any `<script>` that carries it, since an ESM build has
+no element of its own. Only `manual` counts, and one element saying it is
+enough, so the switch can only take binding paths away; removing or changing
+the attribute later changes nothing. It is an attribute, so it needs no inline
+script. Without it, 3.0.0 makes this the only behaviour (FORMA-108).
+
 `reconcile()` is deprecated: a development build logs
 `FORMA_W_DEPRECATED_RECONCILE` on its first call, and 3.0.0 removes it with
 the auto-mount and the observer. A mount's own `update()` re-renders its whole
 root, including the root of a mount nested in it: unmount nested mounts first.
 
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "no tierless path binds markup under a tiered root"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "the mount switch is read once, from the runtime's own script element"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "reconcile behaves as at 2.0.x and warns once in development"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "bindings a tierless path made under the root go first, with what they rendered"
 

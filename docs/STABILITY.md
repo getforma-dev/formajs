@@ -27,10 +27,11 @@ package shows it as `@deprecated` in its types. See
 | `createReducer` | **Stable** | |
 | `createResource` / `createSuspense` | **Stable** | Abortable; the Suspense boundary is captured at resource creation |
 | `createPortal`, `svg()`, `template()` | **Stable** | |
+| `trustedHtml()`, the raw-HTML entry every raw sink takes | **Stable** | A plain string at a raw sink, and `h('script')`, are deprecated forms: see [Deprecated forms](#deprecated-forms). |
 | `data-fetch`, `data-transition:*`, `data-ref` | **Stable** | |
 | Tiered mount (`mountMarkup(root, markup, { tier, grants, config })`) | **Beta** | New in 2.1.0: binds only under the root it is handed, with `fetch`, `dom` and `navigate` grants and a coded diagnostic per denial; see [HTML-RUNTIME.md](HTML-RUNTIME.md#mounting-markup-you-did-not-write-tiers-and-grants). Leaving out `grants` gives every grant until 3.0.0, which gives none and pins the signature (FORMA-108). |
 | Preview frame runtime (`dist/formajs-frame.global.js`) | **Beta** | New in 2.1.0: the runtime a server writes inline into the opaque-origin preview frame; renders the module its host sends in tier `'unreviewed'`. Its message protocol (`module` in; `ready`, `resize`, `error` out) may still move before 3.0.0. |
-| `reconcile()` from `@getforma/core/runtime`, and the runtime's auto-mount of `data-forma-state` on load and through a `body` observer | **Deprecated** | Removed in 3.0.0: they bind with every power, wherever markup lands. Mount with `mountMarkup()` and a tier. `reconcile()` logs `FORMA_W_DEPRECATED_RECONCILE`; the auto-mount logs nothing in 2.x. |
+| `reconcile()` from `@getforma/core/runtime`, and the runtime's auto-mount of `data-forma-state` on load and through a `body` observer | **Deprecated** | Removed in 3.0.0: they bind with every power, wherever markup lands. Mount with `mountMarkup()` and a tier. `reconcile()` logs `FORMA_W_DEPRECATED_RECONCILE`; the auto-mount logs nothing in 2.x. A page turns all of them off now with `data-forma-mount="manual"` on a `<script>` element. |
 | Server functions (`@getforma/core/server`: `"use server"` RPC, `createAction`, the revalidation helpers) | **Deprecated** | Removed in 3.0.0. Serve the call from a route in the application's Rust server. Logs `FORMA_W_DEPRECATED_SERVER`. |
 | SSR (`@getforma/core/ssr`: `renderToString`, `renderToStream`) | **Deprecated** | Removed in 3.0.0. Render on the server with the Rust walker (forma-server); its form controls differ from the walker's, see [SSR form controls](#ssr-form-controls). Logs `FORMA_W_DEPRECATED_SSR`. |
 | Streaming SSR under strict CSP | **Known gap** | Suspense swap scripts carry no `nonce`, so a strict `script-src 'nonce-…'` blocks them and out-of-order content never swaps in. Use non-streaming SSR under strict CSP; do not add `'unsafe-inline'`. See [`../CSP.md`](../CSP.md). |
@@ -109,6 +110,39 @@ build with a bundler in development.
 Verified by `src/__tests__/development-build.test.ts` > "every subpath resolves to production files without the condition and to their development twins with it"
 Verified by `src/__tests__/development-build.test.ts` > "a process resolving with the development condition loads one copy of core, and it is the development build"
 Verified by `src/__tests__/development-build.test.ts` > "a process resolving without the condition loads one copy of core, and it is the production build"
+
+## Deprecated forms
+
+Two forms keep working through 2.x and are refused in 3.0.0 (DR-19): a plain
+string given to a raw sink, where `trustedHtml(markup)` is the typed form, and
+`h('script')`. In a [development build](#development-builds) each logs its
+code once, as `[forma] FORMA_W_RAW_SRCDOC: …`:
+
+| Form | Code | Instead |
+|---|---|---|
+| A string as `dangerouslySetInnerHTML`'s `__html` | `FORMA_W_RAW_INNER_HTML` | `{ __html: trustedHtml(markup) }` |
+| A string to `setHTMLUnsafe()` | `FORMA_W_RAW_SET_HTML` | `setHTMLUnsafe(el, trustedHtml(markup))` |
+| A string to `template()` or `templateMany()` | `FORMA_W_RAW_TEMPLATE` | `template(trustedHtml(markup))` |
+| A string to the runtime's `reconcile()` | `FORMA_W_RAW_RECONCILE` | `reconcile(container, trustedHtml(markup))` |
+| A string as a `srcdoc` value | `FORMA_W_RAW_SRCDOC` | `srcdoc: trustedHtml(markup)` |
+| `h('script')` | `FORMA_W_SCRIPT_ELEMENT` | A script in the page, or a module the build bundles |
+| `data-bind:srcdoc`, or `{item…}` in a list row's `srcdoc`, in the HTML runtime | `FORMA_W_RAW_RUNTIME_SRCDOC` | The frame built with `h()` and `trustedHtml(markup)` |
+
+Each raw sink logs for any value that is not `trustedHtml()`, a look-alike
+object or a `String` object as much as a string. Under a page policy that
+requires Trusted Types, as forma-server 0.2.2's Report-Only header does, such a
+value at a raw sink is also reported by the browser, and refused where the
+policy is enforced; a `trustedHtml()` value is not
+([`../CSP.md`](../CSP.md#trusted-types)). A page that refuses one of core's two
+policy names (its `trusted-types` directive does not list it, or another script
+created it first) makes core write markup as strings, which it then refuses; a
+development build logs `FORMA_W_TT_POLICY_REFUSED` once for each name.
+
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "a string to each raw sink still renders, and warns once with the sink's code in development"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "h('script') warns once in development and still builds the element"
+Verified by `src/dom/__tests__/trusted-html-build.test.ts` > "a production build carries none of the raw-HTML warnings, in any artifact"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "a refused policy name warns once in development, and the sinks then write strings the page refuses"
+Verified by `src/__tests__/runtime-srcdoc.test.ts` > "a list row's srcdoc writes its string and warns once with the runtime code"
 
 ## SSR form controls
 

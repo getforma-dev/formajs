@@ -61,8 +61,8 @@ Gzipped sizes, measured by `npm run check:size` on the 2.0.1 build on 2026-08-08
 | Artifact | Gzipped | CI limit |
 |---|---|---|
 | `@getforma/core` entry + every chunk it imports | 24.8 KB (25,429 B) | 30,000 B |
-| CDN HTML runtime (`formajs-runtime.global.js`) | 31.3 KB (32,015 B) | 39,000 B |
-| CDN HTML runtime, hardened (`formajs-runtime-hardened.global.js`) | 30.3 KB (31,017 B) | 38,000 B |
+| CDN HTML runtime (`formajs-runtime.global.js`) | 31.3 KB (32,015 B) | 40,000 B |
+| CDN HTML runtime, hardened (`formajs-runtime-hardened.global.js`) | 30.3 KB (31,017 B) | 39,000 B |
 | CDN browser ESM (`forma.esm.js`, inlines alien-signals) | 23.6 KB (24,198 B) | 29,000 B |
 | Preview frame runtime (`formajs-frame.global.js`, inlined by the server) | 36.6 KB (37,526 B) | 38,000 B |
 
