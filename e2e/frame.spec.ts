@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
+import { createServer, type Socket } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -156,4 +157,152 @@ test('a message of any other type changes nothing, and a port posted later is ig
   });
   expect(answered).toEqual([]);
   await expect(preview.locator('#p')).toHaveText('first');
+});
+
+/** A TCP listener that counts the connections made to it (the A2 audit's method). */
+async function tcpCounter(port: number): Promise<{ count(): number; close(): Promise<void> }> {
+  let connections = 0;
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    connections++;
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    socket.end();
+  });
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+  return {
+    count: () => connections,
+    close: () => new Promise<void>((resolve) => {
+      for (const socket of sockets) socket.destroy();
+      server.close(() => resolve());
+    }),
+  };
+}
+
+test("a module's <link> opens no connection: preconnect, dns-prefetch, prefetch, preload, a bound href", async ({ page, browserName }) => {
+  // FORMA-128's follow-up (the A2 audit, S1): WebKit opened a TCP connection
+  // for <link rel="preconnect"> in the preview frame, under connect-src
+  // 'none'. Each engine counts on its own port, from 3901.
+  const port = 3901 + ['chromium', 'firefox', 'webkit'].indexOf(browserName);
+  const counter = await tcpCounter(port);
+  try {
+    await host(page);
+    const target = `http://127.0.0.1:${port}`;
+    const links =
+      `<link rel="preconnect" href="${target}/">` +
+      `<link rel="preconnect" href="${target}/" crossorigin>` +
+      `<link rel="dns-prefetch" href="${target}/">` +
+      `<link rel="prefetch" href="${target}/prefetch">` +
+      `<link rel="preload" as="fetch" crossorigin href="${target}/preload">` +
+      `<div data-forma-state='{"h":"${target}/bound"}'><link rel="preconnect" data-bind:href="h"></div>`;
+    await send(page, { type: 'module', html: `${links}<p id="p">first</p>` });
+    const preview = page.frameLocator('#preview');
+    await expect(preview.locator('#p')).toHaveText('first');
+    // A later module is stripped the same way.
+    await send(page, { type: 'module', html: `<link rel="preconnect" href="${target}/update"><p id="p">second</p>` });
+    await expect(preview.locator('#p')).toHaveText('second');
+    await page.waitForTimeout(1500);
+    expect(counter.count()).toBe(0);
+    expect(await frameOf(page).evaluate(() => document.querySelectorAll('link').length)).toBe(0);
+    await expect.poll(async () => (await received(page)).filter((m) => m.code === 'FORMA_E_UNREVIEWED_LINK').length)
+      .toBe(7);
+
+    // The control: from the host page the same port is reachable, so a
+    // connection from the frame would have been counted.
+    await page.evaluate((url) => { new Image().src = url; }, `${target}/control`);
+    await expect.poll(() => counter.count()).toBeGreaterThan(0);
+  } finally {
+    await counter.close();
+  }
+});
+
+/** Every `<link>` in the frame document, nested `<template>` contents included. */
+const liveLinks = (page: Page): Promise<string[]> => frameOf(page).evaluate(() => {
+  const found: string[] = [];
+  const walk = (node: ParentNode): void => {
+    for (const link of Array.from(node.querySelectorAll('link'))) found.push(link.outerHTML);
+    for (const t of Array.from(node.querySelectorAll('template'))) walk(t.content);
+  };
+  walk(document);
+  return found;
+});
+
+test("a module's <link> survives no second parse: foreign content and foster parenting open no connection, after render and after update()", async ({ page, browserName }) => {
+  // formajs#35's review, B1: the strip ran in an inert <template> and the
+  // root was then given the serialisation as a string, a second parse in
+  // another insertion mode; nested <form>, <math>, <mglyph> and <style> made
+  // a <link> the first parse had not seen appear in the second, in all three
+  // engines, and WebKit connected for it. The markup is now parsed once, in
+  // the root's context, stripped on those nodes, and written as nodes, with
+  // a live check after every write. Each engine counts on its own port,
+  // from 3904.
+  const port = 3904 + ['chromium', 'firefox', 'webkit'].indexOf(browserName);
+  const counter = await tcpCounter(port);
+  try {
+    await host(page);
+    const t = `http://127.0.0.1:${port}`;
+    const payloads: Array<(p: string) => string> = [
+      (p) => `<link rel="icon" href="/decoy"><form><math><mtext></form><form><mglyph><style></math><link rel=preconnect href=${t}/${p}></style></mglyph></form></mtext></math></form><p id="p">${p}</p>`,
+      (p) => `<link rel="icon" href="/decoy"><form><math><mtext></form><form><mglyph><title></math><link rel=preconnect href=${t}/${p}></title></mglyph></form></mtext></math></form><p id="p">${p}</p>`,
+      (p) => `<link rel="icon" href="/decoy"><svg></p><style><a id="</style><link rel=preconnect href=${t}/${p}>"></a></style></svg><p id="p">${p}</p>`,
+      (p) => `<link rel="icon" href="/decoy"><svg></p><style><link rel=preconnect href=${t}/${p}></style></svg><p id="p">${p}</p>`,
+      (p) => `<link rel="icon" href="/decoy"><svg><select><link rel=preconnect href=${t}/${p}></select></svg><p id="p">${p}</p>`,
+      (p) => `<link rel="icon" href="/decoy"><math><mtext><table><mglyph><style><!--</style><link rel=preconnect href=${t}/${p} title="--&gt;&lt;link rel=preconnect href=${t}/${p}2&gt;">--></style></mglyph></table></mtext></math><p id="p">${p}</p>`,
+    ];
+    const preview = page.frameLocator('#preview');
+    for (const [i, payload] of payloads.entries()) {
+      // Rendered, then updated with the same shape: the empty-root write and
+      // the diff path, both from the one parse.
+      await send(page, { type: 'module', html: payload(`${i}-rendered`) });
+      await expect(preview.locator('#p')).toHaveText(`${i}-rendered`);
+      expect(await liveLinks(page), `payload ${i} after render`).toEqual([]);
+      await send(page, { type: 'module', html: payload(`${i}-updated`) });
+      await expect(preview.locator('#p')).toHaveText(`${i}-updated`);
+      expect(await liveLinks(page), `payload ${i} after update`).toEqual([]);
+    }
+    await page.waitForTimeout(1500);
+    expect(counter.count()).toBe(0);
+    const errors = (await received(page)).filter((m) => m.type === 'error');
+    expect(new Set(errors.map((m) => m.code))).toEqual(new Set(['FORMA_E_UNREVIEWED_LINK']));
+    expect(errors.some((m) => /reached the document/.test(m.message ?? ''))).toBe(false);
+
+    // The control: from the host page the same port is reachable.
+    await page.evaluate((url) => { new Image().src = url; }, `${t}/control`);
+    await expect.poll(() => counter.count()).toBeGreaterThan(0);
+  } finally {
+    await counter.close();
+  }
+});
+
+test("a module's iframe srcdoc renders no document: the attribute is removed, written or bound, and nothing connects", async ({ page, browserName }) => {
+  // formajs#35's review, S2: a <link rel="preconnect"> inside an <iframe
+  // srcdoc> was out of the strip's reach, and WebKit connected for it. Each
+  // engine counts on its own port, from 3907.
+  const port = 3907 + ['chromium', 'firefox', 'webkit'].indexOf(browserName);
+  const counter = await tcpCounter(port);
+  try {
+    await host(page);
+    const t = `http://127.0.0.1:${port}`;
+    await send(page, {
+      type: 'module',
+      html: `<iframe id="written" srcdoc="&lt;link rel=preconnect href=${t}/written&gt;&lt;p&gt;in&lt;/p&gt;"></iframe>` +
+        `<div data-forma-state='{"d":"<link rel=preconnect href=${t}/bound>"}'><iframe id="bound" data-bind:srcdoc="d"></iframe></div>` +
+        `<p id="p">x</p>`,
+    });
+    const preview = page.frameLocator('#preview');
+    await expect(preview.locator('#p')).toHaveText('x');
+    await expect.poll(async () => (await received(page)).filter((m) => m.type === 'error').map((m) => m.code).sort())
+      .toEqual(['FORMA_E_UNREVIEWED_SRCDOC', 'FORMA_E_UNREVIEWED_SRCDOC']);
+    await page.waitForTimeout(1500);
+    expect(await frameOf(page).evaluate(() => [document.querySelectorAll('iframe').length, document.querySelectorAll('[srcdoc]').length]))
+      .toEqual([2, 0]);
+    expect(page.frames().filter((f) => f.url().startsWith('about:srcdoc'))).toEqual([]);
+    expect(counter.count()).toBe(0);
+
+    // The control: from the host page the same port is reachable.
+    await page.evaluate((url) => { new Image().src = url; }, `${t}/control`);
+    await expect.poll(() => counter.count()).toBeGreaterThan(0);
+  } finally {
+    await counter.close();
+  }
 });

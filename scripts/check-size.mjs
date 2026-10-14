@@ -54,7 +54,11 @@ const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
  * FORMA-128 (the tiered mount: roots handed in, grants, the bound on `$el`,
  * coded denials, the page's mount switch, its review's confined `closest()`
  * and gated `$dispatch`; core 2.1.0) raised them to 40,500 and 39,500 B
- * (40,329 and 39,344 B measured).
+ * (40,329 and 39,344 B measured). Its follow-up, unreviewed markup mounted
+ * without its `<link>` elements (the A2 audit, S1), raised them to 41,000 and
+ * 40,000 B (40,640 and 39,657 B measured); its review (formajs#35: the one
+ * parse in the root's context written as nodes, the live check, no srcdoc)
+ * raised them to 41,500 and 40,500 B (41,094 and 40,106 B measured).
  * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
 export const GATES = [
@@ -65,7 +69,7 @@ export const GATES = [
   },
   {
     entry: 'dist/formajs-runtime.global.js',
-    limit: 40500,
+    limit: 41500,
     note: 'CDN runtime bundle (single self-contained IIFE)',
   },
   {
@@ -77,9 +81,11 @@ export const GATES = [
     // The preview frame's runtime (FORMA-128), written inline into every
     // preview document. Gated from its measurement on `main` with
     // FORMA-126/127 and FORMA-173 and #30's review fixes (38,953 B), rounded
-    // up to the next 500 B, as L-51 sets the runtime gates.
+    // up to the next 500 B, as L-51 sets the runtime gates; raised to 39,500 B
+    // by unreviewed markup mounted without its `<link>` elements (39,264 B),
+    // and to 40,000 B by that change's review, formajs#35 (39,705 B).
     entry: 'dist/formajs-frame.global.js',
-    limit: 39000,
+    limit: 40000,
     note: 'preview frame runtime (one classic script, inlined by the server)',
   },
   {
@@ -87,7 +93,7 @@ export const GATES = [
     // release.yml — while being the build the docs pointed CSP-strict users at
     // and the target of the `runtime-csp` exports subpath.
     entry: 'dist/formajs-runtime-hardened.global.js',
-    limit: 39500,
+    limit: 40500,
     note: 'CDN hardened runtime bundle (single self-contained IIFE)',
   },
 ];
