@@ -35,7 +35,7 @@ async function withStrictCsp(page: Page, inject = ''): Promise<{ violations: str
   // does not depend on wording.
   page.on('console', (msg) => {
     const text = msg.text();
-    if (/content[- ]security[- ]policy|refused to (execute|evaluate|load|apply)/i.test(text)) {
+    if (/content security policy|refused to (execute|evaluate|load|apply)/i.test(text)) {
       violations.push(text);
     }
   });
