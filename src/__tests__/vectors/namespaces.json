@@ -1,0 +1,232 @@
+{
+  "about": "Namespace parity vectors (decision brief DR-9, FORMA-026). Each vector is server markup, the tree that renders it (tag, props, children; a string child is text), and the namespace of every element in document order as the HTML parser builds it (html, svg, mathml). Run by src/__tests__/renderer-contract.test.ts (h() and renderToString) and e2e/adoption.spec.ts (the parser of each engine, and adoption).",
+  "vectors": [
+    {
+      "name": "an icon with a title",
+      "server": "<svg viewBox=\"0 0 10 10\"><title>Close</title><path d=\"M0 0L10 10\"></path></svg>",
+      "tree": [
+        "svg",
+        {
+          "viewBox": "0 0 10 10"
+        },
+        [
+          "title",
+          null,
+          "Close"
+        ],
+        [
+          "path",
+          {
+            "d": "M0 0L10 10"
+          }
+        ]
+      ],
+      "namespaces": [
+        "svg:svg",
+        "title:svg",
+        "path:svg"
+      ]
+    },
+    {
+      "name": "a linked icon whose link holds a title",
+      "server": "<svg viewBox=\"0 0 10 10\"><a href=\"#close\"><title>Close</title><circle r=\"1\"></circle></a></svg>",
+      "tree": [
+        "svg",
+        {
+          "viewBox": "0 0 10 10"
+        },
+        [
+          "a",
+          {
+            "href": "#close"
+          },
+          [
+            "title",
+            null,
+            "Close"
+          ],
+          [
+            "circle",
+            {
+              "r": "1"
+            }
+          ]
+        ]
+      ],
+      "namespaces": [
+        "svg:svg",
+        "a:svg",
+        "title:svg",
+        "circle:svg"
+      ]
+    },
+    {
+      "name": "a style and a script inside an svg",
+      "server": "<svg><style>circle{fill:red}</style><script type=\"text/plain\">x</script><circle r=\"1\"></circle></svg>",
+      "tree": [
+        "svg",
+        null,
+        [
+          "style",
+          null,
+          "circle{fill:red}"
+        ],
+        [
+          "script",
+          {
+            "type": "text/plain"
+          },
+          "x"
+        ],
+        [
+          "circle",
+          {
+            "r": "1"
+          }
+        ]
+      ],
+      "namespaces": [
+        "svg:svg",
+        "style:svg",
+        "script:svg",
+        "circle:svg"
+      ]
+    },
+    {
+      "name": "a foreignObject's content is HTML",
+      "server": "<svg><foreignObject width=\"10\" height=\"10\"><div><a href=\"#more\">more</a></div></foreignObject></svg>",
+      "tree": [
+        "svg",
+        null,
+        [
+          "foreignObject",
+          {
+            "width": "10",
+            "height": "10"
+          },
+          [
+            "div",
+            null,
+            [
+              "a",
+              {
+                "href": "#more"
+              },
+              "more"
+            ]
+          ]
+        ]
+      ],
+      "namespaces": [
+        "svg:svg",
+        "foreignObject:svg",
+        "div:html",
+        "a:html"
+      ]
+    },
+    {
+      "name": "a desc's content is HTML",
+      "server": "<svg><desc>See <a href=\"#x\">x</a></desc></svg>",
+      "tree": [
+        "svg",
+        null,
+        [
+          "desc",
+          null,
+          "See ",
+          [
+            "a",
+            {
+              "href": "#x"
+            },
+            "x"
+          ]
+        ]
+      ],
+      "namespaces": [
+        "svg:svg",
+        "desc:svg",
+        "a:html"
+      ]
+    },
+    {
+      "name": "an SVG name h() did not know: feDropShadow",
+      "server": "<svg><filter id=\"f\"><feDropShadow dx=\"1\"></feDropShadow></filter></svg>",
+      "tree": [
+        "svg",
+        null,
+        [
+          "filter",
+          {
+            "id": "f"
+          },
+          [
+            "feDropShadow",
+            {
+              "dx": "1"
+            }
+          ]
+        ]
+      ],
+      "namespaces": [
+        "svg:svg",
+        "filter:svg",
+        "feDropShadow:svg"
+      ]
+    },
+    {
+      "name": "a MathML formula, HTML inside a token element",
+      "server": "<math><mrow><mi>x</mi><mo>+</mo><mn>1</mn></mrow><mtext><b>bold</b> <a href=\"#m\">m</a></mtext></math>",
+      "tree": [
+        "math",
+        null,
+        [
+          "mrow",
+          null,
+          [
+            "mi",
+            null,
+            "x"
+          ],
+          [
+            "mo",
+            null,
+            "+"
+          ],
+          [
+            "mn",
+            null,
+            "1"
+          ]
+        ],
+        [
+          "mtext",
+          null,
+          [
+            "b",
+            null,
+            "bold"
+          ],
+          " ",
+          [
+            "a",
+            {
+              "href": "#m"
+            },
+            "m"
+          ]
+        ]
+      ],
+      "namespaces": [
+        "math:mathml",
+        "mrow:mathml",
+        "mi:mathml",
+        "mo:mathml",
+        "mn:mathml",
+        "mtext:mathml",
+        "b:html",
+        "a:html"
+      ]
+    }
+  ]
+}

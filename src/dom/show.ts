@@ -15,6 +15,7 @@
 
 import { internalEffect, untrack, createRoot, registerDisposer } from 'forma/reactive';
 import { hydrating } from './hydrate.js';
+import { getNamespace, insertNs, withNamespace } from './namespace.js';
 
 /**
  * Conditionally render content based on a reactive boolean.
@@ -57,6 +58,10 @@ export function createShow(
   let currentNode: Node | null = null;
   let lastTruthy: boolean | null = null;
   let currentDispose: (() => void) | null = null;
+  // The namespace the branch is built in: its parent's content namespace once
+  // the markers are in an element; for the first render, into this fragment,
+  // the one being built in when createShow was called (SVG inside svg()).
+  let ns = getNamespace();
 
   const showDispose = internalEffect(() => {
     const truthy = !!when();
@@ -76,6 +81,9 @@ export function createShow(
       return;
     }
     if (DEBUG) console.log('[forma:show] parent:', parent.nodeName, 'inDoc:', document.contains(parent as any));
+    // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a createShow inside an svg renders each branch once, in SVG, inside svg() from its first render and on every toggle"
+    const into = insertNs(parent);
+    if (into !== undefined) ns = into;
 
     // Dispose previous branch's inner effects
     if (currentDispose) {
@@ -105,7 +113,7 @@ export function createShow(
       let branchDispose!: () => void;
       currentNode = createRoot((dispose) => {
         branchDispose = dispose;
-        return untrack(() => branchFn());
+        return untrack(() => withNamespace(ns, branchFn));
       });
       currentDispose = branchDispose;
     } else {
