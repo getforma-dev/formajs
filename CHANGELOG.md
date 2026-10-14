@@ -177,6 +177,13 @@ All notable changes to this project will be documented in this file.
   (33,072 to 34,542 B); their gates rise from 34,500 to 36,000 B and from
   33,500 to 35,000 B. This change leaves the core entry and the browser ESM
   bundle as they were.
+- **Size** (L-51, FORMA-173): measured on `main` with FORMA-126 and FORMA-127,
+  deferral decided per budget, the cap on a charge after a binding waits and
+  its per-task allowance grow the CDN runtime by 191 B gzipped (36,385 to
+  36,576 B) and the hardened runtime by 193 B (35,406 to 35,599 B); their
+  gates rise from 36,500 to 37,000 B and from 35,500 to 36,000 B. The core
+  entry is as it was, and the browser ESM bundle is 11 B smaller (28,154 to
+  28,143 B).
 - **What core writes of its own passes Trusted Types, and its raw sinks take
   them** (FORMA-126, FORMA-127; DR-19, DR-20). Under a page policy with
   `require-trusted-types-for 'script'`, which forma-server 0.2.2 sends as
