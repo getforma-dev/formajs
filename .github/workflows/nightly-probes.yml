@@ -1,0 +1,60 @@
+name: Nightly probes
+
+# The mutation-probe corpus (probes/corpus.json), applied and run in full: each
+# probe edits the source, the whole vitest suite runs, the edit is reverted. It
+# runs the suite once per probe, so it is half an hour rather than seconds, and
+# does not belong on a PR. CI's `probes-check` job is the cheap half that does:
+# every probe's anchor still applies.
+#
+# Its own workflow since FORMA-179: as a job in ci.yml it showed as "skipped" on
+# every PR and push, the one permanently skipped check. A schedule or a
+# dispatch are its only triggers, so no PR or push lists it:
+#   gh workflow run nightly-probes.yml --ref <branch>
+on:
+  schedule:
+    - cron: '17 3 * * *'
+  workflow_dispatch:
+
+# A dispatch on the same ref supersedes a run still going; a scheduled run is on
+# main and a dispatch is usually on a branch, so the two rarely share a group.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Nightly mutation run with a detection floor. A survivor is a property
+  # nothing in the suite defends, so the floor is a ratchet: it may go up.
+  probes:
+    # The job only reads this repository (FORMA-010). The cache and artifact
+    # steps authenticate with the runner's own service token, which
+    # `permissions:` does not govern.
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    # MEASURED locally: the full run — apply each of the 93 probes, run the
+    # whole vitest suite, revert — completed in 411s (6.9m) at 90/90 = 100%
+    # detection. A 2-core hosted runner is roughly 2-3x slower than the machine
+    # that measured it, so budget 15-20m; 35 is ~2x that. The previous value,
+    # 60, was a round number nobody had measured — and it was this fleet's ONLY
+    # timeout-minutes anywhere, sitting on the one job that never runs per-PR,
+    # so effective per-PR timeout coverage was exactly zero.
+    # MEASURED on a hosted runner (FORMA-128, workflow_dispatch run
+    # 38584952503): 325 of 338 probes in 35.4 min, about 6.5 s a probe, when
+    # the 35-minute limit cancelled it; 274 had taken 25.5 min. The corpus is
+    # 328 with FORMA-128's tiered-mount probes, so a run is about 36 min; 75 is
+    # ~2x that, as above.
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: node scripts/run-probes.mjs --floor=85
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        if: always()
+        with:
+          name: mutation-probe-results
+          path: probes/results.json
+          retention-days: 30

@@ -22,6 +22,20 @@ async function settle(ticks = 40): Promise<void> {
   for (let i = 0; i < ticks; i++) await tick();
 }
 
+/**
+ * The three heaviest tests here mount hundreds of bindings over lists of up to
+ * 62,000 numbers and run up to a hundred retry ticks, and under coverage they
+ * came close to vitest's 5 s default, or past it: run 38601251484 (Node 20)
+ * timed the first out at 5,000 ms, and its work, still running, then failed
+ * "the cap drops to 0 …" too (forcing that timeout locally fails the same two).
+ * Each has a timeout about 3x its slowest CI run (FORMA-179; 10 to 12 runs on
+ * each of Node 20, 22 and 24, under coverage): 4,993 ms (and the timed-out
+ * 5,180), 3,376 ms and 3,407 ms.
+ */
+const HEAVY_WAIT_TIMEOUT_MS = 16_000;
+const HEAVY_DROP_TIMEOUT_MS = 11_000;
+const HEAVY_DISPATCH_TIMEOUT_MS = 11_000;
+
 /** An expression that spends `units` of the 250,000-unit allocation budget and answers `units - 10`. */
 const spending = (units: number): string => `Array.from({length: ${units - 10}}).length`;
 
@@ -131,7 +145,7 @@ describe('the task budget (FORMA-028)', () => {
     expect(priced).toBe(1);
   });
 
-  it('bindings that each weigh most of the budget are refused cheaply while they wait', async () => {
+  it('bindings that each weigh most of the budget are refused cheaply while they wait', { timeout: HEAVY_WAIT_TIMEOUT_MS }, async () => {
     // FORMA-173, from formajs#26's final review: pricing ran to the whole
     // budget, so every binding still waiting weighed its value in full again
     // in every retry tick (twenty such bindings: a 53 ms task at 4x). Each
@@ -202,7 +216,7 @@ describe('the task budget (FORMA-028)', () => {
     expect(codes()).toEqual([]);
   });
 
-  it("the cap drops to 0 once the task's refusals have counted the allowance", async () => {
+  it("the cap drops to 0 once the task's refusals have counted the allowance", { timeout: HEAVY_DROP_TIMEOUT_MS }, async () => {
     // FORMA-173's review (H1): the cap bounds what each binding after a wait
     // counts, not what they count together. Its pages: 5,000 units, a binding
     // of 248,000 that waits, then 400 bindings each a little over the cap (a
@@ -243,7 +257,7 @@ describe('the task budget (FORMA-028)', () => {
     }
   });
 
-  it("a $dispatch from inside a binding keeps the task's cap", async () => {
+  it("a $dispatch from inside a binding keeps the task's cap", { timeout: HEAVY_DISPATCH_TIMEOUT_MS }, async () => {
     // FORMA-173's review, its nit. A binding dispatches an event; the handler
     // it reaches writes state, and the batch that write closes flushes the
     // bindings still queued, inside the dispatching binding's evaluation. Ten

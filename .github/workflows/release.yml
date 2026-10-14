@@ -17,7 +17,10 @@ concurrency:
 # Only `publish` holds `id-token: write`, the permission that lets a job mint
 # the OIDC token npm exchanges for a publish credential. Everything that runs
 # the dependency tree runs in a job without it:
-#   engines  the e2e suite in Chromium, Firefox and WebKit (DR-9, FORMA-027)
+#   engines  the e2e suite in Chromium, Firefox and WebKit (DR-9, FORMA-027);
+#            it restores the browsers and their system packages from caches
+#            (e2e-engines.yml, FORMA-179); SR43 bars a cache from `pack` and
+#            `publish` only
 #   test     typecheck and the unit suite
 #   pack     builds, runs the size and package gates, checks the version against
 #            the tag, packs the tarball and writes its SHA-256 record; restores
@@ -113,11 +116,16 @@ jobs:
           cat release/SHA256SUMS
           echo "record-sha256=$RECORD_SHA256" >> "$GITHUB_OUTPUT"
 
+      # overwrite: re-running all jobs after a failure replaces the earlier
+      # attempt's artefact instead of failing on its name;
+      # publish still checks every file against the record whose hash this job
+      # passes as an output (A2 audit S7, FORMA-179).
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: release-packed
           path: release/
           if-no-files-found: error
+          overwrite: true
 
   publish:
     needs: [engines, test, pack]
