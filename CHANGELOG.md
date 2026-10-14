@@ -24,6 +24,13 @@ All notable changes to this project will be documented in this file.
   actionlint (binary checked against a pinned SHA-256),
   `scripts/check-release-workflow.rb --self-test` and
   `scripts/test-release-artifacts.sh`. The published package is unchanged.
+  The lint also refuses a publish job that could go on after a failed check
+  (`continue-on-error`, an `if:` on a step up to the publish, `always()`,
+  `failure()` or `cancelled()` in the job's `if`, a check line that can
+  swallow its failure, a shell without errexit), `container:` or `services:`
+  on the publish or pack job, and a checkout of another repository or ref;
+  every rule has a seed in `--self-test`, which fails if one does not. The
+  artefact test flips a byte instead of writing one that may already be there.
 
 ## [2.0.3] - 2026-10-14
 

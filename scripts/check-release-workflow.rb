@@ -3,15 +3,17 @@
 # SR43's lint over the release workflow (FORMA-134; decision brief L-34, L-42).
 #
 #   ruby scripts/check-release-workflow.rb              check the workflow
-#   ruby scripts/check-release-workflow.rb --self-test  also seed one violation
-#     per rule into a copy of the workflow and fail unless each is caught
+#   ruby scripts/check-release-workflow.rb --self-test  also seed violations into
+#     a copy of the workflow, at least one for every rule, and fail unless each
+#     is caught by the rule it names
 #
 # It fails unless: the release tag is the only trigger; every job declares its
 # token; the publish job alone holds `id-token: write`; the publish and pack jobs
-# restore no cache; the publish job runs no dependency code and no third-party
-# action beyond the ones it needs, waits for every other job, downloads only this
-# run's packed artefact and checks it against the pack job's record before it
-# publishes. Ruby's standard library parses the YAML, so the check adds nothing
+# restore no cache and run in no container; the publish job runs no dependency
+# code and no third-party action beyond the ones it needs, waits for every other
+# job, downloads only this run's packed artefact, checks it against the pack
+# job's record before it publishes, and cannot go on to publish after a failed
+# step or job. Ruby's standard library parses the YAML, so the check adds nothing
 # to the supply chain it guards. The repository-specific part is CONFIG.
 require 'yaml'
 
@@ -25,10 +27,6 @@ CONFIG = {
   # publish job names none.
   environment: 'npm-publish',
   registry: :npm, # :npm or :crates
-  # setup-node v5 and later cache on their own when package.json names a
-  # packageManager; where the pinned setup-node is v5, the cache-free jobs must
-  # turn that off explicitly.
-  setup_node_cache_off_required: true,
 }.freeze
 
 # Actions the publish job may use: GitHub's checkout, setup and artefact
@@ -45,6 +43,15 @@ DEPENDENCY_CODE = [
   /\b(yarn|pnpm|bun|bunx)\b/,
   /\bcargo\s+(build|b|test|t|run|r|check|c|clippy|install|bench|doc|d|fix|rustc|rustdoc)\b/,
 ].freeze
+
+# Shells GitHub runs with errexit (`bash -eo pipefail`, `sh -e`), so a failed
+# command in a step stops the step.
+ERREXIT_SHELLS = %w[bash sh].freeze
+
+# A check line in the publish job: the whole line is the command, so nothing
+# (`|| true`, `; true`, `|| :`, `&`, a pipe, a substitution) can swallow its
+# failure.
+CHECK_LINE = %r{\A\s*bash scripts/release-artifacts\.sh (?:verify|match)\b[^;&|`#\\\n]*\z}.freeze
 
 def jobs_of(doc)
   doc['jobs'].is_a?(Hash) ? doc['jobs'] : {}
@@ -83,10 +90,16 @@ def falsy?(value)
   [false, 'false', '', nil].include?(value)
 end
 
+def default_shell(holder)
+  defaults = holder.is_a?(Hash) ? holder['defaults'] : nil
+  run = defaults.is_a?(Hash) ? defaults['run'] : nil
+  run.is_a?(Hash) ? run['shell'] : nil
+end
+
 # Whether a `permissions:` value grants the OIDC token.
 def grants_id_token?(perms)
-  return true if perms == 'write-all'
-  perms.is_a?(Hash) && perms['id-token'].to_s == 'write'
+  return true if perms.to_s.downcase == 'write-all'
+  perms.is_a?(Hash) && perms['id-token'].to_s.downcase == 'write'
 end
 
 # Jobs that need `name`, directly or through another job.
@@ -142,7 +155,10 @@ def check_permissions(doc, config, out)
   end
 end
 
-def check_cache_free(doc, config, name, out)
+# No cache in the jobs whose bytes publish. In `pack`, which has the whole tree,
+# setup-node must also turn off the cache v5 and later add on their own when
+# package.json names a packageManager; `publish` checks out no package.json (D4).
+def check_cache_free(doc, name, out, setup_node_off_required:)
   job = jobs_of(doc)[name]
   steps_of(job).each_with_index do |step, i|
     action = action_of(step).to_s
@@ -156,15 +172,77 @@ def check_cache_free(doc, config, name, out)
     if with.key?('package-manager-cache') && !falsy?(with['package-manager-cache'])
       out << "C1 job `#{name}` step #{i + 1} sets `package-manager-cache: #{with['package-manager-cache']}`; it must restore no cache"
     end
-    if config[:setup_node_cache_off_required] && action == 'actions/setup-node' && !(with.key?('package-manager-cache') && falsy?(with['package-manager-cache']))
-      out << "C1 job `#{name}` step #{i + 1}: setup-node must set `package-manager-cache: false`, or it caches on its own"
+    if setup_node_off_required && action == 'actions/setup-node' && !(with.key?('package-manager-cache') && falsy?(with['package-manager-cache']))
+      out << "C1 job `#{name}` step #{i + 1}: setup-node must set `package-manager-cache: false`, or v5 and later cache on their own"
     end
   end
 end
 
+# The jobs that hold the credential or produce the bytes run on the runner
+# itself: a `container:` would run every step inside a third-party image, and a
+# `services:` container would start one beside them.
+def check_runtime(doc, name, out)
+  job = jobs_of(doc)[name]
+  return unless job.is_a?(Hash)
+
+  %w[container services].each do |key|
+    out << "R1 job `#{name}` sets `#{key}:`; it must run its steps on the runner, with no other image beside them" if job.key?(key)
+  end
+end
+
+def publish_command_pattern(config)
+  config[:registry] == :crates ? /\bcargo\s+publish\b/ : /\bnpm\s+publish\b/
+end
+
 def publish_command_index(steps, config)
-  pattern = config[:registry] == :crates ? /\bcargo\s+publish\b/ : /\bnpm\s+publish\b/
-  steps.index { |s| run_of(s) =~ pattern }
+  steps.index { |s| run_of(s) =~ publish_command_pattern(config) }
+end
+
+# A failed check, test or job must stop the publish (S1 of the review).
+def check_fail_closed(doc, pub, config, out)
+  if pub.key?('continue-on-error') && !falsy?(pub['continue-on-error'])
+    out << 'E1 the publish job sets `continue-on-error`'
+  end
+  steps = pub['steps']
+  steps.each_with_index do |step, i|
+    next unless step.is_a?(Hash) && step.key?('continue-on-error') && !falsy?(step['continue-on-error'])
+
+    out << "E1 the publish job's step #{i + 1} sets `continue-on-error`, so the job goes on after it fails"
+  end
+
+  last_publish = steps.each_index.select { |i| run_of(steps[i]) =~ publish_command_pattern(config) }.max
+  (0..(last_publish || -1)).each do |i|
+    next unless steps[i].is_a?(Hash) && steps[i].key?('if')
+
+    out << "E2 the publish job's step #{i + 1} has `if: #{steps[i]['if']}`; no step up to the publish command may have one, so each runs only when every step before it passed"
+  end
+
+  if pub['if'].to_s =~ /\b(always|failure|cancelled)\s*\(/
+    out << "E3 the publish job's `if` calls `#{Regexp.last_match(1)}()`, so it can run after a job it needs has failed"
+  end
+
+  steps.each_with_index do |step, i|
+    run_of(step).each_line do |line|
+      next unless line.include?('release-artifacts.sh')
+      next if line.chomp =~ CHECK_LINE && !line.include?('$(')
+
+      out << "E4 the publish job's step #{i + 1}: a check must be the whole line, with nothing to swallow its failure: #{line.strip}"
+    end
+  end
+
+  [['the workflow', default_shell(doc)], ['the publish job', default_shell(pub)]].each do |where, shell|
+    next if shell.nil? || ERREXIT_SHELLS.include?(shell)
+
+    out << "E5 #{where} sets `defaults.run.shell: #{shell}`; the publish job's steps must run in bash or sh, which stop on a failed command"
+  end
+  steps.each_with_index do |step, i|
+    if step.is_a?(Hash) && step.key?('shell') && !ERREXIT_SHELLS.include?(step['shell'])
+      out << "E5 the publish job's step #{i + 1} sets `shell: #{step['shell']}`; it must run in bash or sh, which stop on a failed command"
+    end
+    if run_of(step) =~ /\bset\s+(\+[a-zA-Z]*e|\+o\s+errexit)/
+      out << "E5 the publish job's step #{i + 1} turns errexit off (`#{Regexp.last_match(0)}`)"
+    end
+  end
 end
 
 def check_publish_job(doc, config, out)
@@ -199,6 +277,8 @@ def check_publish_job(doc, config, out)
     out << "J4 the publish job must run in environment #{config[:environment].inspect}, the one the registry's trusted-publisher entry names; found #{env_name.inspect}"
   end
 
+  check_fail_closed(doc, pub, config, out)
+
   steps = pub['steps']
   steps.each_with_index do |step, i|
     base = action_base(step)
@@ -223,13 +303,17 @@ def check_publish_job(doc, config, out)
 
       out << "D3 `#{line.strip}` must pass --no-verify, or it builds the crate and runs its dependencies' build scripts" unless line.include?('--no-verify')
     end
-    if action_of(step) == 'actions/checkout'
-      unless falsy?(with_of(step)['persist-credentials']) && with_of(step).key?('persist-credentials')
-        out << "D4 the publish job's checkout must set `persist-credentials: false`"
-      end
-      if config[:registry] == :npm && !(with_of(step)['sparse-checkout'].to_s.strip != '' && falsy?(with_of(step)['sparse-checkout-cone-mode']) && with_of(step).key?('sparse-checkout-cone-mode'))
-        out << 'D4 the npm publish job checks out only the verifier: `sparse-checkout` with `sparse-checkout-cone-mode: false`'
-      end
+    next unless action_of(step) == 'actions/checkout'
+
+    with = with_of(step)
+    unless falsy?(with['persist-credentials']) && with.key?('persist-credentials')
+      out << "D4 the publish job's checkout must set `persist-credentials: false`"
+    end
+    if config[:registry] == :npm && !(with['sparse-checkout'].to_s.strip != '' && falsy?(with['sparse-checkout-cone-mode']) && with.key?('sparse-checkout-cone-mode'))
+      out << 'D4 the npm publish job checks out only the verifier: `sparse-checkout` with `sparse-checkout-cone-mode: false`'
+    end
+    %w[repository ref].each do |key|
+      out << "D5 the publish job's checkout sets `#{key}:`; it must check out the tagged commit of this repository" if with.key?(key)
     end
   end
 
@@ -298,8 +382,10 @@ def violations(doc, config = CONFIG)
   check_permissions(doc, config, out)
   check_publish_job(doc, config, out)
   check_pack_job(doc, config, out)
-  check_cache_free(doc, config, config[:publish_job], out)
-  check_cache_free(doc, config, config[:pack_job], out)
+  check_cache_free(doc, config[:publish_job], out, setup_node_off_required: false)
+  check_cache_free(doc, config[:pack_job], out, setup_node_off_required: true)
+  check_runtime(doc, config[:publish_job], out)
+  check_runtime(doc, config[:pack_job], out)
   out
 end
 
@@ -314,48 +400,93 @@ def deep_copy(value)
   Marshal.load(Marshal.dump(value))
 end
 
+def publish_job(doc)
+  doc['jobs'][CONFIG[:publish_job]]
+end
+
 def publish_steps(doc)
-  doc['jobs'][CONFIG[:publish_job]]['steps']
+  publish_job(doc)['steps']
 end
 
-def step_index(doc, job, &blk)
-  doc['jobs'][job]['steps'].index(&blk)
+def pack_job(doc)
+  doc['jobs'][CONFIG[:pack_job]]
 end
 
-# One seeded violation per rule: [what it does, the rule that must catch it, mutation].
+def check_step(doc, kind = 'verify')
+  publish_steps(doc).find { |s| run_of(s) =~ /release-artifacts\.sh #{kind}\b/ }
+end
+
+def publish_step(doc)
+  publish_steps(doc)[publish_command_index(publish_steps(doc), CONFIG)]
+end
+
+def append_to_check(doc, suffix, kind = 'verify')
+  step = check_step(doc, kind)
+  step['run'] = step['run'].lines.map { |l| l =~ /release-artifacts\.sh #{kind}\b/ ? "#{l.chomp}#{suffix}\n" : l }.join
+end
+
+# A mutation may replace the whole document by returning [:replace, value].
+REPLACE = :replace
+
+# Seeded violations: [what it does, the rule that must catch it, mutation].
 SEEDS = [
+  ['a workflow that is not a mapping', 'W0', ->(_d) { [REPLACE, ['jobs']] }],
   ['a branch filter beside the tags', 'T1', ->(d) { d['on']['push']['branches'] = ['main'] }],
   ['a workflow_dispatch trigger', 'T1', ->(d) { d['on']['workflow_dispatch'] = nil }],
   ['a pull_request trigger', 'T1', ->(d) { d['on']['pull_request'] = { 'branches' => ['main'] } }],
   ['id-token: write at the workflow level', 'P1', ->(d) { d['permissions'] = { 'contents' => 'read', 'id-token' => 'write' } }],
-  ['a job without permissions', 'P2', ->(d) { d['jobs'][CONFIG[:pack_job]].delete('permissions') }],
-  ['contents: write on the publish job', 'P3', ->(d) { d['jobs'][CONFIG[:publish_job]]['permissions']['contents'] = 'write' }],
-  ['id-token: write on the pack job', 'P4', ->(d) { d['jobs'][CONFIG[:pack_job]]['permissions'] = { 'contents' => 'read', 'id-token' => 'write' } }],
-  ['write-all on the pack job', 'P4', ->(d) { d['jobs'][CONFIG[:pack_job]]['permissions'] = 'write-all' }],
+  ['a job without permissions', 'P2', ->(d) { pack_job(d).delete('permissions') }],
+  ['contents: write on the publish job', 'P3', ->(d) { publish_job(d)['permissions']['contents'] = 'write' }],
+  ['id-token: write on the pack job', 'P4', ->(d) { pack_job(d)['permissions'] = { 'contents' => 'read', 'id-token' => 'write' } }],
+  ['write-all on the pack job', 'P4', ->(d) { pack_job(d)['permissions'] = 'write-all' }],
+  ['`id-token: Write` on the pack job', 'P4', ->(d) { pack_job(d)['permissions'] = { 'contents' => 'read', 'id-token' => 'Write' } }],
   ['the pack job inheriting id-token: write from the workflow level', 'P4', lambda do |d|
     d['permissions'] = { 'id-token' => 'write' }
-    d['jobs'][CONFIG[:pack_job]].delete('permissions')
+    pack_job(d).delete('permissions')
   end],
   ['the publish job as a reusable workflow', 'J1', ->(d) { d['jobs'][CONFIG[:publish_job]] = { 'uses' => './.github/workflows/x.yml', 'permissions' => { 'contents' => 'read', 'id-token' => 'write' } } }],
-  ['publish not waiting for the pack job', 'J2', ->(d) { d['jobs'][CONFIG[:publish_job]]['needs'] = needs_of(d['jobs'][CONFIG[:publish_job]]) - [CONFIG[:pack_job]] }],
+  ['publish not waiting for the pack job', 'J2', ->(d) { publish_job(d)['needs'] = needs_of(publish_job(d)) - [CONFIG[:pack_job]] }],
   ['a new gate job publish does not wait for', 'J2', ->(d) { d['jobs']['late-gate'] = { 'permissions' => {}, 'runs-on' => 'ubuntu-latest', 'steps' => [{ 'run' => 'true' }] } }],
-  ['publish without its tag condition', 'J3', ->(d) { d['jobs'][CONFIG[:publish_job]].delete('if') }],
-  ['an environment the registry entry does not name', 'J4', ->(d) { d['jobs'][CONFIG[:publish_job]]['environment'] = 'unknown-environment' }],
+  ['publish without its tag condition', 'J3', ->(d) { publish_job(d).delete('if') }],
+  ['an environment the registry entry does not name', 'J4', ->(d) { publish_job(d)['environment'] = 'unknown-environment' }],
+  ['continue-on-error on the artefact check', 'E1', ->(d) { check_step(d)['continue-on-error'] = true }],
+  ['continue-on-error on the publish job', 'E1', ->(d) { publish_job(d)['continue-on-error'] = true }],
+  ['if: always() on the publish step', 'E2', ->(d) { publish_step(d)['if'] = 'always()' }],
+  ['if: failure() on the publish step', 'E2', ->(d) { publish_step(d)['if'] = 'failure()' }],
+  ['if: !cancelled() on the publish step', 'E2', ->(d) { publish_step(d)['if'] = '!cancelled()' }],
+  ['if: always() on the artefact check', 'E2', ->(d) { check_step(d)['if'] = 'always()' }],
+  ['always() in the publish job\'s if', 'E3', ->(d) { publish_job(d)['if'] = "always() && (#{publish_job(d)['if']})" }],
+  ['!cancelled() in the publish job\'s if', 'E3', ->(d) { publish_job(d)['if'] = "!cancelled() && (#{publish_job(d)['if']})" }],
+  ['`|| true` after the artefact check', 'E4', ->(d) { append_to_check(d, ' || true') }],
+  ['`; true` after the artefact check', 'E4', ->(d) { append_to_check(d, '; true') }],
+  ['`|| :` after the artefact check', 'E4', ->(d) { append_to_check(d, ' || :') }],
+  ['the artefact check inside an if', 'E4', lambda do |d|
+    step = check_step(d)
+    step['run'] = step['run'].lines.map { |l| l =~ /release-artifacts\.sh verify/ ? "if #{l.strip}; then :; fi\n" : l }.join
+  end],
+  ['a publish job shell without errexit', 'E5', ->(d) { publish_job(d)['defaults'] = { 'run' => { 'shell' => 'bash {0}' } } }],
+  ['a workflow shell without errexit', 'E5', ->(d) { d['defaults'] = { 'run' => { 'shell' => 'bash --noprofile --norc {0}' } } }],
+  ['a step shell without errexit', 'E5', ->(d) { check_step(d)['shell'] = 'bash {0}' }],
+  ['set +e before the artefact check', 'E5', ->(d) { check_step(d)['run'] = "set +e\n#{check_step(d)['run']}" }],
+  ['container: on the publish job', 'R1', ->(d) { publish_job(d)['container'] = 'node:24' }],
+  ['services: on the publish job', 'R1', ->(d) { publish_job(d)['services'] = { 'x' => { 'image' => 'someone/image:1' } } }],
+  ['container: on the pack job', 'R1', ->(d) { pack_job(d)['container'] = 'node:24' }],
   ['actions/cache in the publish job', 'C1', ->(d) { publish_steps(d).unshift('uses' => 'actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830', 'with' => { 'path' => '~/.npm', 'key' => 'k' }) }],
-  ['rust-cache in the pack job', 'C1', ->(d) { d['jobs'][CONFIG[:pack_job]]['steps'].insert(1, 'uses' => 'Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6') }],
+  ['rust-cache in the pack job', 'C1', ->(d) { pack_job(d)['steps'].insert(1, 'uses' => 'Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6') }],
   ['a setup step with `cache:` in the publish job', 'C1', ->(d) { publish_steps(d).unshift('uses' => 'actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444', 'with' => { 'node-version' => 24, 'cache' => 'npm' }) }],
+  ['setup-node in the pack job without `package-manager-cache: false`', 'C1', ->(d) { pack_job(d)['steps'].insert(1, 'uses' => 'actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444', 'with' => { 'node-version' => 24 }) }],
   ['npm ci in the publish job', 'D2', ->(d) { publish_steps(d).insert(1, 'run' => 'npm ci') }],
   ['cargo build in the publish job', 'D2', ->(d) { publish_steps(d).insert(1, 'run' => "cargo build --release\n") }],
   ['a third-party action in the publish job', 'D1', ->(d) { publish_steps(d).insert(1, 'uses' => 'peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697') }],
   ['a local action in the publish job', 'D1', ->(d) { publish_steps(d).insert(1, 'uses' => './.github/actions/setup') }],
   ['the publish command without its safety flag', 'D3', lambda do |d|
-    step = publish_steps(d)[publish_command_index(publish_steps(d), CONFIG)]
+    step = publish_step(d)
     step['run'] = step['run'].gsub(' --ignore-scripts', '').gsub(' --no-verify', '')
   end],
-  ['a checkout that keeps its credentials', 'D4', lambda do |d|
-    step = publish_steps(d).find { |s| action_of(s) == 'actions/checkout' }
-    step['with'].delete('persist-credentials')
-  end],
+  ['a checkout that keeps its credentials', 'D4', ->(d) { publish_steps(d).find { |s| action_of(s) == 'actions/checkout' }['with'].delete('persist-credentials') }],
+  ['a checkout of another repository in the publish job', 'D5', ->(d) { publish_steps(d).find { |s| action_of(s) == 'actions/checkout' }['with']['repository'] = 'someone/else' }],
+  ['a checkout of another ref in the publish job', 'D5', ->(d) { publish_steps(d).find { |s| action_of(s) == 'actions/checkout' }['with']['ref'] = 'main' }],
+  ['no publish command', 'A0', ->(d) { publish_steps(d).reject! { |s| run_of(s) =~ publish_command_pattern(CONFIG) } }],
   ['an artefact from another run', 'A1', lambda do |d|
     step = publish_steps(d).find { |s| action_of(s) == 'actions/download-artifact' }
     step['with']['run-id'] = '123'
@@ -367,21 +498,43 @@ SEEDS = [
     check = steps.delete_at(steps.index { |s| run_of(s) =~ /release-artifacts\.sh verify/ })
     steps.insert(publish_command_index(steps, CONFIG) + 1, check)
   end],
-  ['no record-sha256 output on the pack job', 'K1', ->(d) { d['jobs'][CONFIG[:pack_job]]['outputs'].delete('record-sha256') }],
-  ['no record written by the pack job', 'K2', ->(d) { d['jobs'][CONFIG[:pack_job]]['steps'].reject! { |s| run_of(s) =~ /release-artifacts\.sh record/ } }],
+  ['no record-sha256 output on the pack job', 'K1', ->(d) { pack_job(d)['outputs'].delete('record-sha256') }],
+  ['no record written by the pack job', 'K2', ->(d) { pack_job(d)['steps'].reject! { |s| run_of(s) =~ /release-artifacts\.sh record/ } }],
+  ['no artefact uploaded by the pack job', 'K3', ->(d) { pack_job(d)['steps'].reject! { |s| action_of(s) == 'actions/upload-artifact' } }],
+].freeze
+
+NPM_SEEDS = [
+  ['a full checkout in the npm publish job', 'D4', lambda do |d|
+    with = publish_steps(d).find { |s| action_of(s) == 'actions/checkout' }['with']
+    with.delete('sparse-checkout')
+    with.delete('sparse-checkout-cone-mode')
+  end],
 ].freeze
 
 CRATES_SEEDS = [
   ['no re-packaged crate matched before publishing', 'A3', ->(d) { publish_steps(d).reject! { |s| run_of(s) =~ /release-artifacts\.sh match/ } }],
+  ['continue-on-error on the re-package and match step', 'E1', ->(d) { check_step(d, 'match')['continue-on-error'] = true }],
+  ['`|| true` after a match', 'E4', ->(d) { append_to_check(d, ' || true', 'match') }],
 ].freeze
+
+# The rules this file can report, read from its own source, so a rule added
+# without a seed fails the self-test.
+def rule_ids
+  File.read(__FILE__).scan(/(?:out << |\[)["']([A-Z]\d) /).flatten.uniq.sort
+end
 
 def self_test(doc)
   failures = 0
-  seeds = SEEDS + (CONFIG[:registry] == :crates ? CRATES_SEEDS : [])
+  crates = CONFIG[:registry] == :crates
+  seeds = SEEDS + (crates ? CRATES_SEEDS : NPM_SEEDS)
+  baseline = violations(doc)
   seeds.each do |label, rule, mutate|
     copy = deep_copy(doc)
-    mutate.call(copy)
-    found = violations(copy)
+    result = mutate.call(copy)
+    copy = result[1] if result.is_a?(Array) && result[0] == REPLACE
+    # Only what the seed adds counts: a rule the real workflow already breaks
+    # cannot pass its seed for it.
+    found = violations(copy) - baseline
     if found.any? { |v| v.start_with?("#{rule} ") }
       puts "ok - #{rule} catches #{label}"
     else
@@ -389,7 +542,15 @@ def self_test(doc)
       puts "not ok - #{rule} misses #{label}: #{found.inspect}"
     end
   end
-  puts "check-release-workflow self-test: #{seeds.length - failures} of #{seeds.length} seeded violations caught"
+  applicable = rule_ids - (crates ? [] : ['A3'])
+  unseeded = applicable - seeds.map { |_, rule, _| rule }
+  if unseeded.empty?
+    puts "ok - every rule has a seed (#{applicable.join(' ')})"
+  else
+    failures += 1
+    puts "not ok - rules without a seed: #{unseeded.join(' ')}"
+  end
+  puts "check-release-workflow self-test: #{seeds.length + 1 - failures} of #{seeds.length + 1} checks passed (#{seeds.length} seeded violations, #{applicable.length} rules)"
   failures
 end
 
@@ -397,7 +558,7 @@ if $PROGRAM_NAME == __FILE__
   doc = load_workflow(CONFIG[:workflow])
   found = violations(doc)
   if found.empty?
-    puts "#{CONFIG[:workflow]}: SR43 holds (only `#{CONFIG[:publish_job]}` holds id-token: write; no cache in `#{CONFIG[:publish_job]}` or `#{CONFIG[:pack_job]}`)"
+    puts "#{CONFIG[:workflow]}: SR43 holds (only `#{CONFIG[:publish_job]}` holds id-token: write; no cache or container in `#{CONFIG[:publish_job]}` or `#{CONFIG[:pack_job]}`; a failed check stops the publish)"
   else
     found.each { |v| puts "#{CONFIG[:workflow]}: #{v}" }
   end

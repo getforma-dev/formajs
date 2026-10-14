@@ -128,13 +128,12 @@ jobs:
     # 2026-08-06 run #16's publish step failed after 1.2m of the old job. 10
     # bounds a slow registry without cutting a publish short.
     timeout-minutes: 10
-    # NOTE — this comment used to claim "Required reviewers / deployment
-    # secrets are configured on this environment, so a tag push cannot publish
-    # unattended." That was FALSE and it mattered: the GitHub API shows
-    # `npm-publish` with `protection_rules: []`, auto-created at
-    # 2026-08-06T16:39:47Z the instant this workflow first referenced it.
-    # Nothing gates it, no human click is needed, and a tag push DOES publish
-    # unattended. Environment approval was never why nothing published.
+    # `npm-publish` was auto-created at 2026-08-06T16:39:47Z, the instant this
+    # workflow first referenced it, with no protection rule. Since 2026-10-14
+    # it admits deployments only from tags matching `v*` (its deployment tag
+    # policy; the GitHub API lists one rule, `branch_policy`), so no branch can
+    # run this job in it. It has no required reviewer: a `v*` tag push still
+    # publishes with no human click.
     #
     # The environment is kept because npm's trusted-publisher entry binds to
     # the OIDC claim, and that claim includes the environment name. If the npm
@@ -142,11 +141,11 @@ jobs:
     # `npm-publish`, the claim will not match and publish fails with an auth
     # error that looks nothing like a configuration error.
     #
-    # OWNER DECISION REQUIRED, pick one and make the comment true again:
+    # OWNER DECISION REQUIRED (M1, DR-31, deferred by the founder), still open:
     #   (a) add Required reviewers under Settings -> Environments -> npm-publish,
-    #       which makes the original claim true; or
-    #   (b) delete the environment here and on npmjs.com, and accept that a tag
-    #       push publishes unattended (which is what happens today).
+    #       so each publish waits for one approval; or
+    #   (b) keep the tag policy alone and accept that a `v*` tag push publishes
+    #       unattended (which is what happens today).
     environment: npm-publish
     permissions:
       contents: read

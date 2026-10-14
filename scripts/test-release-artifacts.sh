@@ -30,6 +30,19 @@ expect_fail() { # <name> <substring>
 
 sha() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1" | cut -d' ' -f1; else shasum -a 256 "$1" | cut -d' ' -f1; fi; }
 
+# Alter one byte by flipping all its bits (XOR 0xFF), so the file always
+# changes, whatever byte was there; then make sure it did.
+flip_byte() { # <file> <offset>
+  local before byte
+  before=$(sha "$1")
+  byte=$(od -An -tu1 -j "$2" -N1 "$1" | tr -d ' ')
+  printf '%b' "\\0$(printf '%03o' $((byte ^ 255)))" | dd of="$1" bs=1 seek="$2" conv=notrunc 2>/dev/null
+  if [ "$(sha "$1")" = "$before" ]; then
+    echo "harness error: flipping byte $2 of $1 left it unchanged" >&2
+    exit 2
+  fi
+}
+
 # A fresh packed set: a tarball-like file and a second file, recorded.
 fresh() {
   rm -rf "$work/set"
@@ -58,7 +71,7 @@ expect_pass "the untouched set verifies" "verified $(sha "$work/set/pkg-1.2.3.tg
 
 # One byte of the tarball changed after it was recorded.
 fresh
-printf 'X' | dd of="$work/set/pkg-1.2.3.tgz" bs=1 seek=100 conv=notrunc 2>/dev/null
+flip_byte "$work/set/pkg-1.2.3.tgz" 100
 run verify "$work/set" "$record_hash"
 expect_fail "a tarball altered by one byte fails" "pkg-1.2.3.tgz differs from the packed file"
 
@@ -140,7 +153,7 @@ mkdir -p "$work/rebuilt"
 cp "$work/set/pkg-1.2.3.tgz" "$work/rebuilt/pkg-1.2.3.tgz"
 run match "$work/set" "$work/rebuilt/pkg-1.2.3.tgz"
 expect_pass "an identical rebuilt file matches" "matched $(sha "$work/set/pkg-1.2.3.tgz")  pkg-1.2.3.tgz"
-printf 'X' | dd of="$work/rebuilt/pkg-1.2.3.tgz" bs=1 seek=7 conv=notrunc 2>/dev/null
+flip_byte "$work/rebuilt/pkg-1.2.3.tgz" 7
 run match "$work/set" "$work/rebuilt/pkg-1.2.3.tgz"
 expect_fail "a rebuilt file that differs fails" "rebuilt here differs from the packed one"
 cp "$work/set/pkg-1.2.3.tgz" "$work/rebuilt/pkg-1.2.4.tgz"
