@@ -61,7 +61,7 @@ each change. Rollback: pin 2.0.3.
   `props.dangerouslySetInnerHTML.__html` or `props.srcdoc` as a `string` no
   longer compiles; writing a string still does. Nothing is removed or
   renamed.
-- **Bigger runtimes.** The CDN runtimes grow by about 6.5 KB gzipped, the core
+- **Bigger runtimes.** The CDN runtimes grow by about 7.2 KB gzipped, the core
   entry by about 1.8 KB (Size, below).
 
 ### Size: 2.1.0 against 2.0.3
@@ -76,16 +76,17 @@ this release (FORMA-138); three were corrected to those measurements
 | Entry | 2.0.3 | 2.1.0 | Change | Gate (headroom) |
 |---|---|---|---|---|
 | core entry + its chunks | 27,703 B | 29,515 B | +1,812 B | 30,000 B (485 B) |
-| CDN runtime | 33,861 B | 40,329 B | +6,468 B | 40,500 B (171 B) |
-| CDN hardened runtime | 32,873 B | 39,344 B | +6,471 B | 39,500 B (156 B) |
+| CDN runtime | 33,861 B | 41,094 B | +7,233 B | 41,500 B (406 B) |
+| CDN hardened runtime | 32,873 B | 40,106 B | +7,233 B | 40,500 B (394 B) |
 | CDN browser ESM | 26,614 B | 28,369 B | +1,755 B | 29,000 B (631 B) |
-| preview frame runtime (new) | none | 38,953 B | new | 39,000 B (47 B) |
+| preview frame runtime (new) | none | 39,705 B | new | 40,000 B (295 B) |
 | a counter island page (`docs/ISLANDS.md`'s `Counter`) | 12,974 B | 13,820 B | +846 B | none |
 | a `createShow` and `createList` island page | 12,986 B | 13,842 B | +856 B | none |
 
 The runtime gates rose under L-51, from 34,000 and 33,000 B, with each
 change that passed them (FORMA-132, FORMA-028 and FORMA-025, FORMA-126 and
-FORMA-127, FORMA-173, FORMA-128).
+FORMA-127, FORMA-173, FORMA-128, and FORMA-128's follow-up for the audit,
+formajs#35, which also raised the frame runtime's gate to 40,000 B).
 
 ### Security
 
