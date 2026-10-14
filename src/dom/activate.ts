@@ -122,6 +122,34 @@ export function sanitizePropsDeep<T>(props: T): T {
   return props;
 }
 
+/** The code of island props that are valid JSON but neither an object nor an array. */
+const ISLAND_PROPS_ERROR = 'FORMA_E_ISLAND_PROPS';
+
+function isIslandPropsError(err: unknown): err is Error {
+  return err instanceof Error && (err as { code?: unknown }).code === ISLAND_PROPS_ERROR;
+}
+
+/**
+ * Island props must be a JSON object or array. 2.0.1's shallow strip used `in`,
+ * which throws on `null`, a number, a string or a boolean, so such a payload
+ * marked the island `error` (an array passed). The deep strip throws on
+ * nothing, so the check is explicit, and coded: the island is marked `error`
+ * and `FORMA_E_ISLAND_PROPS` is logged in every build.
+ *
+ * Verified by: src/dom/__tests__/props-loading.test.ts > "props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS"
+ */
+function checkProps(props: unknown): Record<string, unknown> {
+  if (props === null || typeof props !== 'object') {
+    const err = new Error(
+      `[forma] ${ISLAND_PROPS_ERROR}: island props must be a JSON object or array, not ` +
+        (props === null ? 'null' : `a ${typeof props}`),
+    );
+    (err as Error & { code: string }).code = ISLAND_PROPS_ERROR;
+    throw err;
+  }
+  return props as Record<string, unknown>;
+}
+
 /**
  * Load props for an island from either inline attribute or shared script block.
  */
@@ -133,12 +161,12 @@ function loadIslandProps(
   // Mode 1: Inline (small props, < 1KB)
   const inline = root.getAttribute('data-forma-props');
   if (inline) {
-    return sanitizePropsDeep(JSON.parse(inline));
+    return checkProps(sanitizePropsDeep(JSON.parse(inline)));
   }
 
   // Mode 2: Script tag (1KB–50KB, parsed and stripped once per page)
   if (sharedProps && String(id) in sharedProps) {
-    return (sharedProps as any)[String(id)] as Record<string, unknown>;
+    return checkProps((sharedProps as any)[String(id)]);
   }
 
   // No props — island creates its own state
@@ -412,7 +440,8 @@ function hydrateIslandRoot(
     // A coded hydration error is logged in every build and passed to onError:
     // in production the island's `error` status would otherwise be its only trace.
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns a detached DOM node is marked error with its code, its sibling unaffected"
-    if (isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island "${componentName}", id=${id})`);
+    // Verified by: src/dom/__tests__/props-loading.test.ts > "props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS"
+    if (isIslandPropsError(err) || isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island "${componentName}", id=${id})`);
     else if (__DEV__) console.error(`[forma] Island "${componentName}" (id=${id}) failed:`, err);
     // Dispose whatever was built before the throw: a failed island must not
     // leave live effects writing into DOM nobody will hydrate again.

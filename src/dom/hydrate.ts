@@ -1382,7 +1382,8 @@ export function isHydrateNodeError(err: unknown): err is Error {
 }
 
 /**
- * Report a `FORMA_E_HYDRATE_NODE` error: logged in every build (in production
+ * Report a `FORMA_E_HYDRATE_NODE` error (activation reports its
+ * `FORMA_E_ISLAND_PROPS` through here too): logged in every build (in production
  * an island's `error` status would otherwise be its only trace), and passed to
  * the `onError` handlers with the source `'hydration'`, for an application's
  * error reporting.

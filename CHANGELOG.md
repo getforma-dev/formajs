@@ -17,20 +17,23 @@ All notable changes to this project will be documented in this file.
   same way. `Array.from({length: 12000000})` used to build a 139 MB array in a
   300 ms task and only then be refused; it now costs nothing. The budget keeps
   the costliest call per unit under a 50 ms task at 4x CPU throttling.
-  Behaviour change: an evaluation whose built-in calls would pass 400,000 units
-  is refused where 2.0.1 answered it. That includes a built-in that produces a
-  string or array longer than 400,000 (the 1 MiB and 1,000,000-element result
-  caps still apply to `+` and template literals), `Object.keys`, `values` or
-  `entries` of a string of more than about 44,000 characters, and a default
-  `sort()` of more than about 10,000 numbers. Rollback: pin 2.0.1.
+  Behaviour change, as DR-16 accepts: the cap may refuse, with
+  `FORMA_E_BUDGET`, calls 2.0.1 answered, such as a default `sort()` of more
+  than about 10,000 numbers, `Object.keys`, `values` or `entries` of a string
+  over about 44,000 characters, or a built-in that produces a string or array
+  longer than 400,000 (the 1 MiB and 1,000,000-element result caps still apply
+  to `+` and template literals). Rollback: pin 2.0.1.
 - **Island props are stripped of `__proto__`, `constructor` and `prototype` at
   every depth while they are parsed** (FORMA-004, DR-21), inline and shared,
   with no opt-out. 2.0.1 stripped the top level only, so a nested key reached
   any island that deep-merged its props. The pass is iterative (a JSON reviver
   would overflow the stack near 5,000 levels); `sanitizePropsDeep` stays
-  exported. Props that are valid JSON but not an object (`null`, `7`), inline
-  or in the shared block, now reach the island as that value; 2.0.1 threw and
-  marked the island `error`.
+  exported. Props that are valid JSON but neither an object nor an array
+  (`null`, a number, a string, a boolean), inline or in the shared block, mark
+  the island `error` as they did in 2.0.1, now with the coded message
+  `FORMA_E_ISLAND_PROPS` logged in every build (2.0.1 threw an uncoded
+  `TypeError`, logged in development builds only). An array reaches the island,
+  as before, stripped at every depth.
 
 ## [2.0.2] - 2026-10-14
 

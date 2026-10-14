@@ -103,6 +103,9 @@ object — `createStore`, a deep-merge helper, an `Object.assign` chain — cann
 carry a nested pollution key into a prototype. The pass is iterative with a
 `WeakSet`, so neither deeply nested nor cyclic props can overflow the stack or
 loop. A shared `__forma_islands` block is parsed and stripped once per page.
+Props must be a JSON object or array: any other JSON value (`null`, a number, a
+string, a boolean) marks the island `error`, and `FORMA_E_ISLAND_PROPS` is
+logged in every build.
 
 `sanitizePropsDeep` (the same pass) stays exported for props that reach an
 island some other way, and calling it on activation props is a harmless no-op.
@@ -110,6 +113,7 @@ RPC arguments (`@getforma/core/server`) are stripped recursively too.
 
 Verified by `src/dom/__tests__/activate-isolation.test.ts` > "island activation strips forbidden keys at every depth, inline and shared, with no opt-out"
 Verified by `src/dom/__tests__/activate-isolation.test.ts` > "island props nested 10,000 deep are parsed and stripped"
+Verified by `src/dom/__tests__/props-loading.test.ts` > "props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS"
 Verified by `src/dom/__tests__/activate-isolation.test.ts` > "sanitizePropsDeep strips forbidden keys at every depth"
 Verified by `src/server/__tests__/rpc-deep-strip.test.ts` > "strips forbidden keys at a depth that overflows a recursive walk"
 
