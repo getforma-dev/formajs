@@ -84,17 +84,17 @@ All notable changes to this project will be documented in this file.
 - **Still not bounded to 50 ms**, each to one evaluation per task, and listed
   in SECURITY.md ("What the budgets do not bound"): a string search whose
   pattern's first characters fill the text (`'ab'` in `'aaaa…'`, 39 ns a
-  character where ordinary text takes 1; one evaluation ran 310 ms at 4x); case
-  mapping of text stored two bytes a character but all Latin-1 (charged as
-  one-byte text, up to about four times under: 55 ms for seven calls on a
-  million characters, 108 ms for alternating-case text); and text whose first
-  character above Latin-1 is in a `1/16` script but whose rest is costlier
-  (all-capital Greek 58 ms for three million characters; a Greek letter
-  followed by Turkish `İ` or Cherokee up to 91 ms), because a full scan of
-  two-byte text measured 6 to 7 ns a character, most of what lowercasing it
-  costs. The largest ordinary evaluation is near the line as well: the
-  9,000-record search measured 24 ms median at 4x in ASCII and up to 50 ms in
-  Greek, where 2.0.1 measured 18 and 41 ms.
+  character where ordinary text takes 1; one evaluation ran up to 315 ms at
+  4x); case mapping of text stored two bytes a character but all Latin-1
+  (charged as one-byte text, up to about four times under: 56 ms for seven
+  calls on a million characters, 100 ms for alternating-case text); and text
+  whose first character above Latin-1 is in a `1/16` script but whose rest is
+  costlier (all-capital Greek 73 ms for four calls on 960,000 characters; a
+  Greek letter followed by Turkish `İ` or Cherokee up to 90 ms), because a full
+  scan of two-byte text measured 6 to 7 ns a character, most of what
+  lowercasing it costs. The largest ordinary evaluation is near the line as
+  well: the 9,000-record search measured 24 ms median at 4x in ASCII and up to
+  50 ms in Greek, where 2.0.1 measured 19 and 42 ms in the same session.
 - **Behaviour change: what a task can no longer compute.** Measured with this
   release's engine against 2.0.3's:
   - Building a string by joining in a callback: `rows.reduce((s, r) => s + r.name + ', ', '')`
@@ -128,8 +128,8 @@ All notable changes to this project will be documented in this file.
 
   More is answered than in 2.0.3, too: the non-Latin search, and a string
   method given a long string argument. Rollback: pin 2.0.3.
-- **Size** (L-51): the CDN runtime grows by 1,443 B gzipped (33,861 to
-  35,304 B) and the hardened runtime by 1,427 B (32,873 to 34,300 B); their
+- **Size** (L-51): the CDN runtime grows by 1,450 B gzipped (33,861 to
+  35,311 B) and the hardened runtime by 1,434 B (32,873 to 34,307 B); their
   gates rise from 34,000 to 35,500 B and from 33,000 to 34,500 B. The core and
   the browser ESM bundle are unchanged.
 

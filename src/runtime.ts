@@ -2424,6 +2424,9 @@ function destroyRuntime(): void {
     unmountScope(root);
   }
   clearExpressionCache();
+  // Nothing mounted is left to retry, and the next init starts a fresh task.
+  staleCells.clear();
+  meter.steps = meter.cost = 0;
 }
 
 /**

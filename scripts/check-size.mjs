@@ -43,8 +43,8 @@ const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
  * brief L-51: N2 is, gated at 3.0.0): a change that passes one raises it to its
  * new measured size rounded up to the next 500 B and states the growth in its
  * CHANGELOG entry. FORMA-028 and FORMA-025 (core 2.0.4) raised the runtime
- * from 34,000 to 35,500 B (33,861 to 35,304 B measured) and the hardened
- * runtime from 33,000 to 34,500 B (32,873 to 34,300 B).
+ * from 34,000 to 35,500 B (33,861 to 35,311 B measured) and the hardened
+ * runtime from 33,000 to 34,500 B (32,873 to 34,307 B).
  * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
 export const GATES = [
