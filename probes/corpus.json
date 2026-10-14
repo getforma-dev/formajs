@@ -2540,8 +2540,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (kind !== 'grant-denied' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
-  "replace": "  if (!(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
+  "find": "  if (kind !== 'grant-denied' && kind !== 'markup-refused' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
+  "replace": "  if (kind !== 'markup-refused' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
   "note": "a denied grant is silent when the mount's diagnostics are off: SR37's coded diagnostic for every denial is lost. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a mount takes its diagnostics switch from its call, not the page\""
  },
  {
@@ -3313,5 +3313,35 @@
   "find": "    if (event.target !== event.currentTarget) return;\n",
   "replace": "",
   "note": "a module's own $dispatch('formajs:diagnostic', {code, reason, expr}) reaches the host as an error the runtime never raised, with a code and text the module chose (formajs#31 review). Verified by: src/__tests__/runtime-frame.test.ts > \"forwards the runtime's diagnostics, never a module's own formajs:diagnostic\""
+ },
+ {
+  "id": "frame-link/not-stripped",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    const html = tier === 'unreviewed' ? withoutLinks(given, ctx) : given;",
+  "replace": "    const html = given;",
+  "note": "unreviewed markup keeps its <link> elements, so a previewed module's <link rel=\"preconnect\"> opens a connection to any host from inside the frame in WebKit (the A2 audit, S1). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no <link>: each is removed before the markup reaches the document\""
+ },
+ {
+  "id": "frame-link/nested-template-kept",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    for (const nested of Array.from(content.querySelectorAll('template'))) strip(nested.content);\n",
+  "replace": "",
+  "note": "a <link> inside a nested <template> of unreviewed markup survives, ready for anything that stamps the template. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no <link>: each is removed before the markup reaches the document\""
+ },
+ {
+  "id": "frame-link/refusal-silenced",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (kind !== 'grant-denied' && kind !== 'markup-refused' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
+  "replace": "  if (kind !== 'grant-denied' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
+  "note": "a removed <link> goes unreported when the mount's diagnostics are off, so the host never learns the module carried one. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no <link>: each is removed before the markup reaches the document\""
  }
 ]

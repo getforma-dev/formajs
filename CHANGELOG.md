@@ -6,6 +6,29 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- **The preview frame mounts no `<link>`** (FORMA-128's follow-up; the A2
+  audit, S1). WebKit opened a TCP connection to any host a previewed module's
+  `<link rel="preconnect">` named, its `href` written or bound, from inside the
+  sandboxed frame: `connect-src 'none'`, `default-src 'none'` and the sandbox
+  do not govern preconnect. An unreviewed mount (`tier: 'unreviewed'`, which
+  the frame runtime uses) now parses its markup in an inert `<template>` and
+  removes every `<link>` there, inside nested templates too, before the rest
+  reaches the document, with a coded diagnostic for each
+  (`FORMA_E_UNREVIEWED_LINK`, kind `markup-refused`, reported whatever any
+  diagnostics switch says; the frame forwards it to its host). Under the
+  frame's policy no `<link>` did anything else, and a binding cannot create an
+  element, so none comes back. Measured with a TCP listener: without the
+  change this repository's frame spec counted 1, 1 and 4 connections in
+  Chromium, Firefox and WebKit; with it, none. Tests:
+  `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount renders
+  no <link>: each is removed before the markup reaches the document";
+  `src/__tests__/runtime-frame.test.ts` > "a module's <link> never reaches the
+  frame document, and the host hears why"; `e2e/frame.spec.ts` > "a module's
+  <link> opens no connection: preconnect, dns-prefetch, prefetch, preload, a
+  bound href" (three engines). Size (L-51): the CDN runtime 40,329 to 40,640 B
+  (gate 41,000), the hardened runtime 39,344 to 39,657 B (gate 40,000), the
+  frame runtime 38,953 to 39,264 B (gate 39,500).
+
 - **The tiered mount: markup a generator wrote mounts under a root it is
   handed, with grants** (FORMA-128; decision brief DR-14, DR-15, L-36, L-47;
   v2 TH11, SR16, SR31, SR37's runtime half). The script-tag runtime binds

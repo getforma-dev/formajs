@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { createHash } from 'node:crypto';
+import { createServer, type Socket } from 'node:net';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 
@@ -156,4 +157,61 @@ test('a message of any other type changes nothing, and a port posted later is ig
   });
   expect(answered).toEqual([]);
   await expect(preview.locator('#p')).toHaveText('first');
+});
+
+/** A TCP listener that counts the connections made to it (the A2 audit's method). */
+async function tcpCounter(port: number): Promise<{ count(): number; close(): Promise<void> }> {
+  let connections = 0;
+  const sockets = new Set<Socket>();
+  const server = createServer((socket) => {
+    connections++;
+    sockets.add(socket);
+    socket.on('close', () => sockets.delete(socket));
+    socket.end();
+  });
+  await new Promise<void>((resolve) => server.listen(port, '127.0.0.1', resolve));
+  return {
+    count: () => connections,
+    close: () => new Promise<void>((resolve) => {
+      for (const socket of sockets) socket.destroy();
+      server.close(() => resolve());
+    }),
+  };
+}
+
+test("a module's <link> opens no connection: preconnect, dns-prefetch, prefetch, preload, a bound href", async ({ page, browserName }) => {
+  // FORMA-128's follow-up (the A2 audit, S1): WebKit opened a TCP connection
+  // for <link rel="preconnect"> in the preview frame, under connect-src
+  // 'none'. Each engine counts on its own port, from 3901.
+  const port = 3901 + ['chromium', 'firefox', 'webkit'].indexOf(browserName);
+  const counter = await tcpCounter(port);
+  try {
+    await host(page);
+    const target = `http://127.0.0.1:${port}`;
+    const links =
+      `<link rel="preconnect" href="${target}/">` +
+      `<link rel="preconnect" href="${target}/" crossorigin>` +
+      `<link rel="dns-prefetch" href="${target}/">` +
+      `<link rel="prefetch" href="${target}/prefetch">` +
+      `<link rel="preload" as="fetch" crossorigin href="${target}/preload">` +
+      `<div data-forma-state='{"h":"${target}/bound"}'><link rel="preconnect" data-bind:href="h"></div>`;
+    await send(page, { type: 'module', html: `${links}<p id="p">first</p>` });
+    const preview = page.frameLocator('#preview');
+    await expect(preview.locator('#p')).toHaveText('first');
+    // A later module is stripped the same way.
+    await send(page, { type: 'module', html: `<link rel="preconnect" href="${target}/update"><p id="p">second</p>` });
+    await expect(preview.locator('#p')).toHaveText('second');
+    await page.waitForTimeout(1500);
+    expect(counter.count()).toBe(0);
+    expect(await frameOf(page).evaluate(() => document.querySelectorAll('link').length)).toBe(0);
+    await expect.poll(async () => (await received(page)).filter((m) => m.code === 'FORMA_E_UNREVIEWED_LINK').length)
+      .toBe(7);
+
+    // The control: from the host page the same port is reachable, so a
+    // connection from the frame would have been counted.
+    await page.evaluate((url) => { new Image().src = url; }, `${target}/control`);
+    await expect.poll(() => counter.count()).toBeGreaterThan(0);
+  } finally {
+    await counter.close();
+  }
 });

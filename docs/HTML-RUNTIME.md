@@ -382,6 +382,14 @@ diagnostic's message quotes the module's expression, so the host treats every
 `sandbox="allow-scripts"`, checking each message's schema, tearing the frame
 down on a second load) is the application's.
 
+A module renders no `<link>`. WebKit opened a connection to any host a
+`<link rel="preconnect">` named (its `href` written or bound) from inside the
+frame, which no CSP directive governs, so an unreviewed mount parses its
+markup in an inert `<template>` and removes every `<link>` there before the
+rest reaches the document, reporting each as `FORMA_E_UNREVIEWED_LINK` (the
+frame forwards it to the host as an `error`). Under the frame's policy no
+`<link>` would have done anything else.
+
 A module styles itself with `style` attributes only. The frame's policy
 allows styles by nonce (`style-src 'nonce-…'`, with `style-src-attr
 'unsafe-inline'`), and the runtime, allowed by its hash, has no nonce to give
@@ -391,6 +399,8 @@ Verified by `src/__tests__/runtime-frame.test.ts` > "takes one port from its par
 Verified by `src/__tests__/runtime-frame.test.ts` > "ignores a port from any window but its parent, and every port after the first"
 Verified by `src/__tests__/runtime-frame.test.ts` > "refuses every message but the module, and changes nothing"
 Verified by `src/__tests__/runtime-frame.test.ts` > "forwards the runtime's diagnostics, never a module's own formajs:diagnostic"
+Verified by `src/__tests__/runtime-frame.test.ts` > "a module's <link> never reaches the frame document, and the host hears why"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount renders no <link>: each is removed before the markup reaches the document"
 Verified by `src/__tests__/runtime-frame.test.ts` > "the frame runtime is one classic script a server can inline as it is"
 Verified by `src/__tests__/runtime-frame.test.ts` > "two builds of the frame runtime are byte-identical"
 

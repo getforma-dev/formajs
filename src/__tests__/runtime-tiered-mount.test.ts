@@ -950,6 +950,62 @@ describe('tiers and configuration', () => {
     expect(denials().every((d) => d.tier === 'unreviewed')).toBe(true);
   });
 
+  it('an unreviewed mount renders no <link>: each is removed before the markup reaches the document', async () => {
+    // FORMA-128's follow-up (the A2 audit, S1): WebKit preconnects from the
+    // preview frame for a <link rel="preconnect"> whatever its policy says.
+    vi.stubGlobal('origin', 'null');
+    const root = page();
+    const inserted: string[] = [];
+    const watch = new MutationObserver((records) => {
+      for (const r of records) {
+        for (const n of Array.from(r.addedNodes)) {
+          if (n.nodeType === 1) {
+            const el = n as Element;
+            if (el.localName === 'link') inserted.push(el.outerHTML);
+            for (const l of Array.from(el.querySelectorAll('link'))) inserted.push(l.outerHTML);
+          }
+        }
+      }
+    });
+    watch.observe(root, { childList: true, subtree: true });
+    const markup =
+      `<link rel="preconnect" href="http://127.0.0.1:3900/">` +
+      `<div data-forma-state='{"h":"http://127.0.0.1:3900/bound"}'>` +
+      `<link rel="preconnect" data-bind:href="h"><link rel="stylesheet" href="/x.css">` +
+      `<template><link rel="prefetch" href="http://127.0.0.1:3900/nested"></template>` +
+      `<p id="kept" data-text="{'kept'}">-</p></div>`;
+    const handle = mountOn(root, runtime.trustedHtml(markup), { tier: 'unreviewed' });
+    await settle();
+    expect(text('kept')).toBe('kept');
+    expect(root.querySelectorAll('link')).toHaveLength(0);
+    expect(root.querySelector('template')!.content.querySelectorAll('link')).toHaveLength(0);
+    expect(inserted).toEqual([]);
+    const refused = runtime.getDiagnostics().filter((d) => d.code === 'FORMA_E_UNREVIEWED_LINK');
+    expect(refused.map((d) => [d.kind, d.tier])).toEqual([
+      ['markup-refused', 'unreviewed'], ['markup-refused', 'unreviewed'],
+      ['markup-refused', 'unreviewed'], ['markup-refused', 'unreviewed'],
+    ]);
+
+    // An update is stripped the same way, a plain string too.
+    handle.update(`<p id="kept">again</p><link rel="dns-prefetch" href="http://127.0.0.1:3900/">`);
+    await settle();
+    expect(text('kept')).toBe('again');
+    expect(root.querySelectorAll('link')).toHaveLength(0);
+    expect(inserted).toEqual([]);
+    watch.disconnect();
+    handles.pop()!.unmount();
+
+    // Reported whatever the mount's diagnostics switch says.
+    runtime.clearDiagnostics();
+    mountOn(root, `<link rel="icon" href="/i.png"><p id="kept">quiet</p>`, { tier: 'unreviewed', config: { diagnostics: false } });
+    expect(runtime.getDiagnostics().map((d) => d.code)).toEqual(['FORMA_E_UNREVIEWED_LINK']);
+    handles.pop()!.unmount();
+
+    // The control: a reviewed mount keeps the markup's links.
+    mountOn(root, `<link rel="preconnect" href="http://127.0.0.1:3900/"><p id="kept">reviewed</p>`, { tier: 'reviewed' });
+    expect(root.querySelectorAll('link')).toHaveLength(1);
+  });
+
   it('a mount call names a known tier, an element and markup, and mounts a root once', () => {
     const root = page();
     for (const bad of [

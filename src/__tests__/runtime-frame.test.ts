@@ -141,6 +141,22 @@ describe('the frame protocol', () => {
     expect(errors().map((e) => e.code)).toEqual(['FORMA_E_UNRESOLVED']);
   });
 
+  it("a module's <link> never reaches the frame document, and the host hears why", async () => {
+    const { win, parent } = frameWindow();
+    connectFrame(win as never);
+    const { channel, received } = hostPort();
+    handOver(win, parent, [channel.port2]);
+    await until(() => expect(received[0]).toEqual({ type: 'ready' }));
+    channel.port1.postMessage({
+      type: 'module',
+      html: `<link rel="preconnect" href="http://127.0.0.1:3900/"><p id="shown">shown</p>`,
+    });
+    const errors = (): Array<{ code: string }> => received.filter((m) => m.type === 'error') as Array<{ code: string }>;
+    await until(() => expect(errors().map((e) => e.code)).toEqual(['FORMA_E_UNREVIEWED_LINK']));
+    expect(frameRoot().textContent).toBe('shown');
+    expect(document.querySelectorAll('link')).toHaveLength(0);
+  });
+
   it('ignores a port from any window but its parent, and every port after the first', async () => {
     const { win, parent, other } = frameWindow();
     connectFrame(win as never);

@@ -160,7 +160,7 @@
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
-import { isTrustedHtml, trustedHtml, warnRuntimeSrcdoc, type TrustedHtml } from './dom/trusted-html';
+import { htmlOf, isTrustedHtml, trustedHtml, warnRuntimeSrcdoc, type TrustedHtml } from './dom/trusted-html';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 import {
   clearExpressionCache,
@@ -305,7 +305,7 @@ interface RuntimeConfig {
 }
 
 interface RuntimeDiagnostic {
-  kind: 'handler-unsupported' | 'expression-unsupported' | 'grant-denied';
+  kind: 'handler-unsupported' | 'expression-unsupported' | 'grant-denied' | 'markup-refused';
   expr: string;
   reason: string;
   /** Stable machine-readable cause, e.g. `FORMA_E_METHOD_DENIED`. */
@@ -414,7 +414,7 @@ function reportDiagnostic(
   mount?: MountCtx | null,
   grant?: RuntimeDiagnostic['grant'],
 ): void {
-  if (kind !== 'grant-denied' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;
+  if (kind !== 'grant-denied' && kind !== 'markup-refused' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;
 
   const key = mount ? `${kind}|${mount.id}|${reason}|${expr}` : `${kind}|${reason}|${expr}`;
   const now = Date.now();
@@ -3225,6 +3225,46 @@ function reconcile(container: Element, html: string | TrustedHtml): void {
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount refuses any origin but an opaque one, and any grant"
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "the development report lists exactly the grants a fixture widget used"
  */
+/**
+ * Unreviewed markup, without its `<link>` elements (FORMA-128's follow-up; the
+ * A2 audit, S1). WebKit opens a connection for a `<link rel="preconnect">` in
+ * the preview frame whatever the frame's policy says (`connect-src 'none'`,
+ * `default-src 'none'` and the sandbox do not govern it), so a module could
+ * reach any host it names from markup alone; under the frame's policy no
+ * `<link>` does anything else. The markup is parsed in an inert `<template>`,
+ * which has no browsing context, so nothing in it is fetched or connected;
+ * every `<link>`, inside nested templates too, is removed there, with a coded
+ * diagnostic for each (`FORMA_E_UNREVIEWED_LINK`), and only the rest reaches
+ * the document. A binding cannot create an element, so none brings one back.
+ * Trusted markup stays trusted: the rest is minted again.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount renders no <link>: each is removed before the markup reaches the document"
+ */
+function withoutLinks(markup: string | TrustedHtml, mount: MountCtx): string | TrustedHtml {
+  const template = document.createElement('template');
+  template.innerHTML = typeof markup === 'string' ? markup : htmlOf(markup);
+  const removed: string[] = [];
+  const strip = (content: DocumentFragment): void => {
+    for (const link of Array.from(content.querySelectorAll('link'))) {
+      removed.push(link.outerHTML);
+      link.remove();
+    }
+    for (const nested of Array.from(content.querySelectorAll('template'))) strip(nested.content);
+  };
+  strip(template.content);
+  if (removed.length === 0) return markup;
+  for (const link of removed) {
+    reportDiagnostic(
+      'markup-refused',
+      link.slice(0, 200),
+      'unreviewed markup renders no <link>: removed',
+      'FORMA_E_UNREVIEWED_LINK',
+      mount,
+    );
+  }
+  const rest = template.innerHTML;
+  return typeof markup === 'string' ? rest : trustedHtml(rest);
+}
+
 function mountMarkup(root: Element, markup: string | TrustedHtml, options: MountOptions): MountHandle {
   if (!root || typeof root !== 'object' || root.nodeType !== 1) {
     throw mountError('FORMA_E_MOUNT_ARGS', 'the root must be an element');
@@ -3292,7 +3332,8 @@ function mountMarkup(root: Element, markup: string | TrustedHtml, options: Mount
   const disposeAll = (): void => {
     for (const scope of Array.from(root.querySelectorAll('[data-forma-state]'))) unmountScope(scope, ctx);
   };
-  const render = (html: string | TrustedHtml): void => {
+  const render = (given: string | TrustedHtml): void => {
+    const html = tier === 'unreviewed' ? withoutLinks(given, ctx) : given;
     if (!String(html).trim()) {
       disposeAll();
       root.replaceChildren();
