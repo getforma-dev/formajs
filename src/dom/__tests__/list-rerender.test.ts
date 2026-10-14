@@ -111,15 +111,24 @@ describe('owned list rerenders', () => {
     });
   });
 
-  it.each([8, 64])('tracks replacement nodes in low-level reconciliation at n=%i', (size) => {
-    const items = Array.from({ length: size }, (_, id) => ({ id }));
-    const parent = h('div');
-    const oldNodes = items.map((item) => h('span', null, item.id));
-    parent.append(...oldNodes);
-    const result = reconcileList(parent, items, items, oldNodes, (item) => item.id,
-      () => h('b'), (_node, item) => h('i', null, item.id));
-    expect(result.nodes).toEqual(Array.from(parent.children));
-    expect(result.nodes.every((node) => (node as Element).tagName === 'I')).toBe(true);
+  it.each([8, 64])('tracks replaced rows through both reconcile paths at n=%i', (size) => {
+    // The replacement is createList's own ('rerender'); n=8 takes the small
+    // path and n=64 the keyed one, each in order and reversed.
+    createRoot((dispose) => {
+      const start = Array.from({ length: size }, (_, id) => ({ id, v: 0 }));
+      const [items, setItems] = createSignal(start);
+      const container = h('div', null, createList(items, (item) => item.id,
+        (item) => h(item.v % 2 ? 'i' : 'span', null, `${item.id}`), { updateOnItemChange: 'rerender' }));
+      const ids = () => Array.from(container.children, (el) => Number(el.textContent));
+      setItems(start.map((item) => ({ ...item, v: 1 })));
+      expect(Array.from(container.children).every((el) => el.tagName === 'I')).toBe(true);
+      expect(ids()).toEqual(start.map((item) => item.id));
+      setItems(start.map((item) => ({ ...item, v: 2 })).reverse());
+      expect(Array.from(container.children).every((el) => el.tagName === 'SPAN')).toBe(true);
+      expect(ids()).toEqual(start.map((item) => item.id).reverse());
+      expect(container.children).toHaveLength(size);
+      dispose();
+    });
   });
 
   it('disposes item roots if a non-array value clears the list', () => {
@@ -163,5 +172,32 @@ describe('owned list rerenders', () => {
       stopErrors();
       dispose();
     });
+  });
+
+  it('reconcileList ignores a node returned by a public update callback', () => {
+    // 2.0.1's contract: updateFn patches the row in place, and whatever its
+    // body evaluates to is not a replacement. An expression-bodied callback
+    // returns appendChild's argument, which must not take the row's place.
+    const parent = document.createElement('ul');
+    const rows = ['a', 'b', 'c'].map((key) => {
+      const li = document.createElement('li');
+      li.appendChild(document.createElement('span')).textContent = key;
+      parent.appendChild(li);
+      return li;
+    });
+    const items = [{ k: 'a' }, { k: 'b' }, { k: 'c' }];
+    const next = [{ k: 'c' }, { k: 'a' }, { k: 'b' }];
+    const result = reconcileList(parent, items, next, rows, (x) => x.k,
+      () => document.createElement('li'),
+      (node, item) => node.firstChild!.appendChild(document.createTextNode(`+${item.k}`)));
+
+    expect(Array.from(parent.children)).toEqual([rows[2], rows[0], rows[1]]);
+    expect(result.nodes).toEqual([rows[2], rows[0], rows[1]]);
+    expect(Array.from(parent.children, (li) => li.textContent)).toEqual(['c+c', 'a+a', 'b+b']);
+    const again = reconcileList(parent, next, next, result.nodes, (x) => x.k,
+      () => document.createElement('li'),
+      (node, item) => node.firstChild!.appendChild(document.createTextNode(`!${item.k}`)));
+    expect(again.nodes).toEqual([rows[2], rows[0], rows[1]]);
+    expect(Array.from(parent.children, (li) => li.textContent)).toEqual(['c+c!c', 'a+a!a', 'b+b!b']);
   });
 });

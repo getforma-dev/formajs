@@ -33,6 +33,11 @@ export function writeFormControlProperty(el: Element, key: string, value: unknow
     // for the live-property write below once the browser's dirty flag is set.
     if (value == null) el.removeAttribute('value');
     else if (el.getAttribute('value') !== next) el.setAttribute('value', next);
+    // An option has no live value apart from its attribute: its `value` setter
+    // writes the attribute, so assigning '' for null would make it submit ''
+    // instead of its text.
+    // Verified by: src/dom/__tests__/form-control-adoption.test.ts > "an option bound to undefined or null submits its text, client-rendered and adopted"
+    if (control instanceof HTMLOptionElement) return;
     if (control.value !== next) control.value = next;
     return;
   }
@@ -120,10 +125,11 @@ export function isEditedByUser(el: Element, key: string): boolean {
 }
 
 /**
- * Whether the control already holds what the writer would set: its live
- * state, and for an input or option its `value` attribute too, since that
- * attribute is the default the markup carries (a select's or textarea's
- * `value` attribute means nothing to the browser, so it is not compared).
+ * Whether the control already holds what the writer would set: the `value`
+ * attribute of an option (its only value), the live value plus the `value`
+ * attribute (the default its markup carries) of an input, and the live state
+ * of anything else (a select's or textarea's `value` attribute means nothing
+ * to the browser).
  */
 function holdsValue(el: Element, key: string, value: unknown): boolean {
   if (key === 'value') {
@@ -135,11 +141,10 @@ function holdsValue(el: Element, key: string, value: unknown): boolean {
       return true;
     }
     const next = value == null ? '' : String(value);
+    const attributeHolds = value == null ? !el.hasAttribute('value') : el.getAttribute('value') === next;
+    if (el instanceof HTMLOptionElement) return attributeHolds;
     if ((el as HTMLInputElement).value !== next) return false;
-    if (el instanceof HTMLInputElement || el instanceof HTMLOptionElement) {
-      return value == null ? !el.hasAttribute('value') : el.getAttribute('value') === next;
-    }
-    return true;
+    return el instanceof HTMLInputElement ? attributeHolds : true;
   }
   const next = Boolean(value);
   return key === 'checked'
@@ -167,7 +172,7 @@ export function adoptFormControlProperty(el: Element, key: string, value: unknow
 }
 
 // ---------------------------------------------------------------------------
-// A textarea's reactive text: bound by the element, written as its value
+// A textarea's reactive text: bound by the element, as its default value
 // ---------------------------------------------------------------------------
 
 /**
@@ -196,47 +201,39 @@ export function childText(children: unknown[]): string {
 }
 
 /**
- * Write a textarea's text. Its default value (its text content, which a form
- * reset restores) and its live value both take the text; the live value is
- * written only when it differs, which keeps the caret, and after the user has
- * typed, when the browser no longer moves the value with the default.
- *
- * Verified by: src/dom/__tests__/form-control-adoption.test.ts > "a textarea's reactive text is its live value after the user typed, client-rendered too"
+ * Hydration markers as forma-ir wrote them around dynamic text inside a
+ * `textarea` or `title` before FORMA-002: `<!--f:t0-->value<!--/f:t0-->`, with
+ * a zero-width space for an empty value. In those elements the HTML parser
+ * keeps them as literal text, so they reach the control's value and
+ * `FormData`. Each opening marker is matched with its own closing one.
  */
-export function writeTextareaText(el: HTMLTextAreaElement, text: string): void {
-  if (el.defaultValue !== text) el.defaultValue = text;
-  if (el.value !== text) el.value = text;
-}
+const RCDATA_MARKED_TEXT = /<!--f:([ts])(\d+)-->([\s\S]*?)<!--\/f:\1\2-->/g;
 
-/**
- * Hydration markers as forma-ir wrote them inside `textarea` and `title`
- * before FORMA-002: in those elements the HTML parser keeps `<!--f:t0-->` as
- * literal text, so it reaches the control's value and `FormData`. Adoption
- * removes them from the default value. This backward compatibility is for one
- * release, while servers move to marker-free output.
- */
-const RCDATA_MARKER_TEXT = /<!--\/?f:[tsli]\d+-->/g;
-
-/** Remove marker text a pre-FORMA-002 server wrote inside an RCDATA element. */
+/** The text a pre-FORMA-002 server meant, with its marker text removed. */
 export function stripMarkerText(text: string): string {
-  return text.replace(RCDATA_MARKER_TEXT, '');
+  return text.replace(RCDATA_MARKED_TEXT, (_, _kind, _index, inner: string) => (inner === '\u200B' ? '' : inner));
 }
 
 /**
- * The first write of an adopted textarea's reactive text. The server's text is
- * kept (cleaned of marker text, for older servers); what the user typed before
- * activation is kept; and when the server's text already equals the client's,
- * nothing is written.
+ * The first write of an adopted textarea's reactive text.
+ *
+ * - When the server's text (the default value) already equals the client's,
+ *   nothing is written, whatever the user typed.
+ * - When removing an older server's marker text makes it equal, the markers
+ *   explain the whole difference: the default is cleaned. A value the user
+ *   typed stays, since the browser no longer moves it with the default.
+ * - Otherwise the server and the client disagree. An untouched textarea gets
+ *   the client's text; one the user typed into is left alone, default included.
+ *
+ * Later runs write the default value only: after the user types, an update
+ * changes what a form reset restores and leaves their text, as on 2.0.1. The
+ * `value` prop is the controlled form.
  *
  * Verified by: src/dom/__tests__/form-control-adoption.test.ts > "keeps text typed into a marker-carrying textarea before activation"
+ * Verified by: src/dom/__tests__/form-control-adoption.test.ts > "keeps server text that only looks like marker text, edited or not, without a write"
  */
 export function adoptTextareaText(el: HTMLTextAreaElement, text: string): void {
-  const edited = el.value !== el.defaultValue;
-  const server = stripMarkerText(el.defaultValue);
-  // Removing marker text is the one write older servers' output needs. While
-  // the user has not typed, the value follows the default; once they have, the
-  // browser leaves their value alone.
-  if (server !== el.defaultValue) el.defaultValue = server;
-  if (edited || el.value === text) return;
-  writeTextareaText(el, text);
+  const server = el.defaultValue;
+  if (server === text) return;
+  if (stripMarkerText(server) === text || el.value === server) el.defaultValue = text;
 }

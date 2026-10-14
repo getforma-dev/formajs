@@ -162,7 +162,16 @@ function removeRow(parent: Node, node: Node, hooks?: ListTransitionHooks): void 
   parent.removeChild(node);
 }
 
-/** An update may return a replacement; void retains the original keyed node. */
+/**
+ * Marks createList's own `'rerender'` update callback, whose returned node
+ * replaces the row. Every other callback, a public reconcileList caller's
+ * included, keeps 2.0.1's contract: its return value is ignored.
+ *
+ * Verified by: src/dom/__tests__/list-rerender.test.ts > "reconcileList ignores a node returned by a public update callback"
+ */
+const REPLACES_ROW = Symbol('forma.replacesRow');
+
+/** A tagged update may return a replacement; anything else keeps the keyed node. */
 function updateRowNode<T>(
   parent: Node,
   node: Node,
@@ -170,7 +179,7 @@ function updateRowNode<T>(
   updateFn: (node: Node, item: T) => unknown,
 ): Node {
   const next = updateFn(node, item);
-  if (next instanceof Node && next !== node) {
+  if ((updateFn as { [REPLACES_ROW]?: boolean })[REPLACES_ROW] && next instanceof Node && next !== node) {
     deactivateIslandsIn(node);
     parent.replaceChild(next, node);
     return next;
@@ -310,8 +319,7 @@ function reconcileSmall<T>(
  * @param oldNodes   - Previous DOM nodes array
  * @param keyFn      - Extracts a unique key from each item
  * @param createFn   - Creates a new DOM node for an item
- * @param updateFn   - Updates an existing DOM node with new item data; may
- *                    return a replacement node for the reconciler to install.
+ * @param updateFn   - Updates an existing DOM node with new item data
  * @param beforeNode - Optional boundary marker. When provided, new nodes are
  *                     inserted before this node instead of appended to parent.
  *                     This allows the reconciler to operate within a range
@@ -325,7 +333,7 @@ export function reconcileList<T>(
   oldNodes: Node[],
   keyFn: (item: T) => string | number,
   createFn: (item: T) => Node,
-  updateFn: (node: Node, item: T) => unknown,
+  updateFn: (node: Node, item: T) => void,
   beforeNode?: Node | null,
   hooks?: ListTransitionHooks,
 ): ReconcileResult<T> {
@@ -628,6 +636,7 @@ export function createList<T>(
         const cached = cache.get(key);
         if (cached) cached.item = item;
       };
+    (updateRow as { [REPLACES_ROW]?: boolean })[REPLACES_ROW] = updateOnItemChange === 'rerender';
 
     const oldCache = cache;
 

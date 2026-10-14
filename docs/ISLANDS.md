@@ -192,15 +192,25 @@ clobber.
 or `fragment(…)`) at a `mount()` root, at an island root, inside an element or
 as a `createShow` branch. The server renders a Fragment's children in place, so
 adoption walks them in place: their handlers and bindings attach to the
-server's nodes. A component that returns a DOM node it built itself while
-hydrating cannot be matched to the server's HTML, so activation fails instead
-of reporting success over an inert page: the island is marked `error`, and
-`mount()` throws with `data-forma-ssr` still on the container. A component that
+server's nodes. A root `createShow` or `createList` with no wrapping element is
+adopted the same way.
+
+**A component that returns a DOM node.** Returning the island's own element (or
+a node inside it) means the component wired the server's DOM itself: the island
+activates as usual. A node built while hydrating that is not part of the
+server's HTML cannot be adopted. The server's DOM stays as served, and the
+error `FORMA_E_HYDRATE_NODE` is logged in every build. `activateIslands` marks
+that island `error` and carries on with the others. `mount()` and
+`hydrateIsland()` keep `data-forma-ssr` on the container and do not throw;
+`mount()` also disposes the effects the component created. A component that
 returns nothing (an island that sets up its own effects) still activates.
 
 Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "a root Fragment binds its click handler and reactive text after mount() adoption"
 Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "a Fragment at an island root is adopted, each island on its own"
-Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "a component that returns a DOM node while hydrating fails instead of reporting success"
+Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "a root createShow or createList is adopted against the container's children"
+Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "an island that returns its own element stays active and keeps updating"
+Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "an island that returns a detached DOM node is marked error with its code, its sibling unaffected"
+Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "mount() of a detached DOM node keeps the server DOM, logs the code, disposes its effects and does not throw"
 
 **Form controls.** What a user enters between first paint and activation is
 kept. For a bound `value`, `checked` or `selected`, adoption first compares the
@@ -209,9 +219,10 @@ control's live state with the default its markup gives it (`value` with
 with its `selected` options). If they differ, the user changed the control, and
 adoption writes nothing to it. If the control already holds the client's value,
 adoption writes nothing either, attributes included. Only an untouched control
-the server rendered differently gets the client's value. Every update after
-activation is written to the live property, so a controlled input follows its
-signal again from then on.
+the server rendered differently gets the client's value. A control the user
+changed and then set back to its default counts as untouched. Every update
+after activation is written to the live property, so a controlled input follows
+its signal again from then on.
 
 Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "keeps text typed into an input before activation, then follows later updates"
 Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "adoption writes nothing when the server and the client agree"
@@ -221,12 +232,18 @@ Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "repairs an unto
 text, so a hydration marker inside one is not a comment: it shows in the text
 and, in a textarea, in the value a form submits. forma-ir 0.2.1 writes no
 markers there, and the runtime binds their reactive text by the element. A
-textarea's reactive text is its live value, written after the user types, in
-client-rendered and adopted textareas alike. For one release the runtime also
-accepts the marker text older servers write and removes it on adoption.
+textarea's reactive text is its default value, as it is when client-rendered:
+the value follows it until the user types, and after that an update changes
+what a form reset restores, not the user's text. Bind the `value` prop for a
+controlled textarea. For one release the runtime also accepts the marker text
+older servers write: adoption removes it when it accounts for the whole
+difference from the client's text, and leaves text that only looks like a
+marker alone.
 
 Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "binds a marker-free textarea by the element and writes nothing when it agrees"
 Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "keeps text typed into a marker-carrying textarea before activation"
+Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "keeps server text that only looks like marker text, edited or not, without a write"
+Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "after the user types, a textarea's reactive text changes only its default, client-rendered and adopted alike"
 Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "binds a title's reactive text by the element, with or without marker text"
 
 ---

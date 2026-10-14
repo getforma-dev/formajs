@@ -1,5 +1,15 @@
 [
  {
+  "id": "activate/hydrate-node-error-silent",
+  "file": "src/dom/activate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (isHydrateNodeError(err)) console.error(`${err.message} (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
+  "replace": "    if (__DEV__)",
+  "note": "an island failed by FORMA_E_HYDRATE_NODE leaves no coded log line naming it"
+ },
+ {
   "id": "activate/props-not-sanitized",
   "file": "src/dom/activate.ts",
   "tags": [
@@ -106,16 +116,6 @@
   "note": "stale style properties never removed on reactive style change"
  },
  {
-  "id": "el/textarea-text-bound-as-node",
-  "file": "src/dom/element.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "  if (tagName === 'textarea' && isReactiveTextOnly(children)) {",
-  "replace": "  if (false) {",
-  "note": "h() binds a textarea's reactive text as a text node: Phase 1 and Phase 2 disagree once the user types"
- },
- {
   "id": "el/xlink-guard-off",
   "file": "src/dom/element.ts",
   "tags": [
@@ -156,6 +156,16 @@
   "note": "adoption rewrites controls whose server value already equals the client's (DR-5: write nothing on agreement)"
  },
  {
+  "id": "form-control/option-null-submits-empty",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (control instanceof HTMLOptionElement) return;\n",
+  "replace": "",
+  "note": "an option bound to undefined/null gets value=\"\" and submits '' instead of its text (FORMA-003 B2)"
+ },
+ {
   "id": "form-control/select-first-option-is-an-edit",
   "file": "src/dom/form-control.ts",
   "tags": [
@@ -166,34 +176,44 @@
   "note": "a select with no selected option counts its default first option as a user edit, so an older server's select is never repaired"
  },
  {
-  "id": "form-control/textarea-default-keeps-markers",
-  "file": "src/dom/form-control.ts",
-  "tags": [
-   "contract"
-  ],
-  "find": "  if (server !== el.defaultValue) el.defaultValue = server;",
-  "replace": "",
-  "note": "marker text from a pre-FORMA-002 server stays in an edited textarea's default value, so a form reset restores it"
- },
- {
   "id": "form-control/textarea-edit-ignored",
   "file": "src/dom/form-control.ts",
   "tags": [
    "correctness"
   ],
-  "find": "  if (edited || el.value === text) return;",
-  "replace": "  if (el.value === text) return;",
-  "note": "adoption overwrites text typed into a server-rendered textarea before activation (FORMA-003, DR-5)"
+  "find": "  if (stripMarkerText(server) === text || el.value === server) el.defaultValue = text;",
+  "replace": "  el.defaultValue = text;",
+  "note": "an edited textarea whose server text disagrees gets the client's text as its default, discarding the server's"
  },
  {
-  "id": "form-control/textarea-writes-default-only",
+  "id": "form-control/textarea-literal-markers-stripped",
   "file": "src/dom/form-control.ts",
   "tags": [
    "correctness"
   ],
-  "find": "  if (el.value !== text) el.value = text;",
+  "find": "  if (server === text) return;\n",
   "replace": "",
-  "note": "a textarea's reactive text stops reaching the control after the user types (the dirty value ignores the default)"
+  "note": "server text that only looks like marker text is rewritten at adoption, a write on an agreeing page (FORMA-003 S1)"
+ },
+ {
+  "id": "form-control/textarea-markers-never-stripped",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "  if (stripMarkerText(server) === text || el.value === server) el.defaultValue = text;",
+  "replace": "  if (el.value === server) el.defaultValue = text;",
+  "note": "an older server's marker text stays in an edited textarea's default, so a form reset restores it"
+ },
+ {
+  "id": "form-control/textarea-zero-width-kept",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "(inner === '\\u200B' ? '' : inner)",
+  "replace": "inner",
+  "note": "an older server's zero-width space for empty text stays in an edited textarea's default"
  },
  {
   "id": "fragment/hydrating-builds-real-fragment",
@@ -212,6 +232,16 @@
   "find": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V {",
   "replace": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V { if (v && typeof v === 'object') return v;",
   "note": "history entries alias live objects — undo/redo returns mutated state"
+ },
+ {
+  "id": "hydrate/detached-node-adopted-silently",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    (err as Error & { code: string }).code = HYDRATE_NODE_ERROR;\n    throw err;",
+  "replace": "    void err;",
+  "note": "a detached DOM node returned while hydrating counts as adopted: data-forma-ssr removed, island active, nothing bound, nothing logged"
  },
  {
   "id": "hydrate/eventhandler-guard-off",
@@ -254,14 +284,24 @@
   "note": "a nested Fragment is skipped: its nodes stay unbound and every sibling after it is matched one node off"
  },
  {
-  "id": "hydrate/node-root-reports-success",
+  "id": "hydrate/own-element-is-an-error",
   "file": "src/dom/hydrate.ts",
   "tags": [
    "correctness"
   ],
-  "find": "    throw new Error(\n      '[forma] Hydration: the component returned a DOM node, which cannot be adopted. ' +\n      'Build the tree with h() (Fragments included) so it can be matched to the server-rendered HTML.',\n    );",
-  "replace": "    void 0;",
-  "note": "a DOM node returned while hydrating is treated as success: data-forma-ssr removed, island marked active, nothing bound"
+  "find": "  } else if (descriptor instanceof Node && descriptor !== target && !target.contains(descriptor)) {",
+  "replace": "  } else if (descriptor instanceof Node) {",
+  "note": "an island returning its own element (2.0.1's imperative pattern) is marked error and its effects disposed (FORMA-003 B1)"
+ },
+ {
+  "id": "hydrate/public-hydrate-island-throws",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (!isHydrateNodeError(err)) throw err;\n    console.error(err.message);\n    return target;",
+  "replace": "    throw err;",
+  "note": "hydrateIsland() throws for a detached node, which 2.0.1 never did (a breaking change in a patch)"
  },
  {
   "id": "hydrate/range-root-not-adopted",
@@ -272,6 +312,16 @@
   "find": "  } else if (isFragmentDescriptor(descriptor) || isShowDescriptor(descriptor) || isListDescriptor(descriptor)) {",
   "replace": "  } else if (false) {",
   "note": "hydrateIsland ignores a Fragment root and reports success with nothing adopted (FORMA-003)"
+ },
+ {
+  "id": "hydrate/root-show-list-not-adopted",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  } else if (isFragmentDescriptor(descriptor) || isShowDescriptor(descriptor) || isListDescriptor(descriptor)) {",
+  "replace": "  } else if (isFragmentDescriptor(descriptor)) {",
+  "note": "a root createShow or createList with no wrapping element is left inert after activation"
  },
  {
   "id": "hydrate/show-fragment-branch-skipped",
@@ -294,13 +344,23 @@
   "note": "textarea/title reactive text walked as marker-delimited child nodes, which RCDATA does not have (FORMA-002 output)"
  },
  {
+  "id": "hydrate/textarea-updates-overwrite-typing",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    else if (el.textContent !== text) el.textContent = text;",
+  "replace": "    else if (el.textContent !== text) { el.textContent = text; if (el instanceof HTMLTextAreaElement) el.value = text; }",
+  "note": "an adopted textarea's reactive text overwrites what the user typed on every update (FORMA-003 B3; controlled children are 3.0)"
+ },
+ {
   "id": "hydrate/title-never-written",
   "file": "src/dom/hydrate.ts",
   "tags": [
    "correctness"
   ],
-  "find": "    } else if (el.textContent !== text) {\n      el.textContent = text;\n    }",
-  "replace": "    }",
+  "find": "    else if (el.textContent !== text) el.textContent = text;",
+  "replace": "",
   "note": "a title's reactive text is never written: marker text from an older server stays, updates never show"
  },
  {
@@ -396,6 +456,16 @@
   "note": "onInsert transition hook not fired on initial create-all"
  },
  {
+  "id": "list/public-update-replaces-row",
+  "file": "src/dom/list.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "  if ((updateFn as { [REPLACES_ROW]?: boolean })[REPLACES_ROW] && next instanceof Node && next !== node) {",
+  "replace": "  if (next instanceof Node && next !== node) {",
+  "note": "a public reconcileList updateFn's return value replaces the row, a 2.0.1 contract change (FORMA-003 S2)"
+ },
+ {
   "id": "list/removal-skipped",
   "file": "src/dom/list.ts",
   "tags": [
@@ -423,6 +493,26 @@
   "replace": "  if (oldLen < 100000) {",
   "note": "large-list Map path never taken — all lists go through the flat scan",
   "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+ },
+ {
+  "id": "mount/detached-node-leaks-effects",
+  "file": "src/dom/mount.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (failure) {\n      disposeRoot();",
+  "replace": "    if (failure) {",
+  "note": "a mount() that adopted nothing leaves the component's effects running"
+ },
+ {
+  "id": "mount/detached-node-throws",
+  "file": "src/dom/mount.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "        if (!isHydrateNodeError(err)) throw err;\n        failure = err;",
+  "replace": "        throw err;",
+  "note": "mount() throws for a detached node, aborting the rest of the page's module (FORMA-003 B1)"
  },
  {
   "id": "mutate/setAttr-true-branch",

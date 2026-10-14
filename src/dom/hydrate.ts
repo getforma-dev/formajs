@@ -16,7 +16,6 @@ import {
   isFormControlProperty,
   isReactiveTextOnly,
   writeFormControlProperty,
-  writeTextareaText,
 } from './form-control.js';
 import { reconcileList, createList } from './list.js';
 import { createShow } from './show.js';
@@ -1078,10 +1077,10 @@ export function adoptNode(
  *
  * - textarea: the first run is an adoption ({@link adoptTextareaText}): marker
  *   text is removed from the default value, what the user typed before
- *   activation is kept, and nothing is written when the server agrees. Later
- *   runs write the live value ({@link writeTextareaText}).
- * - title: its text is written only when it differs, which also removes
- *   marker text.
+ *   activation is kept, and nothing is written when the server agrees.
+ * - every other run, and a title's first: the element's text (a textarea's
+ *   default value) is written only when it differs, which also replaces a
+ *   title's marker text. A textarea's typed value is never overwritten.
  *
  * Verified by: src/dom/__tests__/form-control-adoption.test.ts > "binds a marker-free textarea by the element and writes nothing when it agrees"
  * Verified by: src/dom/__tests__/form-control-adoption.test.ts > "binds a textarea with static and reactive text, from either server output"
@@ -1091,12 +1090,8 @@ function bindElementText(el: Element, children: unknown[]): void {
   let adopted = false;
   internalEffect(() => {
     const text = childText(children);
-    if (el instanceof HTMLTextAreaElement) {
-      if (adopted) writeTextareaText(el, text);
-      else adoptTextareaText(el, text);
-    } else if (el.textContent !== text) {
-      el.textContent = text;
-    }
+    if (!adopted && el instanceof HTMLTextAreaElement) adoptTextareaText(el, text);
+    else if (el.textContent !== text) el.textContent = text;
     adopted = true;
   });
 }
@@ -1315,6 +1310,14 @@ function adoptChildren(
 // hydrateIsland() — full orchestration
 // ---------------------------------------------------------------------------
 
+/** The code of a component's return value that adoption cannot use. */
+export const HYDRATE_NODE_ERROR = 'FORMA_E_HYDRATE_NODE';
+
+/** Whether `err` is the coded error raised for a detached DOM node. */
+export function isHydrateNodeError(err: unknown): err is Error {
+  return err instanceof Error && (err as { code?: unknown }).code === HYDRATE_NODE_ERROR;
+}
+
 /**
  * Hydrate an SSR island in-place. Runs the component in hydration mode so
  * h() returns descriptors, then walks the descriptor tree against the SSR DOM
@@ -1327,10 +1330,32 @@ function adoptChildren(
  * element when the CSR fallback fires (empty island shell replaced by the
  * component's own root element).
  *
+ * A component that returns a DOM node outside `target` cannot be adopted: the
+ * coded error (`FORMA_E_HYDRATE_NODE`) is logged in every build, `target` keeps
+ * the server's DOM and its `data-forma-ssr`, and `target` is returned. It does
+ * not throw in 2.0.x.
+ *
+ * Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "hydrateIsland called directly with a detached node logs the code and keeps the server DOM"
+ *
  * @param component  A function that builds the UI (calls h(), createShow, etc.)
  * @param target     The container element with `data-forma-ssr` attribute
  */
 export function hydrateIsland(component: () => unknown, target: Element): Element {
+  try {
+    return hydrateIslandOrFail(component, target);
+  } catch (err) {
+    if (!isHydrateNodeError(err)) throw err;
+    console.error(err.message);
+    return target;
+  }
+}
+
+/**
+ * {@link hydrateIsland}, except that a detached DOM node throws its coded
+ * error, for the caller to handle: `activateIslands` marks the island `error`,
+ * and `mount()` disposes its root and reports.
+ */
+export function hydrateIslandOrFail(component: () => unknown, target: Element): Element {
   // Check if the island has SSR content to hydrate against.
   // An empty island shell (tag + static attrs from compiler, no children)
   // has nothing to hydrate — fall through to CSR mode.
@@ -1396,19 +1421,22 @@ export function hydrateIsland(component: () => unknown, target: Element): Elemen
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a root Fragment binds its click handler and reactive text after mount() adoption"
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a Fragment at an island root is adopted, each island on its own"
     adoptChildren([descriptor], target, target.firstChild, null);
-  } else if (descriptor instanceof Node) {
-    // A DOM node built while hydrating cannot be matched to the server's
-    // nodes. Reporting success here would leave the server's DOM inert behind
-    // a removed data-forma-ssr, so fail instead: activateIslands marks the
-    // island `error`, and mount() throws to its caller.
-    // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a component that returns a DOM node while hydrating fails instead of reporting success"
-    throw new Error(
-      '[forma] Hydration: the component returned a DOM node, which cannot be adopted. ' +
-      'Build the tree with h() (Fragments included) so it can be matched to the server-rendered HTML.',
+  } else if (descriptor instanceof Node && descriptor !== target && !target.contains(descriptor)) {
+    // A detached DOM node built while hydrating cannot be matched to the
+    // server's nodes, and reporting success would leave the server's DOM inert
+    // behind a removed data-forma-ssr.
+    // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns a detached DOM node is marked error with its code, its sibling unaffected"
+    const err = new Error(
+      `[forma] ${HYDRATE_NODE_ERROR}: the component returned a DOM node that is not part of the ` +
+      'server-rendered HTML, so nothing was adopted. Build the tree with h().',
     );
+    (err as Error & { code: string }).code = HYDRATE_NODE_ERROR;
+    throw err;
   }
-  // Anything else (nothing at all, from an island that sets up its own
-  // effects) has nothing to adopt.
+  // Anything else has nothing to adopt: nothing at all (an island that sets up
+  // its own effects), or the target or a node inside it (the component adopted
+  // the server's DOM itself, such as an island returning its own `el`).
+  // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns its own element stays active and keeps updating"
 
   // 5. Remove SSR marker
   target.removeAttribute('data-forma-ssr');

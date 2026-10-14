@@ -10,13 +10,7 @@
 
 import { internalEffect, __DEV__ } from 'forma/reactive';
 import { hydrating } from './hydrate.js';
-import {
-  childText,
-  isFormControlProperty,
-  isReactiveTextOnly,
-  writeFormControlProperty,
-  writeTextareaText,
-} from './form-control.js';
+import { isFormControlProperty, writeFormControlProperty } from './form-control.js';
 import {
   isDangerousUrl,
   isEventHandlerAttr,
@@ -992,15 +986,7 @@ export function h(
   // Text node allocation + separate appendChild. el.textContent is a single
   // native C++ call that combines both operations.
   const childLen = children.length;
-  if (tagName === 'textarea' && isReactiveTextOnly(children)) {
-    // A textarea's text is its value. Bound as a text node it would stop
-    // reaching the control once the user types (the browser then detaches the
-    // value from the default), so it is written as the live value, the same
-    // way adoption binds a server-rendered textarea.
-    // Verified by: src/dom/__tests__/form-control-adoption.test.ts > "a textarea's reactive text is its live value after the user typed, client-rendered too"
-    const textarea = el as HTMLTextAreaElement;
-    internalEffect(() => writeTextareaText(textarea, childText(children)));
-  } else if (childLen === 1) {
+  if (childLen === 1) {
     const only = children[0];
     if (typeof only === 'string') {
       el.textContent = only;

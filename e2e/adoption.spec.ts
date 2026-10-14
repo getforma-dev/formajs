@@ -99,7 +99,10 @@ test('what the user entered before activation survives adoption, and later updat
   await expect(page.locator('#agree')).toBeChecked();
   await expect(page.locator('#cycle')).toHaveValue('monthly');
   await expect(page.locator('#notes')).toHaveValue('Reset notes');
-  await expect(page.locator('#legacy')).toHaveValue('reset');
+  // Reactive children are the textarea's default: an update after the user
+  // typed changes what a form reset restores, not their text.
+  await expect(page.locator('#legacy')).toHaveValue('Typed legacy');
+  expect(await page.locator('#legacy').evaluate((el: HTMLTextAreaElement) => el.defaultValue)).toBe('reset');
 });
 
 test('an untouched page whose server agrees with the client is adopted without one DOM write', async ({ page }) => {
@@ -170,20 +173,76 @@ test("an older server's marker text and unselected select are repaired at adopti
   await expect(page.locator('#tt')).toHaveText('updated');
 });
 
-test("a textarea's reactive text follows its signal after the user typed, client-rendered and adopted alike", async ({ page }) => {
-  await serve(page, '<div id="csr"></div><div id="ssr" data-forma-ssr><textarea id="adopted">a</textarea></div>');
+test("after the user types, a textarea's reactive text changes only its default, client-rendered and adopted alike", async ({ page }) => {
+  await serve(page, '<div id="csr"></div><div id="ssr" data-forma-ssr><textarea id="adopted">Hello Ann</textarea></div>');
   await page.evaluate(async () => {
     const { h, mount, createSignal } = await import('/adoption-core.mjs' as string);
-    const [text, setText] = createSignal('a');
+    const [text, setText] = createSignal('Hello Ann');
     (window as any).setText = setText;
     mount(() => h('textarea', { id: 'rendered' }, () => text()), '#csr');
     mount(() => h('textarea', { id: 'adopted' }, () => text()), '#ssr');
   });
   for (const id of ['#rendered', '#adopted']) {
-    await expect(page.locator(id)).toHaveValue('a');
-    await page.locator(id).fill('typed');
+    await expect(page.locator(id)).toHaveValue('Hello Ann');
+    await page.locator(id).fill('Hello Ann, my long message');
   }
-  await page.evaluate(() => (window as any).setText('b'));
-  await expect(page.locator('#rendered')).toHaveValue('b');
-  await expect(page.locator('#adopted')).toHaveValue('b');
+  await page.evaluate(() => (window as any).setText('Hello Bob'));
+  for (const id of ['#rendered', '#adopted']) {
+    await expect(page.locator(id)).toHaveValue('Hello Ann, my long message');
+    expect(await page.locator(id).evaluate((el: HTMLTextAreaElement) => el.defaultValue)).toBe('Hello Bob');
+  }
+});
+
+test('a component that returns a DOM node is adopted as itself or reported, and never aborts the module', async ({ page }) => {
+  await serve(page,
+    '<div id="app" data-forma-ssr><p>static</p></div>' +
+    '<div data-forma-island="0" data-forma-component="Imp"><button id="imp">0</button></div>' +
+    '<div data-forma-island="1" data-forma-component="Detached"><span>server</span></div>');
+  const errors: string[] = [];
+  page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
+  page.on('pageerror', (err) => errors.push(`uncaught: ${err.message}`));
+
+  await page.evaluate(async () => {
+    const { mount, activateIslands, createSignal, createEffect, template } = await import('/adoption-core.mjs' as string);
+    mount(() => template('<p>static</p>'), '#app');
+    (window as any).afterMount = true;
+    activateIslands({
+      Imp: (el: HTMLElement) => {
+        const [n, setN] = createSignal(0);
+        const button = el.querySelector('button')!;
+        button.addEventListener('click', () => setN(n() + 1));
+        createEffect(() => { button.textContent = String(n()); });
+        return el;
+      },
+      Detached: () => document.createElement('span'),
+    });
+  });
+
+  expect(await page.evaluate(() => (window as any).afterMount)).toBe(true);
+  await expect(page.locator('#app')).toHaveAttribute('data-forma-ssr', '');
+  await expect(page.locator('#app')).toHaveText('static');
+  await expect(page.locator('[data-forma-island="0"]')).toHaveAttribute('data-forma-status', 'active');
+  await page.locator('#imp').click();
+  await page.locator('#imp').click();
+  await expect(page.locator('#imp')).toHaveText('2');
+  await expect(page.locator('[data-forma-island="1"]')).toHaveAttribute('data-forma-status', 'error');
+  await expect(page.locator('[data-forma-island="1"]')).toHaveText('server');
+  expect(errors.filter((e) => e.startsWith('uncaught'))).toEqual([]);
+  expect(errors.filter((e) => e.includes('FORMA_E_HYDRATE_NODE'))).toHaveLength(2);
+});
+
+test('an option bound to undefined submits its text, client-rendered and adopted', async ({ page }) => {
+  await serve(page,
+    '<form id="csr"></form>' +
+    '<div id="ssr" data-forma-ssr><form id="adopted"><select name="s"><option>Alpha</option><option>Beta</option></select></form></div>');
+  await page.evaluate(async () => {
+    const { h, mount } = await import('/adoption-core.mjs' as string);
+    mount(() => h('select', { name: 'c' }, h('option', { value: undefined }, 'Alpha'), h('option', { value: null }, 'Beta')), '#csr');
+    mount(() => h('form', { id: 'adopted' },
+      h('select', { name: 's' }, h('option', { value: () => undefined }, 'Alpha'), h('option', { value: () => null }, 'Beta'))), '#ssr');
+  });
+  expect(await formData(page, '#csr')).toEqual([['c', 'Alpha']]);
+  expect(await formData(page, '#adopted')).toEqual([['s', 'Alpha']]);
+  await page.locator('#csr select').selectOption({ index: 1 });
+  expect(await formData(page, '#csr')).toEqual([['c', 'Beta']]);
 });

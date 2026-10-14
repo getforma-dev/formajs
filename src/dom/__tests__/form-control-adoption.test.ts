@@ -260,7 +260,8 @@ describe('textarea and title text is bound by the element', () => {
     expect(new FormData(app.querySelector('form')!).get('ta')).toBe('updated');
     textarea.value = 'typed';
     setText('reset');
-    expect(textarea.value).toBe('reset');
+    expect(textarea.value).toBe('typed');
+    expect(textarea.defaultValue).toBe('reset');
   });
 
   it('accepts a textarea with marker text from an older server and removes the markers', () => {
@@ -295,7 +296,70 @@ describe('textarea and title text is bound by the element', () => {
     // The default (what a form reset restores) no longer carries marker text.
     expect(textarea.defaultValue).toBe('hello');
     setText('updated');
-    expect(textarea.value).toBe('updated');
+    expect(textarea.value).toBe('typed');
+    expect(textarea.defaultValue).toBe('updated');
+  });
+
+  it('keeps server text that only looks like marker text, edited or not, without a write', async () => {
+    // A marker-free server whose text documents Forma's own markers.
+    const literal = 'Docs say <!--f:t0--> is a marker';
+    const app = serve('<div><textarea id="edited"></textarea><textarea id="untouched"></textarea></div>');
+    const edited = byId<HTMLTextAreaElement>('edited');
+    const untouched = byId<HTMLTextAreaElement>('untouched');
+    edited.textContent = literal;
+    untouched.textContent = literal;
+    edited.value = 'typed';
+    const done = recordMutations(app.firstElementChild!);
+
+    mount(() => h('div', null,
+      h('textarea', { id: 'edited' }, () => literal),
+      h('textarea', { id: 'untouched' }, () => literal),
+    ), app);
+    await Promise.resolve();
+
+    expect(done()).toEqual([]);
+    expect(edited.value).toBe('typed');
+    expect(edited.defaultValue).toBe(literal);
+    expect(untouched.value).toBe(literal);
+  });
+
+  it("cleans an older server's markers around a literal marker exactly, and leaves a disagreeing edited default alone", () => {
+    const literal = 'Docs say <!--f:t0--> is a marker';
+    const app = serve('<div><textarea id="legacy"></textarea><textarea id="disagree"></textarea></div>');
+    const legacyArea = byId<HTMLTextAreaElement>('legacy');
+    const disagree = byId<HTMLTextAreaElement>('disagree');
+    // An older server escapes the user's `<!--`, which parses to the same text as a marker.
+    legacyArea.textContent = legacy(literal);
+    disagree.textContent = 'Server text';
+    legacyArea.value = 'typed';
+    disagree.value = 'typed too';
+
+    mount(() => h('div', null,
+      h('textarea', { id: 'legacy' }, () => literal),
+      h('textarea', { id: 'disagree' }, () => 'Client text'),
+    ), app);
+
+    expect(legacyArea.value).toBe('typed');
+    expect(legacyArea.defaultValue).toBe(literal);
+    expect(disagree.value).toBe('typed too');
+    expect(disagree.defaultValue).toBe('Server text');
+  });
+
+  it('adopts an empty value from an older server, written as a zero-width space between markers, as empty', () => {
+    const app = serve('<textarea id="ta"></textarea>');
+    const textarea = byId<HTMLTextAreaElement>('ta');
+    textarea.textContent = legacy('\u200B');
+    textarea.value = 'typed';
+    const [text, setText] = createSignal('');
+
+    mount(() => h('textarea', { id: 'ta' }, () => text()), app);
+
+    expect(textarea.value).toBe('typed');
+    expect(textarea.defaultValue).toBe('');
+    setText('later');
+    expect(textarea.defaultValue).toBe('later');
+    setText('');
+    expect(textarea.defaultValue).toBe('');
   });
 
   it('binds a textarea with static and reactive text, from either server output', () => {
@@ -336,31 +400,67 @@ describe('textarea and title text is bound by the element', () => {
     }
   });
 
-  it("a textarea's reactive text is its live value after the user typed, client-rendered too", () => {
+  it("after the user types, a textarea's reactive text changes only its default, client-rendered and adopted alike", () => {
     // Client-rendered (Phase 1)
     createRoot((dispose) => {
-      const [text, setText] = createSignal('a');
+      const [text, setText] = createSignal('Hello Ann');
       const textarea = h('textarea', null, () => text()) as HTMLTextAreaElement;
-      expect(textarea.value).toBe('a');
-      textarea.value = 'typed';
-      setText('b');
-      expect(textarea.value).toBe('b');
-      expect(textarea.defaultValue).toBe('b');
-      setText('c');
-      expect(textarea.value).toBe('c');
+      expect(textarea.value).toBe('Hello Ann');
+      textarea.value = 'Hello Ann, my long message';
+      setText('Hello Bob');
+      expect(textarea.value).toBe('Hello Ann, my long message');
+      expect(textarea.defaultValue).toBe('Hello Bob');
+      setText('Hello Cy');
+      expect(textarea.defaultValue).toBe('Hello Cy');
       dispose();
     });
 
     // Server-rendered and adopted (Phase 2)
-    const app = serve('<textarea id="ta">a</textarea>');
-    const [text, setText] = createSignal('a');
+    const app = serve('<textarea id="ta">Hello Ann</textarea>');
+    const [text, setText] = createSignal('Hello Ann');
     mount(() => h('textarea', { id: 'ta' }, () => text()), app);
     const textarea = byId<HTMLTextAreaElement>('ta');
-    textarea.value = 'typed';
-    setText('b');
-    expect(textarea.value).toBe('b');
-    expect(textarea.defaultValue).toBe('b');
-    setText('c');
-    expect(textarea.value).toBe('c');
+    setText('Hello Bo');
+    // Untouched, the value follows its default.
+    expect(textarea.value).toBe('Hello Bo');
+    textarea.value = 'Hello Bo, my long message';
+    setText('Hello Bob');
+    expect(textarea.value).toBe('Hello Bo, my long message');
+    expect(textarea.defaultValue).toBe('Hello Bob');
+  });
+});
+
+describe('option values', () => {
+  it('an option bound to undefined or null submits its text, client-rendered and adopted', () => {
+    // Client-rendered
+    createRoot((dispose) => {
+      const [beta, setBeta] = createSignal<string | null>(null);
+      const form = h('form', null,
+        h('select', { name: 'c' },
+          h('option', { value: undefined }, 'Alpha'),
+          h('option', { value: () => beta() }, 'Beta')),
+      ) as HTMLFormElement;
+      const select = form.querySelector('select')!;
+      expect([...new FormData(form)]).toEqual([['c', 'Alpha']]);
+      expect(select.options[0]!.hasAttribute('value')).toBe(false);
+      select.selectedIndex = 1;
+      expect([...new FormData(form)]).toEqual([['c', 'Beta']]);
+      setBeta('b');
+      expect([...new FormData(form)]).toEqual([['c', 'b']]);
+      setBeta(null);
+      expect([...new FormData(form)]).toEqual([['c', 'Beta']]);
+      dispose();
+    });
+
+    // Adopted: the server wrote no value attribute for a nullish value.
+    const app = serve('<form><select name="s"><option>Alpha</option><option>Beta</option></select></form>');
+    mount(() => h('form', null,
+      h('select', { name: 's' },
+        h('option', { value: () => undefined }, 'Alpha'),
+        h('option', { value: () => null }, 'Beta')),
+    ), app);
+    const form = app.querySelector('form')!;
+    expect([...new FormData(form)]).toEqual([['s', 'Alpha']]);
+    expect(form.querySelector('option')!.hasAttribute('value')).toBe(false);
   });
 });

@@ -93,15 +93,19 @@ describe('props loading', () => {
 
     activateIslands({
       Broken: () => document.createElement('div'),
-      Working: () => {
+      // Wires its server DOM itself and returns its own element (2.0.1's
+      // imperative pattern), so it activates like any working island.
+      Working: (el) => {
         siblingActivated = true;
-        return document.createElement('div');
+        return el;
       },
     });
 
     expect(document.querySelector('[data-forma-island="0"]')!
       .getAttribute('data-forma-status')).toBe('error');
     expect(siblingActivated).toBe(true);
+    expect(document.querySelector('[data-forma-island="1"]')!
+      .getAttribute('data-forma-status')).toBe('active');
     errorSpy.mockRestore();
   });
 

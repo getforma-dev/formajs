@@ -11,11 +11,12 @@
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { createSignal } from 'forma/reactive';
+import { createEffect, createSignal } from 'forma/reactive';
 import { h, Fragment, fragment } from '../element';
 import { mount } from '../mount';
 import { activateIslands } from '../activate';
 import { createShow } from '../show';
+import { createList } from '../list';
 import { hydrateIsland } from '../hydrate';
 
 afterEach(() => {
@@ -174,15 +175,32 @@ describe('Fragment adoption', () => {
     expect(button.textContent).toBe('n=1');
   });
 
-  it('a component that returns a DOM node while hydrating fails instead of reporting success', () => {
-    const app = serverPage();
-    const before = app.innerHTML;
+  it('an island that returns its own element stays active and keeps updating', () => {
+    // 2.0.1's imperative pattern: wire the server DOM by hand, return `el`.
+    document.body.innerHTML =
+      '<div data-forma-island="0" data-forma-component="Imp"><button>0</button></div>' +
+      '<div data-forma-island="1" data-forma-component="Imp"><button>0</button></div>';
+    activateIslands({
+      Imp: (el) => {
+        const [n, setN] = createSignal(0);
+        const button = el.querySelector('button')!;
+        button.addEventListener('click', () => setN(n() + 1));
+        createEffect(() => { button.textContent = String(n()); });
+        return el;
+      },
+    });
 
-    expect(() => hydrateIsland(() => document.createElement('span'), app)).toThrow(/cannot be adopted/);
-    // Not claimed as adopted: the marker stays and the server DOM is untouched.
-    expect(app.hasAttribute('data-forma-ssr')).toBe(true);
-    expect(app.innerHTML).toBe(before);
+    const islands = Array.from(document.querySelectorAll<HTMLElement>('[data-forma-island]'));
+    const buttons = islands.map((i) => i.querySelector('button')!);
+    expect(islands.map((i) => i.getAttribute('data-forma-status'))).toEqual(['active', 'active']);
+    buttons[0]!.click();
+    buttons[0]!.click();
+    buttons[1]!.click();
+    buttons[0]!.click();
+    expect(buttons.map((b) => b.textContent)).toEqual(['3', '1']);
+  });
 
+  it('an island that returns a detached DOM node is marked error with its code, its sibling unaffected', () => {
     document.body.innerHTML =
       '<div data-forma-island="0" data-forma-component="Bad"><span>x</span></div>' +
       '<div data-forma-island="1" data-forma-component="Good"><span>y</span></div>';
@@ -191,9 +209,85 @@ describe('Fragment adoption', () => {
       Bad: () => document.createDocumentFragment(),
       Good: () => h('div', null, h('span', null, 'y')),
     });
+    const logged = error.mock.calls.map((call) => String(call[0]));
     error.mockRestore();
+
     const statuses = Array.from(document.querySelectorAll('[data-forma-island]'), (el) => el.getAttribute('data-forma-status'));
     expect(statuses).toEqual(['error', 'active']);
+    expect(logged.filter((line) => line.includes('FORMA_E_HYDRATE_NODE') && line.includes('"Bad"'))).toHaveLength(1);
+    expect(document.querySelector('[data-forma-island="0"]')!.innerHTML).toBe('<span>x</span>');
+  });
+
+  it('mount() of a detached DOM node keeps the server DOM, logs the code, disposes its effects and does not throw', () => {
+    const app = serverPage();
+    const before = app.innerHTML;
+    const [n, setN] = createSignal(0);
+    let runs = 0;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+    let unmount: (() => void) | undefined;
+    expect(() => {
+      unmount = mount(() => {
+        createEffect(() => { n(); runs++; });
+        return document.createElement('p') as unknown as HTMLElement;
+      }, app);
+    }).not.toThrow();
+    const logged = error.mock.calls.map((call) => String(call[0]));
+    error.mockRestore();
+
+    expect(typeof unmount).toBe('function');
+    expect(app.hasAttribute('data-forma-ssr')).toBe(true);
+    expect(app.innerHTML).toBe(before);
+    expect(logged.filter((line) => line.includes('FORMA_E_HYDRATE_NODE'))).toHaveLength(1);
+    // The component's effect ran once and was disposed with the root.
+    expect(runs).toBe(1);
+    setN(1);
+    setN(2);
+    expect(runs).toBe(1);
+    unmount!();
+    expect(app.innerHTML).toBe('');
+  });
+
+  it('hydrateIsland called directly with a detached node logs the code and keeps the server DOM', () => {
+    const app = serverPage();
+    const before = app.innerHTML;
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const result = hydrateIsland(() => document.createElement('span'), app);
+    const logged = error.mock.calls.map((call) => String(call[0]));
+    error.mockRestore();
+
+    expect(result).toBe(app);
+    expect(app.hasAttribute('data-forma-ssr')).toBe(true);
+    expect(app.innerHTML).toBe(before);
+    expect(logged.filter((line) => line.includes('FORMA_E_HYDRATE_NODE'))).toHaveLength(1);
+  });
+
+  it("a root createShow or createList is adopted against the container's children", () => {
+    document.body.innerHTML =
+      '<div id="show" data-forma-ssr><!--f:s0--><button id="toggle">on</button><!--/f:s0--></div>' +
+      '<ul id="list" data-forma-ssr><!--f:l0--><li data-forma-key="a">a</li><li data-forma-key="b">b</li><!--/f:l0--></ul>';
+    const toggleButton = document.getElementById('toggle')!;
+    const [on, setOn] = createSignal(true);
+    const [items, setItems] = createSignal(['a', 'b']);
+    const clicked: string[] = [];
+
+    mount(() => createShow(on,
+      () => h('button', { id: 'toggle', onClick: () => setOn(false) }, 'on'),
+      () => h('em', null, 'off'),
+    ) as unknown as HTMLElement, '#show');
+    mount(() => createList(items, (x) => x, (x) => h('li', { onClick: () => clicked.push(x) }, x)) as unknown as HTMLElement, '#list');
+
+    // The server's nodes are bound, not replaced.
+    toggleButton.click();
+    expect(document.getElementById('show')!.textContent).toBe('off');
+    setOn(true);
+    expect(document.getElementById('toggle')!.textContent).toBe('on');
+    const serverRows = Array.from(document.querySelectorAll('#list li'));
+    (serverRows[1] as HTMLElement).click();
+    expect(clicked).toEqual(['b']);
+    setItems(['b', 'c']);
+    expect(Array.from(document.querySelectorAll('#list li'), (li) => li.textContent)).toEqual(['b', 'c']);
+    expect(document.querySelector('#list li')).toBe(serverRows[1]);
   });
 
   it('a component that returns nothing still activates (an island that sets up its own effects)', () => {
