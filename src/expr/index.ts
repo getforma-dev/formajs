@@ -19,8 +19,7 @@ import type { Expr, Stmt } from './ast';
 import { isExprError, type FormaExprError } from './errors';
 import { parseExpression, parseProgram } from './parser';
 import { validateExpression, validateProgram } from './validate';
-import { LIMITS } from './ast';
-import { charge, enter, evalExpr, leave, makeCtx, runProgram, type Meter, type ScopeLike } from './interp';
+import { charge, enter, evalExpr, leave, makeCtx, room, runProgram, type Meter, type ScopeLike } from './interp';
 
 export { LIMITS } from './ast';
 export { isExprError, type FormaExprError, type ExprErrorCode } from './errors';
@@ -115,7 +114,7 @@ export function evaluateExpression(node: Expr, scope: ScopeLike, meter?: Meter |
   const outer = enter(ctx);
   try {
     const value = evalExpr(node, ctx);
-    if (text) charge(ctx, text(value, LIMITS.ALLOC_BUDGET), 'converting the result to text', -1);
+    if (text) charge(ctx, text(value, room(ctx)), 'converting the result to text', -1);
     return value;
   } finally {
     leave(ctx, outer, meter);

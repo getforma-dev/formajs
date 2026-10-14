@@ -511,8 +511,8 @@
   "tags": [
    "security"
   ],
-  "find": "    for (const a of args) charge(ctx, weigh(a, REACH), name, at);",
-  "replace": "    for (const a of args) weigh(a, REACH);",
+  "find": "    for (const a of args) charge(ctx, weigh(a, room(ctx)), name, at);",
+  "replace": "    for (const a of args) weigh(a, room(ctx));",
   "note": "a native's arguments are not charged as text, so String(list) can build hundreds of MB before any check (DR-16). Verified by: src/expr/__tests__/native-cost.test.ts > \"every allowlisted native refuses an argument heavier than the budget before it runs\""
  },
  {
@@ -521,8 +521,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (cost) charge(ctx, cost(recv, args, REACH), name, at);",
-  "replace": "  if (cost) cost(recv, args, REACH);",
+  "find": "  if (cost) charge(ctx, cost(recv, args, room(ctx)), name, at);",
+  "replace": "  if (cost) cost(recv, args, room(ctx));",
   "note": "no cost row is charged: Array.from({length: 12000000}) builds 139 MB in a 300 ms task before the refusal (audit run 4, DR-16). Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\"; Verified by: src/expr/__tests__/native-preflight.test.ts > \"is refused before the native allocates\""
  },
  {
@@ -1940,8 +1940,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, REACH), name, at);",
-  "replace": "    for (const a of args) charge(ctx, weigh(a, REACH), name, at);",
+  "find": "    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, room(ctx)), name, at);",
+  "replace": "    for (const a of args) charge(ctx, weigh(a, room(ctx)), name, at);",
   "note": "a string method's string argument is charged as converted text again, so `s.includes(q)` pays q in full on every call and the non-Latin search is refused (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"a string method reads a string argument for a thirty-second of a unit a character\""
  },
  {
@@ -1950,8 +1950,8 @@
   "tags": [
    "security"
   ],
-  "find": "    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, REACH), name, at);",
-  "replace": "    for (const a of args) charge(ctx, typeof a === 'string' ? 0 : weigh(a, REACH), name, at);",
+  "find": "    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, room(ctx)), name, at);",
+  "replace": "    for (const a of args) charge(ctx, typeof a === 'string' ? 0 : weigh(a, room(ctx)), name, at);",
   "note": "a string method's non-string argument is still weighed, but a string one costs nothing however long (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"a string method reads a string argument for a thirty-second of a unit a character\""
  },
  {
@@ -2080,18 +2080,38 @@
   "tags": [
    "correctness"
   ],
-  "find": "    throw over(ctx, err, !(units <= REACH));",
-  "replace": "    throw over(ctx, err);",
+  "find": "    throw over(err, ctx.unitsBefore && units <= LIMITS.ALLOC_BUDGET);",
+  "replace": "    throw over(err, ctx.unitsBefore);",
   "note": "a charge larger than the whole budget is deferred when the task had spent anything, so it is priced again in every retry tick before it is reported (FORMA-028 review, S2). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a binding too heavy for any task is priced once and reported once\""
  },
  {
-  "id": "expr/cost-counted-to-room-left",
+  "id": "expr/cost-counted-to-whole-budget",
   "file": "src/expr/interp.ts",
   "tags": [
    "correctness"
   ],
-  "find": "const REACH = LIMITS.ALLOC_BUDGET;",
-  "replace": "const REACH = LIMITS.ALLOC_BUDGET / 4;",
-  "note": "a cost is counted only part of the way to the budget, so an argument heavier than any task can hold reads as one that might fit: `s.includes(list)` with a 300,000-unit list is answered (FORMA-028 review, S2). Verified by: src/expr/__tests__/string-growth.test.ts > \"a string method reads a string argument for a thirty-second of a unit a character\""
+  "find": "  return LIMITS.ALLOC_BUDGET - ctx.cost;",
+  "replace": "  return LIMITS.ALLOC_BUDGET;",
+  "note": "a cost is counted to the whole budget, so every binding waiting for the next task weighs its value in full again in every retry tick: twenty such bindings made a 53 ms task at 4x (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"bindings that each weigh most of the budget are refused cheaply while they wait\""
+ },
+ {
+  "id": "expr/units-deferral-counts-steps",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "unitsBefore: cost > 0 };",
+  "replace": "unitsBefore: steps + cost > 0 };",
+  "note": "an allocation refusal is deferred because the task spent steps, though steps do not change whether a charge fits, so a binding over the budget on its own is priced again in the next task before it is reported (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"an allocation refusal after a task spent only steps is reported at once\""
+ },
+ {
+  "id": "runtime/deferral-leaves-room",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  meter.cost = LIMITS.ALLOC_BUDGET;\n  spend();",
+  "replace": "  spend();",
+  "note": "after a binding is deferred the room it did not fit stays open, so each later binding a little heavier than it weighs its value up to that room before it is refused: twenty made a 57 ms task at 4x (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"bindings that each weigh most of the budget are refused cheaply while they wait\""
  }
 ]

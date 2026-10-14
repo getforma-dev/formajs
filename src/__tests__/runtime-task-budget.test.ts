@@ -117,6 +117,66 @@ describe('the task budget (FORMA-028)', () => {
     expect(priced).toBe(1);
   });
 
+  it('bindings that each weigh most of the budget are refused cheaply while they wait', async () => {
+    // FORMA-173, from formajs#26's final review: pricing ran to the whole
+    // budget, so every binding still waiting weighed its value in full again
+    // in every retry tick (twenty such bindings: a 53 ms task at 4x). Each
+    // list here is read through a proxy that counts its element reads. A
+    // binding that renders reads its list twice, once to weigh it and once
+    // for String(); one that waits should read none of it.
+    const reads = { n: 0 };
+    const counted = (n: number): number[] => new Proxy(Array.from({ length: n }, (_, i) => i), {
+      get(target, key, receiver) {
+        if (typeof key === 'string' && /^\d+$/.test(key)) reads.n++;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const widget = async (state: Record<string, unknown>, html: string): Promise<string[]> => {
+      container.innerHTML = `<div data-forma-state='${JSON.stringify(Object.fromEntries(Object.keys(state).map((k) => [k, null])))}'>${html}</div>`;
+      runtime.mount(container);
+      for (const [k, v] of Object.entries(state)) runtime.setScopeValue(container.firstElementChild!, k, v);
+      await settle(60);
+      const out = texts();
+      runtime.unmount(container);
+      return out;
+    };
+    const p = (expr: string): string => `<p data-out data-text="{${expr} === null ? '' : ${expr}}">server</p>`;
+    // The review's widgets: ten, then twenty bindings of one 60,000-number
+    // list (240,000 units). One renders a task; the others wait.
+    for (const count of [10, 20]) {
+      reads.n = 0;
+      const out = await widget({ v: counted(60_000) }, p('v').repeat(count));
+      expect(out.every((t) => t.length === 348_889), `${count}: every binding renders`).toBe(true);
+      expect(reads.n, `${count}: element reads`).toBe(count * 2 * 60_000);
+    }
+    // 5,000 units spent first, then twenty bindings of 248,000 each: every
+    // one a little heavier than the room left (245,000). Only the first
+    // refusal in a task reads its list (weighing queues every element); the
+    // task's allocation then counts as spent, and the other nineteen read
+    // nothing. In later tasks one binding renders first, and the room left
+    // (2,000) is shorter than a list, which is then not walked at all.
+    reads.n = 0;
+    const out = await widget({ a: Array.from({ length: 1250 }, (_, i) => i), b: counted(62_000) }, p('a') + p('b').repeat(20));
+    expect(out.slice(1).every((t) => t.length === 360_889)).toBe(true);
+    expect(reads.n).toBe((20 * 2 + 1) * 62_000);
+    expect(codes()).toEqual([]);
+  });
+
+  it('an allocation refusal after a task spent only steps is reported at once', async () => {
+    // Steps spent do not change whether a charge fits: with no units spent
+    // before it, a binding's own charges were counted against the whole
+    // budget, so a refusal is final, not deferred to be priced again.
+    container.innerHTML = `<div data-forma-state='{}'>
+      <p data-out data-text="{1 + 2 * 3}">server</p>
+      <p data-out data-text="{${spending(150_000)} + ${spending(150_000)}}">server</p>
+    </div>`;
+    runtime.mount(container);
+    expect(texts()).toEqual(['7', 'server']);
+    expect(codes()).toEqual(['FORMA_E_BUDGET']);
+    await settle();
+    expect(runtime.getDiagnostics().map((d) => [d.code, d.count])).toEqual([['FORMA_E_BUDGET', 1]]);
+  });
+
   it('a chain of computeds spends one budget between them', async () => {
     // `b` spends 150,000 units and then reads `a`, which spends 150,000 more.
     // With a budget each (2.0.3), the binding answered in one task that spent

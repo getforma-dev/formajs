@@ -165,6 +165,7 @@ import {
   compileHandler,
   evaluateExpression,
   GROW,
+  LIMITS,
   hostFn,
   hostObject,
   isExprError,
@@ -1227,10 +1228,19 @@ function nextTask(): void {
   });
 }
 
-/** Re-run the binding (or computed) being evaluated in the next task. */
+/**
+ * Re-run the binding (or computed) being evaluated in the next task. Its charge
+ * did not fit the room left, so the rest of this task's allocation counts as
+ * spent: every later binding in the task is refused at its first unit, at
+ * almost no cost, instead of each weighing its value up to the room left
+ * (FORMA-173: twenty bindings each a little heavier than that room made one
+ * 57 ms task). One that charges nothing still renders now.
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "bindings that each weigh most of the budget are refused cheaply while they wait"
+ */
 function later(): void {
   retries();
   deferred = true;
+  meter.cost = LIMITS.ALLOC_BUDGET;
   spend();
 }
 

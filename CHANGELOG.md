@@ -46,9 +46,16 @@ All notable changes to this project will be documented in this file.
   alone at the start of the next task, so its refusal is not cached as its
   answer. A handler cannot be re-run, so an event the runtime has not seen
   (and a `data-model` input) starts a fresh meter, and the handlers one event
-  reaches as it bubbles share it. A charge larger than the whole budget is
-  refused and reported at once, whatever the task had spent: no later task
-  could hold it, so it is not priced again in each retry.
+  reaches as it bubbles share it. A binding refused for allocation waits for
+  the next task only if the task had spent allocation units before it (steps
+  do not change whether a charge fits) and no single charge of it was larger
+  than the whole budget; otherwise it is reported at once. Once one waits, the
+  rest of that task's allocation counts as spent: every later binding that
+  charges units waits too, refused at its first unit, so a waiting binding
+  costs almost nothing however heavy its value (FORMA-173: ten or twenty
+  bindings each weighing most of the budget made tasks of up to 53 to 65 ms
+  p99 at 4x when every waiting binding weighed its value in full in every
+  retry; now at most 17 ms).
 - **The runtime's own conversions of a result to text are charged before
   they run** (FORMA-025). `data-text`, `data-bind:*`, `data-model`,
   `data-persist`, and a `data-list` row's `{item.x}` placeholders and
@@ -126,7 +133,9 @@ All notable changes to this project will be documented in this file.
   - A default `sort()` of 10-character strings past about 6,280, counting
     everything else the evaluation does (numbers: about 6,400, as before).
   - Bindings that together pass the budget in one task render over several
-    tasks: until its turn, a binding shows what it showed before.
+    tasks: until its turn, a binding shows what it showed before. Once one
+    waits, every later binding in that task that charges allocation units
+    waits too; one that charges nothing renders at once.
   - `data-forma-expr-budget` now sets the step budget of a task (of an event,
     for a handler and the bindings it updates), not of each evaluation. A page
     that set it low renders its bindings over more tasks than before, where

@@ -85,8 +85,10 @@ export interface EvalCtx {
   budget: number;
   /** Units charged to `LIMITS.ALLOC_BUDGET`, counted the same way. */
   cost: number;
-  /** Whether part of the budget was already spent when this evaluation began. */
-  defer: boolean;
+  /** Whether the task had spent steps before this evaluation began. */
+  stepsBefore: boolean;
+  /** Whether it had spent allocation units: steps spent do not change whether a charge fits. */
+  unitsBefore: boolean;
 }
 
 /** Prototype of a plain object literal, captured once. */
@@ -117,7 +119,7 @@ export function makeCtx(scope: ScopeLike, meter?: Meter | null): EvalCtx {
   const base = cur ?? meter;
   const steps = base ? base.steps : 0;
   const cost = base ? base.cost : 0;
-  return { scope, frame: null, steps, budget: stepBudget, cost, defer: steps + cost > 0 };
+  return { scope, frame: null, steps, budget: stepBudget, cost, stepsBefore: steps > 0, unitsBefore: cost > 0 };
 }
 
 /** Make `ctx` the running evaluation; returns the one it was nested in. */
@@ -141,17 +143,17 @@ export function leave(ctx: EvalCtx, outer: EvalCtx | null, meter?: Meter | null)
 }
 
 /**
- * A budget refusal, marked for a retry when the evaluation did not start
- * fresh, unless it is `final`: a charge no task could hold.
+ * A budget refusal, marked for a retry in the next task when that budget had
+ * been spent in part before this evaluation began (FORMA-173: per budget).
  */
-function over(ctx: EvalCtx, err: FormaExprError, final = false): FormaExprError {
-  err.defer = ctx.defer && !final;
+function over(err: FormaExprError, defer: boolean): FormaExprError {
+  err.defer = defer;
   return err;
 }
 
 function step(ctx: EvalCtx, at: number): void {
   if (++ctx.steps > ctx.budget) {
-    throw over(ctx, exprError('FORMA_E_BUDGET', `expression exceeded its ${ctx.budget}-step budget`, at));
+    throw over(exprError('FORMA_E_BUDGET', `expression exceeded its ${ctx.budget}-step budget`, at), ctx.stepsBefore);
   }
 }
 
@@ -161,23 +163,26 @@ function step(ctx: EvalCtx, at: number): void {
 const NAMES: Record<string, Record<string, string>> = Object.create(null) as Record<string, Record<string, string>>;
 
 /**
- * How far a cost is counted before it stops: the whole budget, not the room
- * left in this task. A cost counted only to the room left reads just past
- * that room whatever the call weighs, and a charge past the whole budget can
- * never fit in any task, so it is refused for good (`charge`); counted to the
- * room left, it would look like one that fits in a fresher task, and be
- * deferred and priced again in every retry until it ran first.
- * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding too heavy for any task is priced once and reported once"
+ * Units left in the task's allocation budget, which is as far as a cost is
+ * counted. A binding that does not fit is priced only that far: once a task
+ * has spent its budget, the bindings waiting for the next one are refused at
+ * almost no cost, however heavy their values (FORMA-173). A charge refused
+ * with no units spent before it was counted against the whole budget, so its
+ * refusal is final (`charge`).
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "bindings that each weigh most of the budget are refused cheaply while they wait"
  */
-const REACH = LIMITS.ALLOC_BUDGET;
+export function room(ctx: EvalCtx): number {
+  return LIMITS.ALLOC_BUDGET - ctx.cost;
+}
 
 /**
  * Charge `units` to the evaluation, or refuse with `FORMA_E_BUDGET`. A NaN or
  * negative charge is refused too, so a cost that cannot be read fails closed.
  * A refused charge is taken back: the call it priced never runs, so it does
- * not count against the task's meter. One larger than the whole budget (or
- * unreadable) is final: no later task could hold it, so it is reported now,
- * not retried (FORMA-028 review, S2).
+ * not count against the task's meter. It is retried in the next task only if
+ * the task had spent allocation units before this evaluation, and is not
+ * larger than the whole budget (or unreadable): no later task could hold that,
+ * so it is reported now (FORMA-028 review, S2).
  * Verified by: src/expr/__tests__/native-cost.test.ts > "the budget is per evaluation and cumulative across its calls"
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding too heavy for any task is priced once and reported once"
  */
@@ -186,7 +191,7 @@ export function charge(ctx: EvalCtx, units: number, what: string, at: number): v
   if (!(units >= 0 && (ctx.cost += units) <= LIMITS.ALLOC_BUDGET)) {
     ctx.cost = spent;
     const err = exprError('FORMA_E_BUDGET', `${what} would exceed the ${LIMITS.ALLOC_BUDGET}-unit allocation budget`, at);
-    throw over(ctx, err, !(units <= REACH));
+    throw over(err, ctx.unitsBefore && units <= LIMITS.ALLOC_BUDGET);
   }
 }
 
@@ -204,12 +209,12 @@ function preflight(ctx: EvalCtx, name: string, recv: unknown, args: unknown[], a
     // filler) as it is, at about a nanosecond a character: it converts only
     // the others. Its row charges what the argument makes it build.
     // Verified by: src/expr/__tests__/string-growth.test.ts > "a string method reads a string argument for a thirty-second of a unit a character"
-    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, REACH), name, at);
+    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, room(ctx)), name, at);
   } else if (!DATA_ARGS.has(name)) {
-    for (const a of args) charge(ctx, weigh(a, REACH), name, at);
+    for (const a of args) charge(ctx, weigh(a, room(ctx)), name, at);
   }
   const cost = Object.hasOwn(COSTS, name) ? COSTS[name]! : null;
-  if (cost) charge(ctx, cost(recv, args, REACH), name, at);
+  if (cost) charge(ctx, cost(recv, args, room(ctx)), name, at);
 }
 
 /**
@@ -219,7 +224,7 @@ function preflight(ctx: EvalCtx, name: string, recv: unknown, args: unknown[], a
  * Verified by: src/expr/__tests__/native-cost.test.ts > "an operator does not convert a value heavier than the budget"
  */
 function coerce(ctx: EvalCtx, v: unknown, at: number): void {
-  if (typeof v === 'object' && v !== null) charge(ctx, weigh(v, REACH), 'converting a value to text', at);
+  if (typeof v === 'object' && v !== null) charge(ctx, weigh(v, room(ctx)), 'converting a value to text', at);
 }
 
 /**

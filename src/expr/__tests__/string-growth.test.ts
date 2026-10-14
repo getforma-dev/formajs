@@ -10,11 +10,16 @@
  * holds for comparing long strings and for parsing one as a number.
  *
  * These run in Node, where a refused case still does the work the budget
- * allows before the refusal: up to about 30 ms unthrottled, more under a CI
- * runner's coverage instrumentation (52 ms once on Node 20). N3's 50 ms at 4x
- * is the browser's, asserted in e2e/expr-cost.spec.ts and measured by
- * scripts/measure-task-budget.mjs. Here a ceiling of 200 ms only separates a
- * bounded refusal from the seconds 2.0.3 took (0.6 s to 11 s for these).
+ * allows before the refusal: tens of milliseconds, more on a loaded machine
+ * or under a CI runner's coverage instrumentation (52 ms once on Node 20).
+ * Here a ceiling of 200 ms only separates a bounded refusal from the seconds
+ * 2.0.3 took (0.6 s to 11 s for these). In a browser:
+ * - the four round-2 cases are asserted under 50 ms, unthrottled, in all
+ *   three engines by e2e/expr-cost.spec.ts ("each round-2 rope case is
+ *   refused before the long task"), and measured at 4x by
+ *   scripts/measure-task-budget.mjs (R2: at most 27 ms p99);
+ * - the comparison and parsing cases have no browser assertion: only that
+ *   script measures them (S1 and S2: at most 15 ms p99 at 4x).
  */
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '../ast';
