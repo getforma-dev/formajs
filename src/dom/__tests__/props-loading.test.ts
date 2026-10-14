@@ -134,4 +134,54 @@ describe('props loading', () => {
     // getAttribute returns the raw string which JSON.parse handles
     expect(receivedProps).toEqual({ label: 'Say "hello"' });
   });
+
+  it('props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS', () => {
+    // 2.0.1's shallow strip used `in`, which throws on these, so the island
+    // was marked error; an array passed. The deep strip throws on nothing, so
+    // activation checks the type, and says why with a code.
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
+    const inline = ['null', '7', '0', '"text"', 'true', 'false'];
+    const shell = (i: number) =>
+      `<div data-forma-island="${i}" data-forma-component="Comp" data-forma-status="pending"><p>${i}</p></div>`;
+    document.body.innerHTML = Array.from({ length: 10 }, (_, i) => shell(i)).join('') +
+      '<script id="__forma_islands" type="application/json">' +
+      '{"6":null,"7":42,"9":{"ok":true,"nested":{"__proto__":{"x":1}}}}</script>';
+    const island = (i: number) => document.querySelector(`[data-forma-island="${i}"]`)!;
+    inline.forEach((json, i) => island(i).setAttribute('data-forma-props', json));
+    island(8).setAttribute('data-forma-props', '[1,{"__proto__":{"x":1},"a":2}]');
+
+    const received = new Map<number, unknown>();
+    activateIslands({
+      Comp: (el, props) => {
+        received.set(Number(el.getAttribute('data-forma-island')), props);
+        return el;
+      },
+    });
+
+    // Six inline payloads and two shared ones: error, and the island never ran.
+    for (let i = 0; i < 8; i++) {
+      expect(island(i).getAttribute('data-forma-status'), `island ${i}`).toBe('error');
+      expect(received.has(i), `island ${i} ran`).toBe(false);
+    }
+    // Two-sided: an array reaches its island, as in 2.0.1, stripped at every
+    // depth; an object from the shared block too.
+    expect(island(8).getAttribute('data-forma-status')).toBe('active');
+    expect(received.get(8)).toEqual([1, { a: 2 }]);
+    expect(Object.getOwnPropertyNames((received.get(8) as unknown[])[1])).toEqual(['a']);
+    expect(island(9).getAttribute('data-forma-status')).toBe('active');
+    expect(received.get(9)).toEqual({ ok: true, nested: {} });
+    // Each refusal is logged once, with its code, the JSON type and the island.
+    const logged = errorSpy.mock.calls.map((call) => String(call[0]));
+    expect(logged.filter((m) => m.includes('FORMA_E_ISLAND_PROPS'))).toHaveLength(8);
+    expect(logged).toContain(
+      '[forma] FORMA_E_ISLAND_PROPS: island props must be a JSON object or array, not null (island "Comp", id=0)',
+    );
+    expect(logged).toContain(
+      '[forma] FORMA_E_ISLAND_PROPS: island props must be a JSON object or array, not a number (island "Comp", id=7)',
+    );
+    expect(logged).toContain(
+      '[forma] FORMA_E_ISLAND_PROPS: island props must be a JSON object or array, not a string (island "Comp", id=3)',
+    );
+    errorSpy.mockRestore();
+  });
 });

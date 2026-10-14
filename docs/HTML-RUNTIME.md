@@ -24,7 +24,7 @@ Verified by `src/__tests__/readme-examples.test.ts` > "the intro counter works w
 ## Everything in one file
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.2/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.3/dist/formajs-runtime.global.js"></script>
 
 <div data-forma-state='{
   "query": "",
@@ -100,7 +100,12 @@ Four properties, each mechanical:
   `['constructor']`, `[k]` from server JSON, `['cons' + 'tructor']` — is the
   same case.
 - **No loops, no recursion, no function values that escape their callback
-  slot.** Every expression terminates by construction; budgets bound cost.
+  slot.** Every expression terminates by construction; budgets bound cost. A
+  built-in call is charged before it runs, against 250,000 units (one unit is
+  about the cost of an array slot) per evaluation, so
+  `Array.from({length: 12000000})` is refused with `FORMA_E_BUDGET` without
+  building anything, while a search that lowercases 9,000 records of ASCII
+  text is answered (SECURITY.md, "Termination and budgets").
 
 **Value expressions** — `data-text`, `data-show`, `data-if`, `data-list`,
 `data-bind:*`, `data-class:*`, and the right-hand side of `data-computed` —
@@ -155,7 +160,7 @@ The hardened build is the same runtime under a second, tree-shaken bundling. It
 is no longer a stronger guarantee — every build is equally eval-free:
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.2/dist/formajs-runtime-hardened.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.3/dist/formajs-runtime-hardened.global.js"></script>
 ```
 
 Verified by `src/__tests__/build-artifacts.test.ts` > "no build emits new Function or a with() scope wrapper"

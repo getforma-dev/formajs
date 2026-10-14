@@ -5,9 +5,29 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
+  "find": "    if (isIslandPropsError(err) || isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
   "replace": "    if (__DEV__)",
   "note": "an island failed by FORMA_E_HYDRATE_NODE leaves no coded log line naming it"
+ },
+ {
+  "id": "activate/props-error-uncoded",
+  "file": "src/dom/activate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (isIslandPropsError(err) || isHydrateNodeError(err))",
+  "replace": "    if (isHydrateNodeError(err))",
+  "note": "an island refused for its props type is marked error with no FORMA_E_ISLAND_PROPS line in a production build. Verified by: src/dom/__tests__/props-loading.test.ts > \"props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS\""
+ },
+ {
+  "id": "activate/props-inline-unstripped",
+  "file": "src/dom/activate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "checkProps(sanitizePropsDeep(JSON.parse(inline)))",
+  "replace": "checkProps(JSON.parse(inline))",
+  "note": "inline data-forma-props reach the island with __proto__ / constructor / prototype at every depth (DR-21). Verified by: src/dom/__tests__/activate-isolation.test.ts > \"island activation strips forbidden keys at every depth, inline and shared, with no opt-out\""
  },
  {
   "id": "activate/props-not-sanitized",
@@ -18,6 +38,36 @@
   "find": "const FORBIDDEN_PROP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);",
   "replace": "const FORBIDDEN_PROP_KEYS = new Set<string>([]);",
   "note": "SECURITY.md 'Island props sanitized' — stripping removed"
+ },
+ {
+  "id": "activate/props-reviver-recursive",
+  "file": "src/dom/activate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "checkProps(sanitizePropsDeep(JSON.parse(inline)))",
+  "replace": "checkProps(JSON.parse(inline, (k: string, v: unknown) => (FORBIDDEN_PROP_KEYS.has(k) ? undefined : v)))",
+  "note": "strip with a JSON.parse reviver: V8 applies it recursively and overflows near 5,000 levels, so deep props fail the island. Verified by: src/dom/__tests__/activate-isolation.test.ts > \"island props nested 10,000 deep are parsed and stripped\""
+ },
+ {
+  "id": "activate/props-shared-unstripped",
+  "file": "src/dom/activate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "sanitizePropsDeep(JSON.parse(scriptBlock.textContent ?? ''))",
+  "replace": "JSON.parse(scriptBlock.textContent ?? '')",
+  "note": "props from the shared __forma_islands block reach the island with nested pollution keys (DR-21). Verified by: src/dom/__tests__/activate-isolation.test.ts > \"island activation strips forbidden keys at every depth, inline and shared, with no opt-out\""
+ },
+ {
+  "id": "activate/props-type-unchecked",
+  "file": "src/dom/activate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (props === null || typeof props !== 'object') {",
+  "replace": "  if (false) {",
+  "note": "props that are null, a number, a string or a boolean reach the island, where 2.0.1 marked it error (FORMA-004 review). Verified by: src/dom/__tests__/props-loading.test.ts > \"props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS\""
  },
  {
   "id": "batch/no-batching",
@@ -124,6 +174,396 @@
   "find": "    if (isUnsafeAttrWrite(el.localName, key, strVal)) {\n      if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n      el.removeAttributeNS(XLINK_NS, localName);\n      return;\n    }",
   "replace": "",
   "note": "reactive xlink:href writes javascript: URLs"
+ },
+ {
+  "id": "expr/array-index-write-unbounded",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "kind === 'array' && /^\\d+$/.test(key) &&\n      Number(key) >= LIMITS.ALLOC_BUDGET && Number(key) >= (recv as unknown[]).length",
+  "replace": "false",
+  "note": "a handler can write items[4294967294] or items[999999], giving the array that length of holes for a scan or data-list to visit (review B1, R3). Verified by: src/expr/__tests__/native-cost.test.ts > \"a handler cannot grow an array past the allocation budget\""
+ },
+ {
+  "id": "expr/budget-edge-off-by-one",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "<= LIMITS.ALLOC_BUDGET)) {",
+  "replace": "< LIMITS.ALLOC_BUDGET)) {",
+  "note": "a call that costs exactly the remaining budget is refused. Verified by: src/expr/__tests__/native-cost.test.ts > \"the budget is per evaluation and cumulative across its calls\""
+ },
+ {
+  "id": "expr/budget-not-cumulative",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "(ctx.cost += units) <= LIMITS.ALLOC_BUDGET",
+  "replace": "(ctx.cost = units) <= LIMITS.ALLOC_BUDGET",
+  "note": "each call is checked alone, so one evaluation of many calls just under the budget spends many budgets (DR-16). Verified by: src/expr/__tests__/native-cost.test.ts > \"the budget is per evaluation and cumulative across its calls\""
+ },
+ {
+  "id": "expr/compound-assign-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    coerce(ctx, current, at);\n    coerce(ctx, operand, at);\n",
+  "replace": "",
+  "note": "x += list in a handler converts an array of any text weight through join. Verified by: src/expr/__tests__/native-cost.test.ts > \"an operator does not convert a value heavier than the budget\""
+ },
+ {
+  "id": "expr/computed-key-unbounded",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "if (typeof raw === 'object' && raw !== null && weigh(raw, MAX_KEY_LENGTH) > MAX_KEY_LENGTH) {",
+  "replace": "if (false) {",
+  "note": "items[list] converts the array to a key through join before the length check. Verified by: src/expr/__tests__/native-cost.test.ts > \"an operator does not convert a value heavier than the budget\""
+ },
+ {
+  "id": "expr/concat-args-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  for (const x of a) n += isArray(x) ? x.length : 1;\n",
+  "replace": "",
+  "note": "concat is charged its receiver only, so concatenating a huge argument array is free. Verified by: src/expr/__tests__/native-cost.test.ts > \"a native that reads its argument as data is charged its element count, not its text\""
+ },
+ {
+  "id": "expr/cost-array-from-length-ignored",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "text > room ? text : text + count((x as { length?: unknown } | null)?.length)",
+  "replace": "text > room ? text : text",
+  "note": "Array.from of an array-like is charged nothing for the length it is asked for (audit run 4). Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\"; Verified by: src/expr/__tests__/native-preflight.test.ts > \"is refused before the native allocates\""
+ },
+ {
+  "id": "expr/cost-array-search-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((r, a, room) => len(r) / 16 + weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');",
+  "replace": "rows((r, a, room) => weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');",
+  "note": "includes/indexOf/lastIndexOf scan their receiver for free, so repeating one over a large array is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-flat-depth-ignored",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "(a[0] === undefined ? 1 : count(a[0])) + 1), 'array.flat');",
+  "replace": "(a[0] === undefined ? 1 : count(a[0])) - 1), 'array.flat');",
+  "note": "flat is charged without expanding its receiver, so 1,000 references to a 1,000-element array flatten to a million. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-object-keys-unweighted",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((_, a, room) => 16 * size(a[0], room / 16), 'Object.entries Object.keys Object.values');",
+  "replace": "rows((_, a, room) => size(a[0], room), 'Object.entries Object.keys Object.values');",
+  "note": "Object.keys/values/entries are charged one unit per key, a fraction of their measured cost. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-repeat-count-ignored",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((r, a) => len(r) * count(a[0]), 'string.repeat');",
+  "replace": "rows((r) => len(r), 'string.repeat');",
+  "note": "repeat is charged its receiver only, so a 1,000-character string repeated 10,000 times passes. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-replaceall-one-occurrence",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "len(r) + (len(r) + 1) * grow(r, a)",
+  "replace": "len(r) + grow(r, a)",
+  "note": "replaceAll is charged as one replacement, so inserting at every position of a 250,000-character string passes. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-scan-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((r) => len(r) / 32, 'string.includes string.indexOf string.lastIndexOf');",
+  "replace": "rows(() => 0, 'string.includes string.indexOf string.lastIndexOf');",
+  "note": "string searches (includes, indexOf, lastIndexOf) are free, so repeating one over a large receiver is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-sliced-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((r) => len(r) / 64, 'string.endsWith string.slice string.startsWith string.substring');",
+  "replace": "rows(() => 0, 'string.endsWith string.slice string.startsWith string.substring');",
+  "note": "slice, substring, startsWith and endsWith are free, so flattening a long concatenated receiver over and over is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-sort-linear",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return per * log2(len(r) + 1);",
+  "replace": "  return per;",
+  "note": "sort is charged per element, not per comparison, so a default sort of 30,000 elements passes. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-sparse-scan-unrowed",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((r) => len(r), 'array.every array.reduce array.some');\n",
+  "replace": "",
+  "note": "every/some/reduce have no row: on a sparse array they visit every hole without a callback, so no step is charged (review B1). Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-trim-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((r) => len(r) / 16, 'string.trim string.trimEnd string.trimStart');",
+  "replace": "rows(() => 0, 'string.trim string.trimEnd string.trimStart');",
+  "note": "trim is free, so trimming a long whitespace run over and over is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/costly-letterlike-too-broad",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
+  "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u214f]/);",
+  "note": "the case-mapped letterlike symbols (Ω U+2126, K U+212A, Å U+212B) are charged as symbols that map to themselves. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+ },
+ {
+  "id": "expr/costly-set-too-broad",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
+  "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u0370-\\u03ff\\u2000-\\u20cf\\u2100-\\u2125]/);",
+  "note": "Greek letters, which measured up to 34 ns a character to case-map, are charged as Latin-1. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+ },
+ {
+  "id": "expr/costly-set-too-narrow",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
+  "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff]/);",
+  "note": "one curly apostrophe, dash, € or ™ puts a record's lowercasing in the costly tier, refusing an ordinary English search past about 1,700 records (review R4-1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+ },
+ {
+  "id": "expr/data-args-charged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (!DATA_ARGS.has(name)) {",
+  "replace": "  if (DATA_ARGS) {",
+  "note": "predicates that never convert their argument (Boolean, Array.isArray, Number.isFinite) are charged its text, so rows.filter(Boolean) over large rows is refused. Verified by: src/expr/__tests__/native-cost.test.ts > \"a predicate native reads a large argument for free\""
+ },
+ {
+  "id": "expr/data-args-text-charged",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  'Array.from', 'Object.entries', 'Object.keys', 'Object.values',\n  'array.concat', 'array.includes', 'array.indexOf', 'array.lastIndexOf',\n",
+  "replace": "",
+  "note": "natives that read arguments as data are charged the arguments' text, so Object.keys(byId) over 6,000 records is refused (review S3). Verified by: src/expr/__tests__/native-cost.test.ts > \"a native that reads its argument as data is charged its element count, not its text\""
+ },
+ {
+  "id": "expr/dom-method-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  // A DOM method converts its arguments to strings.\n  preflight(ctx, `${host.label}.${method}`, undefined, args, at);\n",
+  "replace": "",
+  "note": "a DOM host method's arguments are converted uncharged: $el.setAttribute('title', list) joins a list of any text weight (review S5). Verified by: src/expr/__tests__/native-cost.test.ts > \"a DOM host method does not receive an argument heavier than the budget\""
+ },
+ {
+  "id": "expr/flatmap-results-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (Array.isArray(out)) charge(ctx, out.length, 'flatMap', at);\n",
+  "replace": "",
+  "note": "the arrays a flatMap callback returns are copied uncharged. Verified by: src/expr/__tests__/native-cost.test.ts > \"flatMap charges each array its callback returns\""
+ },
+ {
+  "id": "expr/fn-callback-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      preflight(ctx, value.label, undefined, args, at);\n",
+  "replace": "",
+  "note": "rows.map(String) converts every row uncharged. Verified by: src/expr/__tests__/native-cost.test.ts > \"an operator does not convert a value heavier than the budget\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"a predicate native reads a large argument for free\""
+ },
+ {
+  "id": "expr/host-write-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (isHost(recv)) coerce(ctx, value, target.i);\n",
+  "replace": "",
+  "note": "$el.textContent = list converts an array of any text weight in the DOM. Verified by: src/expr/__tests__/native-cost.test.ts > \"an operator does not convert a value heavier than the budget\""
+ },
+ {
+  "id": "expr/loose-equality-charges-all",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "!((op === '==' || op === '!=') && (l == null || r == null || typeof l === typeof r))",
+  "replace": "true",
+  "note": "x != null and object-to-object == are charged the text of an object they never convert, refusing ordinary code 2.0.1 answered (review B2). Verified by: src/expr/__tests__/native-cost.test.ts > \"loose equality charges only an operand it converts\""
+ },
+ {
+  "id": "expr/loose-equality-charges-none",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "!((op === '==' || op === '!=') && (l == null || r == null || typeof l === typeof r))",
+  "replace": "!(op === '==' || op === '!=')",
+  "note": "== and != against a primitive convert an object of any text weight through join, uncharged. Verified by: src/expr/__tests__/native-cost.test.ts > \"loose equality charges only an operand it converts\""
+ },
+ {
+  "id": "expr/lowercase-wide-as-latin1",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "return n / 32 > room || !costly(r as string) ? n / 32 : n / 2;",
+  "replace": "return n / 32;",
+  "note": "lowercasing costly text (Greek, Cyrillic, Turkish İ, Latin Extended) is charged as Latin-1, a sixteenth of its measured worst case (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\""
+ },
+ {
+  "id": "expr/object-keys-of-object-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (++n > room) break;\n",
+  "replace": "",
+  "note": "Object.keys/values/entries of a plain object are charged nothing, whatever its key count. Verified by: src/expr/__tests__/native-cost.test.ts > \"a native that reads its argument as data is charged its element count, not its text\""
+ },
+ {
+  "id": "expr/operator-coercion-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        coerce(ctx, l, node.i);\n        coerce(ctx, r, node.i);\n",
+  "replace": "",
+  "note": "'' + list, list < 1 and list == x convert an array of any text weight through join. Verified by: src/expr/__tests__/native-cost.test.ts > \"an operator does not convert a value heavier than the budget\""
+ },
+ {
+  "id": "expr/preflight-args-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    for (const a of args) charge(ctx, weigh(a, room(ctx)), name, at);",
+  "replace": "    for (const a of args) weigh(a, room(ctx));",
+  "note": "a native's arguments are not charged as text, so String(list) can build hundreds of MB before any check (DR-16). Verified by: src/expr/__tests__/native-cost.test.ts > \"every allowlisted native refuses an argument heavier than the budget before it runs\""
+ },
+ {
+  "id": "expr/preflight-cost-row-skipped",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (cost) charge(ctx, cost(recv, args, room(ctx)), name, at);",
+  "replace": "  if (cost) cost(recv, args, room(ctx));",
+  "note": "no cost row is charged: Array.from({length: 12000000}) builds 139 MB in a 300 ms task before the refusal (audit run 4, DR-16). Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\"; Verified by: src/expr/__tests__/native-preflight.test.ts > \"is refused before the native allocates\""
+ },
+ {
+  "id": "expr/replace-receiver-insert-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "(times('$`') + times(\"$'\")) * len(r)",
+  "replace": "0",
+  "note": "a $` or $' replacement inserting the receiver at every position is charged as its two characters, so replaceAll grows quadratically (review S4). Verified by: src/expr/__tests__/native-cost.test.ts > \"a $ in a replacement is charged only for what it can insert\""
+ },
+ {
+  "id": "expr/split-pieces-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "return n / 32 + (a[1] === undefined ? pieces : min(pieces, toNumber(a[1]) >>> 0));",
+  "replace": "return n / 32;",
+  "note": "split is charged its scan only, not a slot per piece, so splitting a long string into characters is nearly free. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/template-coercion-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        coerce(ctx, value, node.i);\n",
+  "replace": "",
+  "note": "a template literal converts an array of any text weight through join. Verified by: src/expr/__tests__/native-cost.test.ts > \"an operator does not convert a value heavier than the budget\""
+ },
+ {
+  "id": "expr/uppercase-tiers-flattened",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "costly(r as string) ? n : nonAscii(r as string) ? n / 2 : n / 16",
+  "replace": "n / 16",
+  "note": "uppercasing Latin-1 or wider text is charged as ASCII, though it measured up to 64 ns a character (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+ },
+ {
+  "id": "expr/weigh-elements-skipped",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (d < 0 || (d > 1 && isArray(k))) {",
+  "replace": "        if (d > 1 && isArray(k)) {",
+  "note": "text weight stops at an array's length and never weighs its elements. Verified by: src/expr/__tests__/native-cost.test.ts > \"every allowlisted native refuses an argument heavier than the budget before it runs\""
+ },
+ {
+  "id": "expr/weigh-string-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    } else if (typeof v === 'string') {\n      total += v.length;",
+  "replace": "    } else if (typeof v === 'string') {\n      total += 1;",
+  "note": "text weight ignores a string's length, so 1,000 references to one 300,000-character string weigh 2,000 and convert to 300 MB. Verified by: src/expr/__tests__/native-cost.test.ts > \"every allowlisted native refuses an argument heavier than the budget before it runs\""
  },
  {
   "id": "form-control/adopt-never-repairs",

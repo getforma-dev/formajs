@@ -11,6 +11,8 @@
  * - `activate-islands-no-shadow-root-param` (islands in a ShadowRoot could be
  *   deactivated but never activated)
  * - `sanitize-props-shallow-no-opt-in-deep` (no supported way to sanitize deeply)
+ * - DR-21 / FORMA-004 (activation stripped pollution keys at the top level only,
+ *   so a nested `__proto__` reached any island that deep-merged its props)
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { createEffect, createSignal } from 'forma/reactive';
@@ -200,22 +202,112 @@ describe('sanitizePropsDeep', () => {
     expect(a['name']).toBe('a');
   });
 
-  it('is opt-in: island activation still sanitizes only the top level', () => {
+  /** Every own key at every depth of a parsed value, walked without recursion. */
+  function ownKeysAtEveryDepth(root: unknown): string[] {
+    const keys: string[] = [];
+    const todo: unknown[] = [root];
+    while (todo.length > 0) {
+      const v = todo.pop();
+      if (v === null || typeof v !== 'object') continue;
+      for (const k of Object.getOwnPropertyNames(v)) {
+        keys.push(k);
+        todo.push(Object.getOwnPropertyDescriptor(v, k)!.value);
+      }
+    }
+    return keys;
+  }
+
+  it('island activation strips forbidden keys at every depth, inline and shared, with no opt-out', () => {
+    // The same hostile payload through both channels, to two islands. Every
+    // pollution key sits below the top level, inside an object and inside an
+    // array element, next to a benign sibling that must survive.
+    const payload =
+      '{"title":"t","nested":{"__proto__":{"isAdmin":true},"keep":3,' +
+      '"deeper":{"constructor":{"prototype":{"x":1}},"prototype":{"y":2},"ok":4}},' +
+      '"rows":[{"__proto__":{"row":true},"id":1},{"id":2}]}';
     document.body.innerHTML = `
-      <div data-forma-island="0" data-forma-component="A"
-           data-forma-props='{"__proto__":{"x":1},"nested":{"__proto__":{"y":2},"keep":3}}'
-           data-forma-status="pending"><p>x</p></div>
+      <div data-forma-island="0" data-forma-component="Inline"
+           data-forma-props='${payload}' data-forma-status="pending"><p>0</p></div>
+      <div data-forma-island="1" data-forma-component="Shared" data-forma-status="pending"><p>1</p></div>
+      <script id="__forma_islands" type="application/json">{"1":${payload}}</script>
     `;
 
-    const fn = vi.fn();
-    activateIslands({ A: fn });
+    const received: Record<string, unknown>[] = [];
+    const merged: Record<string, unknown>[] = [];
+    // A naive deep merge, the pattern DR-21 guards: a nested "__proto__" key
+    // left in the props would walk it into Object.prototype.
+    const deepMerge = (into: Record<string, unknown>, from: Record<string, unknown>): Record<string, unknown> => {
+      for (const k of Object.keys(from)) {
+        const v = from[k];
+        if (v !== null && typeof v === 'object' && !Array.isArray(v)) {
+          into[k] = deepMerge((into[k] as Record<string, unknown>) ?? {}, v as Record<string, unknown>);
+        } else {
+          into[k] = v;
+        }
+      }
+      return into;
+    };
+    const island = (_el: HTMLElement, props: Record<string, unknown> | null) => {
+      received.push(props!);
+      merged.push(deepMerge({}, props!));
+    };
+    try {
+      activateIslands({ Inline: island, Shared: island });
+      expect(({} as Record<string, unknown>)['isAdmin']).toBeUndefined();
+      expect(({} as Record<string, unknown>)['row']).toBeUndefined();
+    } finally {
+      // Should the strip regress, do not leave the pollution for later tests.
+      delete (Object.prototype as Record<string, unknown>)['isAdmin'];
+      delete (Object.prototype as Record<string, unknown>)['row'];
+    }
 
-    const props = fn.mock.calls[0]![1] as Record<string, unknown>;
-    expect(Object.prototype.hasOwnProperty.call(props, '__proto__')).toBe(false);
-    const nested = props['nested'] as Record<string, unknown>;
-    // Documented limitation: the default pass is shallow, which is exactly why
-    // sanitizePropsDeep exists as an explicit opt-in.
-    expect(Object.prototype.hasOwnProperty.call(nested, '__proto__')).toBe(true);
-    expect(Object.prototype.hasOwnProperty.call(sanitizePropsDeep(nested), '__proto__')).toBe(false);
+    expect(received).toHaveLength(2);
+    for (const props of received) {
+      const keys = ownKeysAtEveryDepth(props);
+      expect(keys).not.toContain('__proto__');
+      expect(keys).not.toContain('constructor');
+      expect(keys).not.toContain('prototype');
+      // Two-sided: everything benign is still there, at every depth.
+      expect(props).toEqual({
+        title: 't',
+        nested: { keep: 3, deeper: { ok: 4 } },
+        rows: [{ id: 1 }, { id: 2 }],
+      });
+    }
+    expect(merged[0]).toEqual(merged[1]);
+    // There is no opt-out: the islands never saw the keys, so a caller that
+    // never heard of sanitizePropsDeep is covered too.
+    expect(document.querySelectorAll('[data-forma-status="active"]')).toHaveLength(2);
+  });
+
+  it('island props nested 10,000 deep are parsed and stripped', () => {
+    // Recursive-parser depth floor. A JSON.parse reviver would strip during
+    // the parse, but V8 applies revivers recursively and overflows near 5,000
+    // levels; the strip has to be the iterative pass.
+    const DEPTH = 10_000;
+    const inline = '{"a":'.repeat(DEPTH) + '{"__proto__":{"deep":true},"leaf":1}' + '}'.repeat(DEPTH);
+    const shared = `{"1":${inline}}`;
+    document.body.innerHTML = `
+      <div data-forma-island="0" data-forma-component="A" data-forma-status="pending"><p>0</p></div>
+      <div data-forma-island="1" data-forma-component="A" data-forma-status="pending"><p>1</p></div>
+      <script id="__forma_islands" type="application/json">${shared}</script>
+    `;
+    document.querySelector('[data-forma-island="0"]')!.setAttribute('data-forma-props', inline);
+
+    const bottoms: Record<string, unknown>[] = [];
+    activateIslands({
+      A: (_el, props) => {
+        let node = props as Record<string, unknown>;
+        for (let i = 0; i < DEPTH; i++) node = node['a'] as Record<string, unknown>;
+        bottoms.push(node);
+      },
+    });
+
+    expect(bottoms).toHaveLength(2);
+    for (const bottom of bottoms) {
+      expect(Object.getOwnPropertyNames(bottom)).toEqual(['leaf']);
+      expect(bottom['leaf']).toBe(1);
+    }
+    expect(({} as Record<string, unknown>)['deep']).toBeUndefined();
   });
 });
