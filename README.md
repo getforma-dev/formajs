@@ -144,6 +144,7 @@ Verified by `src/__tests__/build-artifacts.test.ts` > "no build emits new Functi
 | [docs/COMPARISONS.md](docs/COMPARISONS.md) | Coming from React, and how this differs from Solid |
 | [docs/STABILITY.md](docs/STABILITY.md) | What is stable, what is beta, and the one known gap |
 | [docs/PERFORMANCE.md](docs/PERFORMANCE.md) | Benchmarked hot paths, with noise floors |
+| [docs/browser-framework-results.md](docs/browser-framework-results.md) | Local cross-browser benchmark against React Compiler and TanStack Query |
 | [SECURITY.md](SECURITY.md) · [CSP.md](CSP.md) | Threat model; running under a strict Content-Security-Policy |
 | [docs/README.md](docs/README.md) | The full documentation index, including design records |
 

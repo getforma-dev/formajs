@@ -42,6 +42,23 @@ once and never again. Reactivity comes from passing a *function*:
 That single rule explains most "why is my UI not updating" questions. See
 [API.md](API.md) for the full `h()` contract.
 
+### Measured browser comparison
+
+`npm run bench:browser` is local, opt-in benchmark infrastructure. It builds
+equivalent FormaJS and React fixtures in production mode, transforms the React
+side with the stable React Compiler, and runs both in Chromium, Firefox, and
+WebKit. It measures mount, one-widget and broad updates, keyed reordering,
+retained heap, production payload, DOM mutations, and a separate TanStack Query
+server-state lane. None of these fixtures are part of a Forma application or
+the published package. The generated
+[browser framework report](browser-framework-results.md) includes raw samples
+and noise floors in its adjacent JSON.
+
+That report is evidence for those fixtures on the recorded machine, not a
+universal “Forma is faster than React” claim. Cross-browser hydration,
+streaming, forms, context, and third-party benchmark lanes remain explicitly
+listed before such a claim would be defensible.
+
 ---
 
 ## How is this different from Solid?
