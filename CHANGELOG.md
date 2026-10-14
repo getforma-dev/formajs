@@ -38,12 +38,13 @@ All notable changes to this project will be documented in this file.
     `main`'s build before this change. `node scripts/dist-baseline.mjs [ref]`
     (new, `npm run check:baseline`) builds a ref in a temporary worktree and
     compares, through `scripts/verify-dist.mjs --baseline`. No size gate moves.
-  - **Package size** (`npm pack`): 1,400,023 to 1,573,597 B packed
-    (+173,574 B, +12.4%), 5,697,266 to 6,475,318 B unpacked (+778,052 B,
+  - **Package size** (`npm pack`): 1,400,023 to 1,573,633 B packed
+    (+173,610 B, +12.4%), 5,697,266 to 6,475,417 B unpacked (+778,151 B,
     +13.7%), 90 to 120 files. The JavaScript behind `exports` (774,617 B)
     ships twice. The twins carry no source maps, which would have added
-    another 2.7 MB unpacked: their code keeps its names and one statement a
-    line.
+    another 2.7 MB unpacked (0.64 MB packed): their code keeps its names and
+    one statement a line. A development bundle's own source map therefore
+    reaches core's `dist/dev/` files, not its TypeScript sources.
   - **One build per process.** A resolver applies one set of conditions to
     every specifier, and a development file imports only development files,
     so one resolver loads one copy of core's reactive state. Two resolvers in
