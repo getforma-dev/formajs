@@ -12,7 +12,16 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  # The e2e suite in Chromium, Firefox and WebKit on the tagged commit
+  # (decision brief DR-9, FORMA-027). `publish` needs it: if any engine is red,
+  # nothing publishes and the tag stays unpublished; fix, then re-tag or re-run.
+  engines:
+    uses: ./.github/workflows/e2e-engines.yml
+    permissions:
+      contents: read
+
   publish:
+    needs: engines
     runs-on: ubuntu-latest
     # MEASURED: on 2026-08-06 run #16 this job passed EVERY gate — npm ci,
     # typecheck, test, playwright install, test:e2e, build, check:size,

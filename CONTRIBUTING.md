@@ -18,7 +18,8 @@ npm run build   # build dist/ (ends with scripts/verify-dist.mjs)
 
 - `npm test` — run vitest
 - `npm run test:watch` — watch mode
-- `npm run test:e2e` — build dist, then run Playwright against the real artifacts
+- `npm run test:e2e` — build dist, then run Playwright against the real artifacts in Chromium (what CI runs on every merge)
+- `npm run test:e2e:engines` — the same suite in Chromium, Firefox and WebKit (`npx playwright install chromium firefox webkit` once); a release runs it before publishing, and `gh workflow run e2e-engines.yml --ref <branch>` runs it in CI
 - `npm run build` — build all output formats, then verify them
 - `npm run check:size` — gzip the real ESM import graph per entry (the CI gate)
 - `npm run check:pack` — `publint` + `@arethetypeswrong/cli`

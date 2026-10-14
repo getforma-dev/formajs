@@ -78,6 +78,30 @@ All notable changes to this project will be documented in this file.
   `Array.from` runs. The interpreter checks a native's result only after the
   call returns, so today the array is built first; that case is marked
   `it.fails` until FORMA-004's preflight lands.
+- `e2e/csp.spec.ts` detects a CSP violation in Firefox. It read violations from
+  console text, and Firefox words them "Content-Security-Policy: …", which the
+  pattern missed, so a Firefox run would have passed with violations. It now
+  also records the `securitypolicyviolation` event, and a control test proves
+  a blocked inline script is seen in each engine. (FORMA-027)
+
+### CI
+
+- **Firefox and WebKit before each release** (DR-9, FORMA-027). The Playwright
+  config has `firefox` and `webkit` projects beside `chromium`. A new workflow,
+  `e2e-engines.yml`, runs the whole e2e suite in each of the three engines,
+  one job per engine; `release.yml` calls it and its `publish` job needs it,
+  so a tag publishes only if all three pass on the tagged commit. Run it on a
+  branch with `gh workflow run e2e-engines.yml --ref <branch>`. Every merge
+  still runs Chromium only: `npm run test:e2e` selects the `chromium` project,
+  and `npm run test:e2e:engines` runs all three.
+
+### Documentation
+
+- `docs/ISLANDS.md` no longer says adoption always creates an element in the
+  namespace the HTML parser would have used. It names where it does not: the
+  content of MathML `mi`, `mo`, `mn`, `ms`, `mtext` and an HTML
+  `annotation-xml`, of SVG `title` and `desc`, and HTML elements the parser
+  moves out of SVG or MathML. A `foreignObject` is handled. (FORMA-027)
 
 ## [2.0.1] - 2026-08-08
 

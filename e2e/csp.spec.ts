@@ -5,7 +5,8 @@ import { test, expect, type Page } from '@playwright/test';
  *
  * happy-dom has no CSP engine, so every unit test in this repo can only prove
  * that FormaJS does not *call* the Function constructor. This spec proves the
- * thing users actually care about: Chromium, given
+ * thing users actually care about: a browser (Chromium on every merge, Firefox
+ * and WebKit before each release), given
  * `Content-Security-Policy: script-src 'self'` on the response, runs the
  * flagship example — arrow-function callback and all — and reports no
  * violation of any kind.
@@ -17,14 +18,24 @@ import { test, expect, type Page } from '@playwright/test';
 
 const CSP = "default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'";
 
-/** Serve every response for this page with a strict CSP header attached. */
-async function withStrictCsp(page: Page): Promise<{ violations: string[]; errors: string[] }> {
+/**
+ * Serve every response for this page with a strict CSP header attached.
+ * `inject` is markup added before the flagship's `</body>`, for the control
+ * test that proves a violation is seen.
+ */
+async function withStrictCsp(page: Page, inject = ''): Promise<{ violations: string[]; errors: string[] }> {
   const violations: string[] = [];
   const errors: string[] = [];
 
+  // Each engine words its CSP console message differently: Chromium
+  // "…violates the following Content Security Policy directive…", WebKit
+  // "Refused to execute…", Firefox "Content-Security-Policy: The page's
+  // settings blocked…". The pattern once missed Firefox's hyphenated form, so
+  // a Firefox run saw no violation at all; the event below is the record that
+  // does not depend on wording.
   page.on('console', (msg) => {
     const text = msg.text();
-    if (/content security policy|refused to (execute|evaluate|load|apply)/i.test(text)) {
+    if (/content[- ]security[- ]policy|refused to (execute|evaluate|load|apply)/i.test(text)) {
       violations.push(text);
     }
   });
@@ -35,16 +46,33 @@ async function withStrictCsp(page: Page): Promise<{ violations: string[]; errors
     if (/EvalError|unsafe-eval/i.test(String(err))) violations.push(String(err));
   });
 
+  // Every engine fires `securitypolicyviolation` for each blocked action.
+  await page.addInitScript(() => {
+    const seen: string[] = [];
+    (window as unknown as { __cspViolations: string[] }).__cspViolations = seen;
+    document.addEventListener('securitypolicyviolation', (e) => {
+      seen.push(`${e.effectiveDirective} ${e.blockedURI}`);
+    });
+  });
+
   await page.route('**/*', async (route) => {
     const response = await route.fetch();
+    const body = inject && route.request().url().endsWith('/flagship.html')
+      ? (await response.text()).replace('</body>', `${inject}</body>`)
+      : undefined;
     await route.fulfill({
       response,
+      body,
       headers: { ...response.headers(), 'content-security-policy': CSP },
     });
   });
 
   return { violations, errors };
 }
+
+/** The `securitypolicyviolation` events the page has fired so far. */
+const cspEvents = (page: Page) =>
+  page.evaluate(() => (window as unknown as { __cspViolations: string[] }).__cspViolations);
 
 test.describe('the flagship example under Content-Security-Policy: script-src \'self\'', () => {
   test('renders, filters and reacts with zero CSP violations', async ({ page }) => {
@@ -85,7 +113,20 @@ test.describe('the flagship example under Content-Security-Policy: script-src \'
 
     // Zero violations, and no page error of any kind.
     expect(violations, `CSP violations: ${violations.join(' | ')}`).toEqual([]);
+    expect(await cspEvents(page), 'securitypolicyviolation events').toEqual([]);
     expect(errors, `page errors: ${errors.join(' | ')}`).toEqual([]);
+  });
+
+  test('a blocked inline script is seen as a violation in this engine', async ({ page }) => {
+    // The control for the test above: zero violations means something only if
+    // this engine's violations are seen at all, on both channels.
+    const { violations } = await withStrictCsp(page, '<script>window.__inlineRan = true</script>');
+    await page.goto('/flagship.html');
+    await expect(page.locator('#count')).toHaveText('Found 5 results');
+
+    expect(await page.evaluate(() => (window as unknown as { __inlineRan?: true }).__inlineRan)).toBeUndefined();
+    await expect.poll(() => cspEvents(page)).toContainEqual(expect.stringMatching(/^script-src(-elem)? inline$/));
+    await expect.poll(() => violations.length).toBeGreaterThan(0);
   });
 
   test('the runtime reports no diagnostics for the flagship markup', async ({ page }) => {
