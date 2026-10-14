@@ -48,9 +48,32 @@ All notable changes to this project will be documented in this file.
   array adopts the empty region), or render the list in the browser only.
   Core's ESM entry grows by 305 B gzipped (27,806 to 28,111 B, gate 30,000 B
   unchanged) and the CDN ESM bundle by 305 B (26,721 to 27,026 B, gate
-  29,000 B). The CDN runtimes do not include adoption; they shrink by 9 B and
-  7 B, because a module-level `Symbol.for` call in the adoption code, kept in
-  their bundles as a side effect, is gone.
+  29,000 B). The CDN runtimes do not include adoption; each shrinks by 8 B,
+  because a module-level `Symbol.for` call in the adoption code, kept in their
+  bundles as a side effect, is gone.
+- **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
+  reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
+  deploy every client of a server reconnected in the same instant. The delay is
+  now drawn uniformly between 0 and that cap, still for at most
+  `maxReconnects` (5) attempts, and a successful open still restarts the count.
+  A new option, `random`, replaces `Math.random` as the source of the draw (a
+  test passes a seeded one); a value that is not a function, or a draw outside
+  [0, 1), falls back to `Math.random`.
+- **`data-fetch` aborts a request after 30 seconds** (FORMA-132, L-46),
+  `createFetch`'s default timeout. Before, a request the server never answered
+  held its `loading:` target true forever. Now the abort lands in the `error:`
+  target as `data-fetch timed out after 30000 ms` in every engine (WebKit
+  rejects an aborted fetch with its own message, so the runtime writes this
+  one; `createFetch` reports no error on its timeout), and `loading:` turns
+  false. Each request of a `poll:` fetch has its own 30 seconds. Tearing a
+  scope down (`unmount()`, or removing its element) clears each in-flight
+  request's timer and aborts it. A shorter timeout
+  granted per mount comes with the tiered mount (FORMA-128).
+  **Size (L-51):** the CDN runtime grows by 200 B gzipped (33,861 to 34,061 B)
+  and the hardened runtime by 199 B (32,873 to 33,072 B). Both passed their
+  gates, which rise to the measured size rounded up to the next 500 B: 34,000
+  to 34,500 B and 33,000 to 33,500 B (`scripts/check-size.mjs`, the README's
+  size table).
 
 ### Documentation
 
