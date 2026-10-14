@@ -184,3 +184,47 @@ jobs:
           name: playwright-report
           path: playwright-report/
           retention-days: 7
+
+  # SR43 (FORMA-134): release.yml keeps `id-token: write` on its publish job
+  # alone, with no cache and no dependency code beside it. actionlint checks
+  # every workflow's syntax and, with the runner's shellcheck, its scripts;
+  # check-release-workflow.rb checks SR43's shape and, with --self-test, that
+  # each of its rules catches a violation seeded into a copy of the workflow;
+  # test-release-artifacts.sh checks that a packed file altered between the
+  # pack and publish jobs fails the check the publish job runs first.
+  release-workflow:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    # MEASURED locally: actionlint and shellcheck under 1s over these
+    # workflows, the lint and its self-test under 1s, the artefact tests about
+    # 1s; the actionlint download is 2.4 MB. 5 bounds a slow download.
+    timeout-minutes: 5
+    env:
+      ACTIONLINT_VERSION: 1.7.12
+      # SHA-256 of actionlint_1.7.12_linux_amd64.tar.gz, checked on 2026-10-14
+      # against the release's checksums file and GitHub's asset digest, with
+      # its build provenance verified (`gh attestation verify -R
+      # rhysd/actionlint`: signed by the release workflow at refs/tags/v1.7.12).
+      ACTIONLINT_SHA256: 8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+      - name: Install actionlint, checked against its pinned SHA-256
+        run: |
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz"
+          echo "${ACTIONLINT_SHA256}  $RUNNER_TEMP/actionlint.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/actionlint.tar.gz" -C "$RUNNER_TEMP" actionlint
+      - name: actionlint
+        run: |
+          shellcheck --version | head -2
+          "$RUNNER_TEMP/actionlint" -version
+          "$RUNNER_TEMP/actionlint"
+      - name: SR43 lint and its seeded violations
+        run: |
+          ruby --version
+          ruby scripts/check-release-workflow.rb --self-test
+      - name: A packed file altered between jobs fails the publish job's check
+        run: bash scripts/test-release-artifacts.sh
