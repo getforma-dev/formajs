@@ -4,6 +4,56 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **Bound `value`, `checked` and `selected` are live properties.** `h()` and
+  adoption write them to the control itself, not only to its attribute, and a
+  `select` is bound after its options exist. A bound `value` on a `select` or
+  `textarea` now reaches the control; before, it never did. A controlled input
+  therefore follows its signal after the user edits it: an update replaces what
+  they typed, where 2.0.1 changed only an attribute the browser ignores once a
+  control is edited. An option's value stays its attribute, so an option bound
+  to `undefined` or `null` still submits its text. (Local checkpoint `042e353`.)
+- **`updateOnItemChange: 'rerender'` replaces a changed row.** A same-key row
+  whose item object changed is rendered again in a fresh reactive scope, and
+  the new element replaces the old one; the old row's effects are disposed.
+  Before, static rows were patched in place and rows with bindings were not
+  re-rendered at all. Refs and focus inside a changed row do not carry over.
+  Unchanged items and keyed moves keep their DOM. `reconcileList`'s own contract
+  is unchanged: a node returned by its `updateFn` is ignored. (Local checkpoint
+  `042e353`.)
+- **A component that returns a detached DOM node while hydrating is reported.**
+  2.0.1 counted it as adopted and removed `data-forma-ssr` with nothing bound.
+  Now the error `FORMA_E_HYDRATE_NODE` is logged in every build and passed to
+  `onError` handlers (source `'hydration'`), and the server's DOM stays as
+  served: `activateIslands` marks that island `error`, and `mount()` and
+  `hydrateIsland()` keep `data-forma-ssr` (`mount()` also disposes the
+  component's effects; a direct `hydrateIsland()` caller owns its root). Neither
+  throws. Returning the island's own element, a node inside it, or a fragment
+  the component already appended into it (now empty) works as in 2.0.1.
+
+### Fixed
+
+- **A Fragment is adopted.** `h(Fragment, …)` and `fragment(…)` return a
+  descriptor while hydrating, and adoption walks a Fragment's children in place,
+  at a `mount()` or island root, inside an element and as a `createShow` branch.
+  A root JSX Fragment was inert after server-rendered activation. A root
+  `createShow` or `createList` with no wrapping element is adopted too.
+- **Adoption keeps what the user entered before activation.** A control whose
+  live state differs from its markup's default (`value` from `defaultValue`,
+  `checked` from the `checked` attribute, a select from its `selected` options)
+  is not written at adoption, and a control that already holds the client's
+  value is not written at all. Updates after activation are still written.
+- **`textarea` and `title` text is bound by the element, not by markers,** to
+  match forma-ir 0.2.1, which writes no markers inside RCDATA elements. A
+  textarea's reactive text stays its default value, client-rendered or adopted,
+  as in 2.0.1. For one release the marker text older servers write inside these
+  elements (and the zero-width space they write for empty text) is also
+  accepted, and removed on adoption when it accounts for the whole difference
+  from the client's text.
+- `createList` with `updateOnItemChange: 'rerender'` disposes a replaced row's
+  effects. (Local checkpoint `042e353`.)
+
 ### Tests
 
 - Regression fixture for the native-call cost path (FORMA-001, stage 0; DR-16):

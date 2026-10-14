@@ -50,7 +50,8 @@ export interface CreateListOptions {
   /**
    * How to handle same-key items whose object identity changed.
    * - 'none' (default): keep the existing row node for maximum throughput.
-   * - 'rerender': re-render changed rows and patch static row DOM in place.
+   * - 'rerender': replace changed rows in a fresh reactive scope. Unchanged
+   *   item objects and keyed reorders retain their existing DOM and state.
    */
   updateOnItemChange?: 'none' | 'rerender';
 }
@@ -112,9 +113,6 @@ export function longestIncreasingSubsequence(arr: number[]): number[] {
 
 /** Below this threshold, use flat array scan instead of Map for better cache locality. */
 const SMALL_LIST_THRESHOLD = 32;
-const ABORT_SYM = Symbol.for('forma-abort');
-const CACHE_SYM = Symbol.for('forma-attr-cache');
-const DYNAMIC_CHILD_SYM = Symbol.for('forma-dynamic-child');
 
 /**
  * Tear down any islands inside a row that is leaving the list.
@@ -164,35 +162,29 @@ function removeRow(parent: Node, node: Node, hooks?: ListTransitionHooks): void 
   parent.removeChild(node);
 }
 
-function canPatchStaticElement(target: Node, source: Node): target is HTMLElement {
-  return target instanceof HTMLElement
-    && source instanceof HTMLElement
-    && target.tagName === source.tagName
-    && !(target as any)[ABORT_SYM]
-    && !(target as any)[CACHE_SYM]
-    && !(target as any)[DYNAMIC_CHILD_SYM]
-    && !(source as any)[ABORT_SYM]
-    && !(source as any)[CACHE_SYM]
-    && !(source as any)[DYNAMIC_CHILD_SYM];
-}
+/**
+ * Marks createList's own `'rerender'` update callback, whose returned node
+ * replaces the row. Every other callback, a public reconcileList caller's
+ * included, keeps 2.0.1's contract: its return value is ignored.
+ *
+ * Verified by: src/dom/__tests__/list-rerender.test.ts > "reconcileList ignores a node returned by a public update callback"
+ */
+const REPLACES_ROW = Symbol('forma.replacesRow');
 
-function patchStaticElement(target: HTMLElement, source: HTMLElement): void {
-  // Sync attributes (events/reactive bindings are excluded by canPatchStaticElement).
-  const sourceAttrNames = new Set<string>();
-  for (const attr of Array.from(source.attributes)) {
-    sourceAttrNames.add(attr.name);
-    if (target.getAttribute(attr.name) !== attr.value) {
-      target.setAttribute(attr.name, attr.value);
-    }
+/** A tagged update may return a replacement; anything else keeps the keyed node. */
+function updateRowNode<T>(
+  parent: Node,
+  node: Node,
+  item: T,
+  updateFn: (node: Node, item: T) => unknown,
+): Node {
+  const next = updateFn(node, item);
+  if ((updateFn as { [REPLACES_ROW]?: boolean })[REPLACES_ROW] && next instanceof Node && next !== node) {
+    deactivateIslandsIn(node);
+    parent.replaceChild(next, node);
+    return next;
   }
-  for (const attr of Array.from(target.attributes)) {
-    if (!sourceAttrNames.has(attr.name)) {
-      target.removeAttribute(attr.name);
-    }
-  }
-
-  // Move freshly rendered children into the existing keyed node.
-  target.replaceChildren(...Array.from(source.childNodes));
+  return node;
 }
 
 /**
@@ -206,7 +198,7 @@ function reconcileSmall<T>(
   oldNodes: Node[],
   keyFn: (item: T) => string | number,
   createFn: (item: T) => Node,
-  updateFn: (node: Node, item: T) => void,
+  updateFn: (node: Node, item: T) => unknown,
   beforeNode?: Node | null,
   hooks?: ListTransitionHooks,
 ): ReconcileResult<T> {
@@ -255,9 +247,7 @@ function reconcileSmall<T>(
     if (allSameOrder) {
       const nodes = new Array<Node>(newLen);
       for (let i = 0; i < newLen; i++) {
-        const node = oldNodes[i]!;
-        updateFn(node, newItems[i]!);
-        nodes[i] = node;
+        nodes[i] = updateRowNode(parent, oldNodes[i]!, newItems[i]!, updateFn);
       }
       return { nodes, items: newItems };
     }
@@ -292,8 +282,7 @@ function reconcileSmall<T>(
       node = createFn(newItems[i]!);
       isNew = true;
     } else {
-      node = oldNodes[oldIndices[i]!]!;
-      updateFn(node, newItems[i]!);
+      node = updateRowNode(parent, oldNodes[oldIndices[i]!]!, newItems[i]!, updateFn);
 
       if (lisFlags[i]) {
         newNodes[i] = node;
@@ -428,9 +417,7 @@ export function reconcileList<T>(
     if (allSameOrder) {
       const nodes = new Array<Node>(newLen);
       for (let i = 0; i < newLen; i++) {
-        const node = oldNodes[i]!;
-        updateFn(node, newItems[i]!);
-        nodes[i] = node;
+        nodes[i] = updateRowNode(parent, oldNodes[i]!, newItems[i]!, updateFn);
       }
       return { nodes, items: newItems };
     }
@@ -467,8 +454,7 @@ export function reconcileList<T>(
       isNew = true;
     } else {
       // REUSE: update content
-      node = oldNodes[oldIndices[i]!]!;
-      updateFn(node, newItems[i]!);
+      node = updateRowNode(parent, oldNodes[oldIndices[i]!]!, newItems[i]!, updateFn);
 
       if (lisFlags[i]) {
         // LIS item: already in correct relative position, don't move
@@ -554,6 +540,32 @@ export function createList<T>(
   let currentItems: T[] = [];
   const updateOnItemChange = options?.updateOnItemChange ?? 'none';
 
+  // Every generation owns all its effects, even when its root looks static.
+  // Patching only children cannot transfer refs/imperative root bindings and
+  // left both discarded candidates and replaced descendants subscribed.
+  const renderOwned = (item: T, getIndex: () => number) => {
+    let dispose!: () => void;
+    let failure: unknown;
+    let failed = false;
+    const element = createRoot((stop) => {
+      dispose = stop;
+      try {
+        return untrack(() => renderFn(item, getIndex));
+      } catch (error) {
+        // Finish root setup before disposal so even a partially built row's
+        // graph and user cleanups can be torn down.
+        failed = true;
+        failure = error;
+        return undefined;
+      }
+    });
+    if (failed) {
+      dispose();
+      throw failure;
+    }
+    return { element: element!, dispose };
+  };
+
   internalEffect(() => {
     const newItems = items();
 
@@ -578,6 +590,7 @@ export function createList<T>(
           parent.removeChild(node);
         }
       }
+      for (const cached of cache.values()) cached.dispose();
       cache = new Map();
       currentNodes = [];
       currentItems = [];
@@ -606,29 +619,24 @@ export function createList<T>(
     }
 
     const updateRow = updateOnItemChange === 'rerender'
-      ? (node: Node, item: T): void => {
+      ? (_node: Node, item: T): Node | void => {
         const key = keyFn(item);
         const cached = cache.get(key);
         if (!cached) return;
         if (cached.item === item) return;
+        const next = renderOwned(item, cached.getIndex);
+        cached.dispose();
         cached.item = item;
-
-        if (!(node instanceof HTMLElement)) return;
-        if ((node as any)[ABORT_SYM] || (node as any)[CACHE_SYM] || (node as any)[DYNAMIC_CHILD_SYM]) {
-          return;
-        }
-
-        const next = untrack(() => renderFn(item, cached.getIndex));
-        if (canPatchStaticElement(node, next)) {
-          patchStaticElement(node, next);
-          cached.element = node;
-        }
+        cached.element = next.element;
+        cached.dispose = next.dispose;
+        return next.element;
       }
       : (_node: Node, item: T): void => {
         const key = keyFn(item);
         const cached = cache.get(key);
         if (cached) cached.item = item;
       };
+    (updateRow as { [REPLACES_ROW]?: boolean })[REPLACES_ROW] = updateOnItemChange === 'rerender';
 
     const oldCache = cache;
 
@@ -645,13 +653,9 @@ export function createList<T>(
       (item) => {
         const key = keyFn(item);
         const [getIndex, setIndex] = createSignal(0);
-        let itemDispose!: () => void;
-        const element = createRoot((dispose) => {
-          itemDispose = dispose;
-          return untrack(() => renderFn(item, getIndex));
-        });
-        cache.set(key, { element, item, getIndex, setIndex, dispose: itemDispose });
-        return element;
+        const rendered = renderOwned(item, getIndex);
+        cache.set(key, { ...rendered, item, getIndex, setIndex });
+        return rendered.element;
       },
       updateRow,
       // beforeNode: insert items before the end marker
@@ -689,6 +693,7 @@ export function createList<T>(
   // Map still holds stale references that prevent GC.
   registerDisposer(() => {
     for (const cached of cache.values()) {
+      deactivateIslandsIn(cached.element);
       cached.dispose();
     }
     cache = new Map();
