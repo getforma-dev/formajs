@@ -810,7 +810,10 @@ All notable changes to this project will be documented in this file.
   could run before the runtime's task timer, so the second widget counted on
   from the first one's spending and its refusal waited for a retry instead of
   being reported (three WebKit failures of "each round-2 rope case is refused
-  before the long task"). The published package is unchanged.
+  before the long task"). `resource.test.ts`'s "sets error on fetcher
+  rejection" waits for its own read instead of a fixed 10 ms, which raced the
+  read's 0 ms timer and lost once in 100 runs under load. The published
+  package is unchanged.
 
 ## [2.0.3] - 2026-10-14
 
