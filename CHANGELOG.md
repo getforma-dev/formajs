@@ -817,8 +817,11 @@ All notable changes to this project will be documented in this file.
   all jobs after a failure replaces the earlier attempt's artefact instead
   of failing on its name (A2 audit S7); `publish` still checks every file
   against the record whose hash `pack` passes as a job output. The SR43
-  lint's new rule K4 requires it, with two seeds in `--self-test`. The
-  published package is unchanged.
+  lint's new rule K4 requires it, with two seeds in `--self-test`. WebKit's
+  e2e tests get 30 s, 3x the default: a worker fixture shares the timeout of
+  the test that starts it, and on a slow runner the first test of each worker
+  timed out setting up WebKit's page, twice. The published package is
+  unchanged.
 
 ## [2.0.3] - 2026-10-14
 
