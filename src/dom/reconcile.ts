@@ -14,6 +14,8 @@
  *   REPLACE  — different data-module → remove old, insert new, mount fresh
  */
 
+import { isTrustedHtml, runtimeHtml, warnRawString, type TrustedHtml } from './trusted-html.js';
+
 // ── Types ─────────────────────────────────────────────────────────────
 
 export interface ReconcilerConfig {
@@ -93,6 +95,8 @@ let _parseTemplate: HTMLTemplateElement | null = null;
 
 function parseHTML(html: string): DocumentFragment {
   if (!_parseTemplate) _parseTemplate = document.createElement('template');
+  // `html` is what reconcile() decided to write: a string as it was given, or
+  // trusted markup minted again through forma-runtime (see below).
   _parseTemplate.innerHTML = html;
   // content is consumed (moved) by the caller, so template is empty after
   return _parseTemplate.content;
@@ -426,13 +430,24 @@ export function createReconciler(config: ReconcilerConfig) {
    *  The WeakMap lets detached containers be GC'd. */
   const lastHtmlByContainer = new WeakMap<Element, string>();
 
-  return function reconcile(container: Element, html: string): void {
-    const trimmed = html.trim();
+  return function reconcile(container: Element, html: string | TrustedHtml): void {
+    // A raw sink (DR-19). Markup that arrived as trustedHtml() is trimmed and
+    // minted again through the runtime parser's own policy, forma-runtime
+    // (DR-20), so a page requiring Trusted Types accepts what is parsed; a
+    // string is parsed as a string, which such a page reports or refuses, and
+    // warns once in development (FORMA_W_RAW_RECONCILE).
+    // Verified by: src/dom/__tests__/trusted-html.test.ts > "reconcile() parses trusted markup through the forma-runtime policy and a string through no policy"
+    let trusted = false;
+    if (typeof html === 'string') warnRawString('reconcile');
+    else if (isTrustedHtml(html)) trusted = true;
+    else throw new TypeError('reconcile: expected a string or a trustedHtml() value, got ' + typeof html);
+    const trimmed = String(html).trim();
     if (!trimmed) return;
 
     // Fast path: skip reconciliation when this container's HTML is unchanged.
     if (lastHtmlByContainer.get(container) === trimmed && container.hasChildNodes()) return;
     lastHtmlByContainer.set(container, trimmed);
+    const markup = trusted ? runtimeHtml(trimmed) : trimmed;
 
     // Disconnect observer to prevent double-mount during patching
     config.disconnectObserver();
@@ -440,7 +455,7 @@ export function createReconciler(config: ReconcilerConfig) {
     try {
       // ── Fast path: empty container ──
       if (!container.hasChildNodes() || container.children.length === 0) {
-        container.innerHTML = trimmed;
+        container.innerHTML = markup;
 
         // Mount all data-forma-state scopes
         config.batch(() => {
@@ -454,7 +469,7 @@ export function createReconciler(config: ReconcilerConfig) {
       }
 
       // ── Parse new HTML into a DocumentFragment ──
-      const fragment = parseHTML(trimmed);
+      const fragment = parseHTML(markup);
       const templateContainer = document.createElement('div');
       templateContainer.appendChild(fragment);
 
@@ -484,7 +499,7 @@ export function createReconciler(config: ReconcilerConfig) {
           for (const scope of Array.from(liveScopes)) {
             config.unmountScope(scope);
           }
-          container.innerHTML = trimmed;
+          container.innerHTML = markup;
           const newScopes = container.querySelectorAll('[data-forma-state]');
           for (const scope of Array.from(newScopes)) {
             config.mountScope(scope);

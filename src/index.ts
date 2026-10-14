@@ -22,6 +22,9 @@ export { h, svg, Fragment, fragment, createText, mount, createList, cleanup, cre
 export type { IslandHydrateFn, ReconcileResult, ListTransitionHooks, CreateListOptions, SwitchCase } from './dom';
 // The browser-only marker (DR-1, L-1): one name, so a search finds every use.
 export { browserOnly } from './dom/browser-only';
+// The raw-HTML entry (DR-19, L-37): one name, so a search finds every use.
+export { trustedHtml } from './dom/trusted-html';
+export type { TrustedHtml } from './dom/trusted-html';
 
 // Component
 export { defineComponent, disposeComponent, trackDisposer, onMount, onUnmount, createContext, provide, inject, unprovide } from './component';

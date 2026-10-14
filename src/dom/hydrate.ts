@@ -20,8 +20,9 @@ import {
   writeFormControlProperty,
 } from './form-control.js';
 import { reconcileList, createList } from './list.js';
+import { htmlOf, warnRawAttr } from './trusted-html.js';
 import { createShow } from './show.js';
-import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
+import { isEventHandlerAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
 
 // Same symbol identity as element.ts — Symbol.for() guarantees cross-module
 // sharing so cleanup(el) in element.ts aborts controllers created here.
@@ -369,9 +370,6 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
       el.removeAttribute(attrKey);
       continue;
     }
-    if (__DEV__ && isRawHtmlAttr(attrKey)) {
-      console.warn(`[forma] Hydration: "${attrKey}" on <${el.localName}> is a raw-HTML sink — its value is parsed as a document, so escaping does not neutralize it. Only pass trusted markup.`);
-    }
 
     // Reactive attribute binding (function, non-event). isUnsafeAttrWrite is the
     // same predicate h() and the SSR renderer use, so a payload the server
@@ -395,7 +393,11 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
           el.removeAttribute(attrKey);
           return;
         }
-        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, str);
+        // `srcdoc` takes trustedHtml() as h() does (DR-19): an object is
+        // written as htmlOf() gives it, so a TrustedHTML reaches it typed.
+        // Verified by: src/dom/__tests__/trusted-html.test.ts > "an adopted island's srcdoc binding writes trustedHtml() typed and warns once for a string"
+        warnRawAttr(attrKey, v);
+        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);
       }
     });
   }

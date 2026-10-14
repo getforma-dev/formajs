@@ -154,6 +154,44 @@ All notable changes to this project will be documented in this file.
   (33,072 to 34,542 B); their gates rise from 34,500 to 36,000 B and from
   33,500 to 35,000 B. This change leaves the core entry and the browser ESM
   bundle as they were.
+- **Core writes no string to an HTML sink of its own, and its raw sinks take
+  Trusted Types** (FORMA-126, FORMA-127; DR-19, DR-20). Under a page policy
+  with `require-trusted-types-for 'script'`, which forma-server 0.2.2 sends as
+  Report-Only and a later release enforces, a string written to an HTML sink
+  is reported, and refused where enforced. `mount()`, the function it returns,
+  and a reactive `dangerouslySetInnerHTML` that becomes `null` emptied an
+  element with `innerHTML = ''`; they now call `replaceChildren()`, which no
+  policy checks. The raw sinks (`dangerouslySetInnerHTML`, `setHTMLUnsafe()`,
+  `template()` and `templateMany()`, the runtime's `reconcile()`, and a
+  `srcdoc` value on `h()` and in adoption) write a `trustedHtml()` value as the
+  `TrustedHTML` it is. `reconcile()` trims what it is given before parsing it,
+  so markup that arrived as `trustedHtml()` is minted again, trimmed, through
+  core's second policy, `forma-runtime`; a string is never minted, and a value
+  that is neither throws a `TypeError` naming it, as it did before by
+  accident. Each policy is made once per page, on first use, and shared by
+  every copy of core on the page (the runtime's IIFE beside core's ESM build),
+  since an enforcing page refuses a second policy of one name. In Chromium,
+  Firefox and WebKit, served with `require-trusted-types-for 'script';
+  trusted-types forma forma-runtime` Report-Only and enforced, core's own test
+  pages and every raw sink given `trustedHtml()` raise no violation, and a
+  string written to `innerHTML` raises one report and still renders under
+  Report-Only (`e2e/trusted-types.spec.ts`). A string given to a raw sink is
+  written exactly as before, which such a page reports.
+- **Size** (L-51, FORMA-126 and FORMA-127): `trustedHtml()`, the two policies
+  and the typed `reconcile()` grow the CDN runtime by 462 B gzipped (35,540 to
+  36,002 B) and the hardened runtime by 481 B (34,542 to 35,023 B). Both passed
+  their gates, which rise to the measured size rounded up to the next 500 B:
+  36,000 to 36,500 B and 35,000 to 35,500 B (`scripts/check-size.mjs`, the
+  README's size table). The core entry grows by 470 B (28,411 to 28,881 B of
+  its 30,000 B gate) and the browser ESM bundle by 469 B (27,293 to 27,762 B of
+  29,000 B). The files that changed are the ones that reach a raw sink: the
+  entries `index`, `runtime`, `runtime-hardened` and `ssr/index` (ESM and CJS),
+  the shared chunks holding the DOM and the URL checks (which now hold
+  `trustedHtml()` too), and the CDN bundles; `http`, `server`, `storage`,
+  `tc39-compat` and `wasm` are byte-identical to the build before. No
+  development warning reaches a production artifact: each sits behind the
+  build flag inside `src/dom/trusted-html.ts`, which the build folds in every
+  artifact and chunk.
 
 ### Added
 
@@ -168,6 +206,18 @@ All notable changes to this project will be documented in this file.
   with no document it renders nothing. Additive: no existing export changes.
   The core entry grows 103 B gzipped (27,703 to 27,806 B of its 30,000 B gate)
   and the browser ESM bundle 99 B; the CDN runtimes do not change.
+- **`trustedHtml(markup)`, the one raw-HTML entry** (DR-19, L-37, FORMA-126),
+  exported from `@getforma/core` and `@getforma/core/runtime`
+  (`FormaRuntime.trustedHtml` in the CDN bundles), with its type `TrustedHtml`.
+  Every raw sink takes it beside a string: one name, so a search, or a
+  consumer's CI allowlist (SR8), finds every raw entry. Where the browser has
+  Trusted Types it returns a `TrustedHTML` made by Forma's policy `forma`;
+  elsewhere a frozen stand-in that core's sinks recognise and write as its
+  markup. A `TrustedHTML` from an application's own policy is accepted too.
+  It sanitizes nothing. `./ssr`'s renderers write its markup as they write a
+  string. `template()` and `templateMany()` are now documented as raw sinks
+  (`docs/API.md`, `SECURITY.md`), and `CSP.md` gains a Trusted Types section.
+  Additive: every sink still takes a string.
 
 ### Changed
 
@@ -197,6 +247,30 @@ All notable changes to this project will be documented in this file.
 
 ### Deprecated
 
+- **A plain string given to a raw sink, and `h('script')`** (DR-19, L-18,
+  FORMA-126). Both keep working through 2.x, written exactly as before, and
+  3.0.0 refuses them (FORMA-109). In a development build the first string
+  each sink receives logs one coded line: `FORMA_W_RAW_INNER_HTML`
+  (`dangerouslySetInnerHTML`), `FORMA_W_RAW_SET_HTML` (`setHTMLUnsafe()`),
+  `FORMA_W_RAW_TEMPLATE` (`template()`, `templateMany()`),
+  `FORMA_W_RAW_RECONCILE` (`reconcile()`) and `FORMA_W_RAW_SRCDOC` (`srcdoc`),
+  as `[forma] FORMA_W_RAW_SRCDOC: …`; `h('script')` logs
+  `FORMA_W_SCRIPT_ELEMENT` once. Each is logged once per page or process,
+  whichever copy of core asks. `docs/STABILITY.md` lists what replaces each
+  under *Deprecated forms*. The `srcdoc` line replaces the uncoded warning
+  `h()` logged for every `srcdoc` prop and adoption for every reactive one.
+  Production builds carry none of them; FORMA-169's development build is what
+  brings them to an application built from the npm package.
+  - Tests: `src/dom/__tests__/trusted-html.test.ts` (thirteen, among them
+    "a string to each raw sink still renders, and warns once with the sink's
+    code in development", "core's own writes raise no Trusted Types violation:
+    mount, unmount, the null clear, and every sink given trustedHtml()" under a
+    simulated enforcement, and "reconcile() parses trusted markup through the
+    forma-runtime policy and a string through no policy");
+    `src/dom/__tests__/trusted-html-build.test.ts` > "a production build
+    carries none of the raw-HTML warnings, in any artifact" (the real tsup
+    configs) and its control; `e2e/trusted-types.spec.ts` (thirteen per
+    engine).
 - **`@getforma/core/server`, `@getforma/core/ssr` and `@getforma/core/wasm`
   are deprecated, and are removed in 3.0.0** (FORMA-131; DR-22 to DR-24). They
   keep working through 2.x. Server functions give way to routes in the

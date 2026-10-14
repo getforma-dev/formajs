@@ -158,6 +158,7 @@
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
+import { trustedHtml, type TrustedHtml } from './dom/trusted-html';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 import {
   clearExpressionCache,
@@ -2589,7 +2590,7 @@ function resetScope(element: Element): void {
 
 // ── Reconciler ──
 
-let _reconciler: ((container: Element, html: string) => void) | null = null;
+let _reconciler: ((container: Element, html: string | TrustedHtml) => void) | null = null;
 
 function getReconciler() {
   if (!_reconciler) {
@@ -2620,10 +2621,16 @@ function getReconciler() {
   return _reconciler;
 }
 
-/** Reconcile a container's DOM against a new HTML string. */
-function reconcile(container: Element, html: string): void {
+/**
+ * Reconcile a container's DOM against new markup. A raw sink: pass
+ * `trustedHtml(markup)` (DR-19); a plain string still works in 2.x and warns
+ * once in development.
+ */
+function reconcile(container: Element, html: string | TrustedHtml): void {
   getReconciler()(container, html);
 }
+
+export type { TrustedHtml };
 
 export {
   initRuntime,
@@ -2631,6 +2638,7 @@ export {
   mount,
   unmount,
   reconcile,
+  trustedHtml,
   setDebug,
   yieldToMain,
   applyContainmentHints,

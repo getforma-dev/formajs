@@ -32,6 +32,7 @@ export function escapeAttr(str: string): string {
 }
 
 import { __DEV__ } from '../reactive/dev.js';
+import { isTrustedHtml } from '../dom/trusted-html.js';
 import {
   isDangerousUrl,
   isUrlAttr,
@@ -40,6 +41,22 @@ import {
   isSafeAttrName,
   isSafeTagName,
 } from '../security/url-safety.js';
+
+/**
+ * The markup a `dangerouslySetInnerHTML` value writes: its `__html`, a string
+ * or a `trustedHtml()` value (DR-19), so a component shared with the browser
+ * renders here as it does there; anything else is a TypeError.
+ *
+ * Verified by: src/dom/__tests__/trusted-html.test.ts > "the SSR renderers write a trustedHtml() value's markup and still refuse a non-string"
+ */
+export function innerHtmlMarkup(raw: unknown): string {
+  if (typeof raw === 'object' && raw != null && '__html' in raw) {
+    const html = (raw as { __html: unknown }).__html;
+    if (typeof html === 'string') return html;
+    if (isTrustedHtml(html)) return String(html);
+  }
+  throw new TypeError('dangerouslySetInnerHTML must be { __html: string } or a trustedHtml() value');
+}
 
 /**
  * Decide whether a resolved prop should be emitted as an attribute, and return
@@ -189,17 +206,7 @@ function renderToBuffer(node: unknown, parts: string[]): void {
 
     // dangerouslySetInnerHTML
     if (props?.['dangerouslySetInnerHTML']) {
-      const raw = props['dangerouslySetInnerHTML'];
-      if (typeof raw === 'object' && raw != null && '__html' in raw) {
-        const html = (raw as { __html: unknown }).__html;
-        if (typeof html === 'string') {
-          parts.push(html);
-        } else {
-          throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
-        }
-      } else {
-        throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
-      }
+      parts.push(innerHtmlMarkup(props['dangerouslySetInnerHTML']));
     } else {
       // Render children
       for (const child of children) {

@@ -497,6 +497,7 @@ sections above cover the ones with non-obvious semantics.
 | Islands | `activateIslands`, `hydrateIsland`, `deactivateIsland`, `deactivateAllIslands`, `sanitizePropsDeep`, `browserOnly(component)` — a component that renders in the browser alone ([ISLANDS.md](ISLANDS.md#browser-only-components-browseronly)) |
 | Events | `createBus`, `delegate(container, selector, event, handler)`, `onKey(combo, handler, options?)` |
 | DOM utils | `$`, `$$`, `addClass`, `removeClass`, `toggleClass`, `setStyle`, `setAttr`, `setText`, `setHTMLUnsafe`, `closest`, `children`, `siblings`, `parent`, `nextSibling`, `prevSibling`, `onResize`, `onIntersect`, `onMutation` |
+| Raw HTML | `trustedHtml(markup)` — the one raw-HTML entry, which every raw sink takes ([below](#trustedhtml-the-one-raw-entry)) |
 
 Verified by `src/__tests__/docs-truth.test.ts` > "documents every symbol the root entry exports"
 
@@ -506,16 +507,17 @@ Verified by `src/__tests__/docs-truth.test.ts` > "documents every symbol the roo
 
 FormaJS never builds markup from strings. `h()` creates elements with
 `document.createElement` and writes text with `textContent`, which is why
-`innerHTML` is not used for library-generated markup. Four APIs deliberately
-break that rule; **none of them sanitizes**, and all four are
+`innerHTML` is not used for library-generated markup. Five APIs, the raw sinks,
+deliberately break that rule; **none of them sanitizes**, and all five are
 first-party-content-only sinks:
 
 | Sink | Where | What it does |
 |---|---|---|
 | `dangerouslySetInnerHTML={{ __html }}` | prop on `h()` / JSX | assigns `innerHTML` on the element |
 | `setHTMLUnsafe(el, html)` | `@getforma/core` | assigns `innerHTML` on the element |
+| `template(html)`, `templateMany(html)` | `@getforma/core` | parses the markup into a cached `<template>`, which compiled output clones |
 | `reconcile(container, html)` | `@getforma/core/runtime` | parses an HTML string into a `<template>` and diffs it into the live page |
-| `srcdoc` attribute | `h()` and SSR | the browser parses the *attribute value* as a document, so escaping does not neutralize it — emitted with a dev-mode warning |
+| `srcdoc` attribute | `h()` and SSR | the browser parses the *attribute value* as a document, so escaping does not neutralize it |
 
 Everything else is guarded: URL-bearing attributes (`href`, `src`, `action`,
 `formaction`, `xlink:href`, `poster`, `background`, `data`) drop `javascript:`,
@@ -525,5 +527,36 @@ in any casing, on both the client and SSR paths.
 Verified by `src/dom/__tests__/element-url-safety.test.ts` > "drops exactly what the SSR renderer drops, so hydration cannot re-add it"
 Verified by `src/dom/__tests__/element-url-safety.test.ts` > "drops ONCLICK-cased string props instead of writing an inline handler"
 Verified by `src/dom/__tests__/element-url-safety.test.ts` > "emits srcdoc but warns that escaping does not neutralize it"
+
+### `trustedHtml()`: the one raw entry
+
+Every raw sink takes `trustedHtml(markup)` beside a string. It is the one way to
+say that a string is markup someone vouches for, so a search for its name finds
+every raw entry in an application, and a consumer's CI can list each one with an
+owner and an end date. It sanitizes nothing: pass only markup you control.
+
+```ts
+import { h, trustedHtml } from '@getforma/core';
+
+h('article', { dangerouslySetInnerHTML: { __html: trustedHtml(sanitizedMarkdown) } });
+h('iframe', { sandbox: '', srcdoc: trustedHtml(previewDocument) });
+```
+
+Where the browser has Trusted Types, `trustedHtml()` returns a `TrustedHTML`
+made by Forma's policy `forma`, so a page whose policy requires Trusted Types
+accepts it at the sink ([`../CSP.md`](../CSP.md#trusted-types)); elsewhere it
+returns a frozen stand-in that core's sinks recognise and write as its markup.
+The zero-build runtime exports it too (`FormaRuntime.trustedHtml` in the CDN
+bundles), for `reconcile()`. A `TrustedHTML` from an application's own policy
+is accepted as well.
+
+A plain string still works through 2.x, exactly as before, and in a development
+build the first string each sink receives logs one coded warning; 3.0.0 accepts
+only `trustedHtml()`. The codes, and `h('script')`'s, are in
+[STABILITY.md](STABILITY.md#deprecated-forms).
+
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "every raw sink writes a trustedHtml() value without a warning, and the DOM holds its markup"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "a string to each raw sink still renders, and warns once with the sink's code in development"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "a look-alike object is not trusted HTML"
 
 The full threat model is in [`../SECURITY.md`](../SECURITY.md).

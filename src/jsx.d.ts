@@ -11,6 +11,14 @@
 
 type MaybeReactive<T> = T | (() => T);
 
+/**
+ * Markup for a raw sink: a string, or what `trustedHtml()` returns (its
+ * `TrustedHtml` type, restated here structurally because this file is copied
+ * into dist/ as it is and cannot import from the source tree). 3.0.0 drops the
+ * string (DR-19).
+ */
+type RawMarkup = string | { readonly __formaTrustedHtml: true };
+
 declare global {
   namespace JSX {
     // JSX expressions return whatever h() returns
@@ -120,7 +128,7 @@ declare global {
       'data-forma-status'?: string;
 
       // dangerouslySetInnerHTML
-      dangerouslySetInnerHTML?: { __html: string };
+      dangerouslySetInnerHTML?: { __html: RawMarkup };
     }
 
     // -----------------------------------------------------------------------
@@ -235,7 +243,7 @@ declare global {
 
     interface IframeHTMLAttributes extends HTMLAttributes<HTMLIFrameElement> {
       src?: MaybeReactive<string>;
-      srcdoc?: string;
+      srcdoc?: RawMarkup;
       sandbox?: string;
       allow?: string;
       width?: number | string;

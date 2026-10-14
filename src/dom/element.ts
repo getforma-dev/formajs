@@ -15,10 +15,10 @@ import { isFormControlProperty, writeFormControlProperty } from './form-control.
 import {
   isDangerousUrl,
   isEventHandlerAttr,
-  isRawHtmlAttr,
   isUnsafeAttrWrite,
   isUrlAttr,
 } from '../security/url-safety.js';
+import { htmlOf, isTrustedHtml, rawHtml, warnRawAttr, warnScriptElement } from './trusted-html.js';
 
 /**
  * Symbol used as JSX Fragment factory. h(Fragment, null, ...children) returns DocumentFragment.
@@ -272,17 +272,22 @@ function warnDropped(el: Element, key: string, reason: string): void {
 }
 
 /**
- * Dev-only diagnostic for `srcdoc`, whose value the browser parses as an HTML
- * document. Attribute escaping does not neutralize it, so it is a
- * trusted-content sink; it is warned about, never blocked, because a sandboxed
- * `<iframe srcdoc>` is a legitimate pattern.
+ * `__html` of a `dangerouslySetInnerHTML` value, checked: a string or a
+ * `trustedHtml()` value, else a TypeError naming what was given.
  */
-function warnRawHtmlAttr(el: Element, key: string): void {
-  console.warn(
-    `[forma] "${key}" on <${el.localName}> is a raw-HTML sink: its value is ` +
-    `parsed as an HTML document, and escaping does not neutralize it. Only pass ` +
-    `trusted markup (and prefer a sandboxed iframe).`,
-  );
+function innerHtmlOf(value: unknown): unknown {
+  if (typeof value !== 'object' || !('__html' in (value as any))) {
+    throw new TypeError(
+      'dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof value,
+    );
+  }
+  const html = (value as { __html: unknown }).__html;
+  if (typeof html !== 'string' && !isTrustedHtml(html)) {
+    throw new TypeError(
+      'dangerouslySetInnerHTML: __html must be a string or a trustedHtml() value, got ' + typeof html,
+    );
+  }
+  return html;
 }
 
 /** Handle class / className prop. */
@@ -426,52 +431,38 @@ function handleEvent(el: Element, key: string, value: unknown): void {
  *
  * **Security:** No sanitization is performed. Never pass user-controlled
  * strings through `__html` — this will create an XSS vulnerability.
- * Only use with trusted, server-generated markup.
+ * Only use with trusted, server-generated markup, wrapped in `trustedHtml()`
+ * (DR-19): a `TrustedHTML` reaches the sink as it is, so a page enforcing
+ * Trusted Types accepts it; a plain string still works in 2.x and warns once
+ * in development (FORMA_W_RAW_INNER_HTML).
  *
- * Supports both static `{ __html: string }` values and reactive functions
- * that return `{ __html: string }`.
+ * Supports both static `{ __html }` values and reactive functions that return
+ * one. `null` empties the element through `replaceChildren()`, which no
+ * Trusted Types policy checks: core itself writes no string to an HTML sink.
+ *
+ * Verified by: src/dom/__tests__/trusted-html.test.ts > "core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()"
  */
 function handleInnerHTML(el: Element, _key: string, value: unknown): void {
   if (typeof value === 'function') {
     internalEffect(() => {
       const resolved = (value as () => unknown)();
       if (resolved == null) {
-        el.innerHTML = '';
+        el.replaceChildren();
         return;
       }
-      if (typeof resolved !== 'object' || !('__html' in (resolved as any))) {
-        throw new TypeError(
-          'dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof resolved,
-        );
-      }
-      const html = (resolved as { __html: string }).__html;
-      if (typeof html !== 'string') {
-        throw new TypeError(
-          'dangerouslySetInnerHTML: __html must be a string, got ' + typeof html,
-        );
-      }
+      const html = innerHtmlOf(resolved);
+      const markup = String(html);
       const cache = getCache(el);
-      if (cache['innerHTML'] === html) return;
-      cache['innerHTML'] = html;
-      el.innerHTML = html;
+      if (cache['innerHTML'] === markup) return;
+      cache['innerHTML'] = markup;
+      el.innerHTML = rawHtml(html, 'innerHTML');
     });
   } else {
     if (value == null) {
-      el.innerHTML = '';
+      el.replaceChildren();
       return;
     }
-    if (typeof value !== 'object' || !('__html' in (value as any))) {
-      throw new TypeError(
-        'dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof value,
-      );
-    }
-    const html = (value as { __html: string }).__html;
-    if (typeof html !== 'string') {
-      throw new TypeError(
-        'dangerouslySetInnerHTML: __html must be a string, got ' + typeof html,
-      );
-    }
-    el.innerHTML = html;
+    el.innerHTML = rawHtml(innerHtmlOf(value), 'innerHTML');
   }
 }
 
@@ -571,7 +562,6 @@ function handleGenericAttr(el: Element, key: string, value: unknown): void {
     if (__DEV__) warnDropped(el, key, 'inline-event-handler');
     return;
   }
-  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);
   // `key` is fixed for this binding, so the (allocating) URL-attribute lookup
   // happens once, not on every reactive re-run.
   const urlAttr = isUrlAttr(key);
@@ -584,7 +574,10 @@ function handleGenericAttr(el: Element, key: string, value: unknown): void {
       if (cache[key] === strVal) return;
       if (!urlAttr || !isDangerousUrl(strVal, el.localName)) {
         cache[key] = strVal;
-        el.setAttribute(key, strVal);
+        // `srcdoc` takes trustedHtml() (DR-19): an object is written as
+        // htmlOf() gives it, so a TrustedHTML reaches the attribute typed.
+        warnRawAttr(key, v);
+        el.setAttribute(key, typeof v === 'object' ? htmlOf(v) : strVal);
         return;
       }
       if (__DEV__) warnDropped(el, key, 'unsafe-URL');
@@ -688,18 +681,7 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
   }
 
   if (key === 'dangerouslySetInnerHTML') {
-    if (typeof value !== 'object' || !('__html' in (value as any))) {
-      throw new TypeError(
-        'dangerouslySetInnerHTML: expected { __html: string }, got ' + typeof value,
-      );
-    }
-    const html = (value as { __html: string }).__html;
-    if (typeof html !== 'string') {
-      throw new TypeError(
-        'dangerouslySetInnerHTML: __html must be a string, got ' + typeof html,
-      );
-    }
-    el.innerHTML = html;
+    el.innerHTML = rawHtml(innerHtmlOf(value), 'innerHTML');
     return;
   }
 
@@ -730,7 +712,7 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
     if (__DEV__) warnDropped(el, key, 'inline-event-handler');
     return;
   }
-  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);
+  warnRawAttr(key, value);
 
   // true → empty string attribute, else stringified value
   if (value === true) {
@@ -742,7 +724,9 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
     if (__DEV__) warnDropped(el, key, 'unsafe-URL');
     return;
   }
-  el.setAttribute(key, strVal);
+  // `srcdoc` takes trustedHtml() (DR-19): an object is written as htmlOf()
+  // gives it, so a TrustedHTML reaches the attribute typed.
+  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);
 }
 
 /** Append a single child to a parent node. */
@@ -954,6 +938,8 @@ export function h(
   // content being built (namespace.ts), which is HTML for a child built
   // before its parent exists, unless the tree is inside svg().
   if (DUAL_USE_SVG_TAGS.has(tagName)) {
+    // 3.0.0 refuses a script element (DR-19, FORMA-109); 2.x warns once.
+    warnScriptElement(tagName);
     const ns = getNamespace();
     el = ns ? document.createElementNS(ns, tagName) : getProto(tagName).cloneNode(false) as HTMLElement;
   } else if (ELEMENT_PROTOS && ELEMENT_PROTOS[tagName]) {

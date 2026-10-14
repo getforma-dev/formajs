@@ -60,7 +60,7 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 |-----------|-----------------|-------------------|
 | `el.style.cssText = '...'` | Yes (`style-src` without `unsafe-inline`) | **No** — removed in v1.0.9 |
 | `el.setAttribute('style', '...')` | Yes | **No** |
-| `innerHTML` with `style="..."` | Yes | **Not for library-generated markup** — `h()` builds DOM with `createElement`/`textContent`. `innerHTML` is reached only through the explicit opt-in sinks: `dangerouslySetInnerHTML`, `setHTMLUnsafe()` and `reconcile()`. See [SECURITY.md](./SECURITY.md#unsanitized-html-sinks). |
+| `innerHTML` with `style="..."` | Yes | **Not for library-generated markup** — `h()` builds DOM with `createElement`/`textContent`. `innerHTML` is reached only through the explicit opt-in sinks: `dangerouslySetInnerHTML`, `setHTMLUnsafe()`, `template()` and `reconcile()`, each of which takes `trustedHtml()`. See [SECURITY.md](./SECURITY.md#unsanitized-html-sinks) and [Trusted Types](#trusted-types). |
 | `Object.assign(el.style, {...})` | No (CSSOM API) | **Yes** — all styles go through this |
 | `el.style.color = 'red'` | No (CSSOM API) | **Yes** (via Object.assign) |
 | `new Function(...)` | Yes (`script-src` without `unsafe-eval`) | **No** — an allowlist AST interpreter is used instead, in every build. There is no opt-in and no fallback; `scripts/verify-dist.mjs` greps every published artifact. |
@@ -128,6 +128,52 @@ Verified by `src/security/__tests__/url-safety.test.ts` > "blocks data:image/svg
 
 ---
 
+## Trusted Types
+
+A policy carrying `require-trusted-types-for 'script'` makes the browser refuse
+a string written to an HTML sink (`innerHTML`, a `<template>`'s `innerHTML`, an
+iframe's `srcdoc`, `insertAdjacentHTML`, …) unless a Trusted Types policy the
+page allows made it. forma-server 0.2.2 sends, beside its enforced policy,
+
+```
+Content-Security-Policy-Report-Only: require-trusted-types-for 'script'; trusted-types forma forma-runtime
+```
+
+so for one release a violation is reported and the page still works; 3.0.0
+enforces it (DR-20). `forma` and `forma-runtime` are core's two
+policies:
+
+- **`forma`** makes what `trustedHtml(markup)` returns, the one raw-HTML entry
+  ([docs/API.md](docs/API.md#trustedhtml-the-one-raw-entry)). Every raw sink
+  writes a `trustedHtml()` value as the `TrustedHTML` it is, so the page
+  accepts it; a plain string given to a raw sink reaches the sink as a string,
+  which the page reports (Report-Only) or refuses (enforced).
+- **`forma-runtime`** is the zero-build runtime's parser's. `reconcile()` trims
+  what it is given before it parses it; markup that arrived as `trustedHtml()`
+  is minted again, trimmed, through this policy. A string given to
+  `reconcile()` is never minted.
+
+Both pass markup through unchanged. What they enforce is that every raw entry
+is named: nothing reaches a sink without `trustedHtml()` or a policy of the
+application's own. Each policy is created once per page, on first use, and
+shared by every copy of core on the page (the runtime's IIFE beside core's ESM
+build, say), since an enforcing page refuses a second policy of the same name.
+
+Core's own writes put no string into an HTML sink: `mount()`, the function it
+returns, and a reactive `dangerouslySetInnerHTML` that becomes `null` empty an
+element with `replaceChildren()`, which no policy checks. Under the header above,
+Report-Only and enforced, `e2e/trusted-types.spec.ts` runs core's own test pages
+and every raw sink given `trustedHtml()` and asserts zero violations; a string
+written to `innerHTML` raises one report, and the page still renders under
+Report-Only. It runs in Chromium on every merge, and in Firefox and WebKit
+before each release.
+
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "reconcile() parses trusted markup through the forma-runtime policy and a string through no policy"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "trustedHtml() returns a TrustedHTML from the forma policy where the browser has Trusted Types"
+
+---
+
 ## Testing CSP
 
 Check the browser console for CSP violations. They appear as:
@@ -161,4 +207,4 @@ Verified by `src/__tests__/docs-truth.test.ts` > "CSP.md's version history ends 
 | 2.0.1 | No CSP-affecting changes since 2.0.0. |
 | 2.0.2 | No CSP-affecting changes since 2.0.1. |
 | 2.0.3 | No CSP-affecting changes since 2.0.2. |
-| Unreleased | No CSP-affecting changes since 2.0.3. |
+| Unreleased | Trusted Types: core writes no string to an HTML sink of its own, and every raw sink takes `trustedHtml()`, made by core's policy `forma` (the runtime's parser re-mints through `forma-runtime`), so under `require-trusted-types-for 'script'; trusted-types forma forma-runtime` a page reports only the application's own string writes. See [Trusted Types](#trusted-types). |

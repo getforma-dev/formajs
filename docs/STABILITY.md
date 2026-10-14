@@ -26,6 +26,7 @@ runs from source it logs a coded warning, and an installed package shows it as
 | `createReducer` | **Stable** | |
 | `createResource` / `createSuspense` | **Stable** | Abortable; the Suspense boundary is captured at resource creation |
 | `createPortal`, `svg()`, `template()` | **Stable** | |
+| `trustedHtml()`, the raw-HTML entry every raw sink takes | **Stable** | A plain string at a raw sink, and `h('script')`, are deprecated forms: see [Deprecated forms](#deprecated-forms). |
 | `data-fetch`, `data-transition:*`, `data-ref` | **Stable** | |
 | Server functions (`@getforma/core/server`: `"use server"` RPC, `createAction`, the revalidation helpers) | **Deprecated** | Removed in 3.0.0. Serve the call from a route in the application's Rust server. Logs `FORMA_W_DEPRECATED_SERVER`. |
 | SSR (`@getforma/core/ssr`: `renderToString`, `renderToStream`) | **Deprecated** | Removed in 3.0.0. Render on the server with the Rust walker (forma-server); its form controls differ from the walker's, see [SSR form controls](#ssr-form-controls). Logs `FORMA_W_DEPRECATED_SSR`. |
@@ -71,6 +72,31 @@ through. The `FORMA_W_` codes are listed here and nowhere else.
 
 Verified by `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its deprecation once in development, with its code"
 Verified by `src/__tests__/deprecated-entries.test.ts` > "a production build of each deprecated entry carries no warning"
+
+## Deprecated forms
+
+Two forms keep working through 2.x and are refused in 3.0.0 (DR-19): a plain
+string given to a raw sink, where `trustedHtml(markup)` is the typed form, and
+`h('script')`. In a development build (the builds the section above describes)
+each logs its code once, as `[forma] FORMA_W_RAW_SRCDOC: …`:
+
+| Form | Code | Instead |
+|---|---|---|
+| A string as `dangerouslySetInnerHTML`'s `__html` | `FORMA_W_RAW_INNER_HTML` | `{ __html: trustedHtml(markup) }` |
+| A string to `setHTMLUnsafe()` | `FORMA_W_RAW_SET_HTML` | `setHTMLUnsafe(el, trustedHtml(markup))` |
+| A string to `template()` or `templateMany()` | `FORMA_W_RAW_TEMPLATE` | `template(trustedHtml(markup))` |
+| A string to the runtime's `reconcile()` | `FORMA_W_RAW_RECONCILE` | `reconcile(container, trustedHtml(markup))` |
+| A string as a `srcdoc` value | `FORMA_W_RAW_SRCDOC` | `srcdoc: trustedHtml(markup)` |
+| `h('script')` | `FORMA_W_SCRIPT_ELEMENT` | A script in the page, or a module the build bundles |
+
+Under a page policy that requires Trusted Types, as forma-server 0.2.2's
+Report-Only header does, a string at a raw sink is also reported by the
+browser, and refused where the policy is enforced; a `trustedHtml()` value is
+not ([`../CSP.md`](../CSP.md#trusted-types)).
+
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "a string to each raw sink still renders, and warns once with the sink's code in development"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "h('script') warns once in development and still builds the element"
+Verified by `src/dom/__tests__/trusted-html-build.test.ts` > "a production build carries none of the raw-HTML warnings, in any artifact"
 
 ## SSR form controls
 

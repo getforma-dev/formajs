@@ -125,8 +125,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);\n\n  // true → empty string attribute, else stringified value",
-  "replace": "  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);\n\n  // true → empty string attribute, else stringified value",
+  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  warnRawAttr(key, value);\n\n  // true → empty string attribute, else stringified value",
+  "replace": "  warnRawAttr(key, value);\n\n  // true → empty string attribute, else stringified value",
   "note": "h() static path writes ONCLICK as an inline handler"
  },
  {
@@ -145,8 +145,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (isUrlAttr(key) && isDangerousUrl(strVal, el.localName)) {\n    if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n    return;\n  }\n  el.setAttribute(key, strVal);",
-  "replace": "  el.setAttribute(key, strVal);",
+  "find": "  if (isUrlAttr(key) && isDangerousUrl(strVal, el.localName)) {\n    if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n    return;\n  }\n  // `srcdoc` takes trustedHtml() (DR-19): an object is written as htmlOf()\n  // gives it, so a TrustedHTML reaches the attribute typed.\n  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);",
+  "replace": "  // `srcdoc` takes trustedHtml() (DR-19): an object is written as htmlOf()\n  // gives it, so a TrustedHTML reaches the attribute typed.\n  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);",
   "note": "h() static attribute path writes javascript: URLs"
  },
  {
@@ -720,8 +720,8 @@
    "correctness",
    "contract"
   ],
-  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, str);",
-  "replace": "        el.setAttribute(attrKey, str);",
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);",
+  "replace": "        el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);",
   "note": "adoption rewrites every reactive attribute the server already holds: a DOM write per binding, and an iframe's src reloads (FORMA-020, DR-5)"
  },
  {
@@ -2093,5 +2093,145 @@
   "find": "const REACH = LIMITS.ALLOC_BUDGET;",
   "replace": "const REACH = LIMITS.ALLOC_BUDGET / 4;",
   "note": "a cost is counted only part of the way to the budget, so an argument heavier than any task can hold reads as one that might fit: `s.includes(list)` with a 300,000-unit list is answered (FORMA-028 review, S2). Verified by: src/expr/__tests__/string-growth.test.ts > \"a string method reads a string argument for a thirty-second of a unit a character\""
+ },
+ {
+  "id": "trusted/mount-clear-string",
+  "file": "src/dom/mount.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    target.replaceChildren();\n    target.appendChild(dom);",
+  "replace": "    target.innerHTML = '';\n    target.appendChild(dom);",
+  "note": "mount() empties its container by writing a string to innerHTML, which a page requiring Trusted Types reports or refuses (DR-20, FORMA-127). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/unmount-clear-string",
+  "file": "src/dom/mount.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      target.replaceChildren();\n    } else {",
+  "replace": "      target.innerHTML = '';\n    } else {",
+  "note": "the function mount() returns empties the container by writing a string to innerHTML (DR-20, FORMA-127). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/null-clear-string",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (resolved == null) {\n        el.replaceChildren();",
+  "replace": "      if (resolved == null) {\n        el.innerHTML = '';",
+  "note": "a reactive dangerouslySetInnerHTML that becomes null empties the element with a string write (DR-20, FORMA-127). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/reconcile-writes-trusted-as-string",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    const markup = trusted ? runtimeHtml(trimmed) : trimmed;",
+  "replace": "    const markup = trimmed;",
+  "note": "reconcile() trims a trustedHtml() value and parses the trimmed string, which a page requiring Trusted Types refuses: the runtime parser's forma-runtime policy is skipped (DR-20). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/reconcile-launders-strings",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    const markup = trusted ? runtimeHtml(trimmed) : trimmed;",
+  "replace": "    const markup = runtimeHtml(trimmed);",
+  "note": "reconcile() mints any string through Forma's forma-runtime policy, so a raw string entry is never reported and Trusted Types guard nothing (DR-19, DR-20). Verified by: src/dom/__tests__/trusted-html.test.ts > \"reconcile() parses trusted markup through the forma-runtime policy and a string through no policy\""
+ },
+ {
+  "id": "trusted/srcdoc-stringified",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);",
+  "replace": "  el.setAttribute(key, strVal);",
+  "note": "a static srcdoc given trustedHtml() is written as a string, which a page requiring Trusted Types refuses (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/reactive-srcdoc-stringified",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        el.setAttribute(key, typeof v === 'object' ? htmlOf(v) : strVal);",
+  "replace": "        el.setAttribute(key, strVal);",
+  "note": "a reactive srcdoc given trustedHtml() is written as a string (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/adoption-srcdoc-stringified",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);",
+  "replace": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, str);",
+  "note": "an adopted island's reactive srcdoc given trustedHtml() is written as a string (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"an adopted island's srcdoc binding writes trustedHtml() typed and warns once for a string\""
+ },
+ {
+  "id": "trusted/policy-per-call",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  let found = reg.policies[name];",
+  "replace": "  let found: HtmlPolicy | null | undefined;",
+  "note": "each trustedHtml() asks the browser for the forma policy again; an enforcing page refuses a second policy of one name, so the second raw entry on a page fails (DR-20). Verified by: src/dom/__tests__/trusted-html.test.ts > \"trustedHtml() returns a TrustedHTML from the forma policy where the browser has Trusted Types\""
+ },
+ {
+  "id": "trusted/look-alike-accepted",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return !!tt && tt.isHTML(value);",
+  "replace": "  return true;",
+  "note": "any object passes for trusted HTML, so a value an attacker shapes reaches a raw sink without trustedHtml() (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a look-alike object is not trusted HTML\""
+ },
+ {
+  "id": "trusted/stand-in-unrecognised",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  registry().minted.set(standIn, html);\n",
+  "replace": "",
+  "note": "without Trusted Types, what trustedHtml() returns is not recognised by the sinks it was made for. Verified by: src/dom/__tests__/trusted-html.test.ts > \"without Trusted Types it returns a frozen stand-in that core recognises\""
+ },
+ {
+  "id": "trusted/string-warning-silent",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    warnRawString(sink);\n    return value;",
+  "replace": "    return value;",
+  "note": "a string given to a raw sink is written with no development warning, so the 2.x bridge says nothing before 3.0.0 refuses it (L-18, DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a string to each raw sink still renders, and warns once with the sink's code in development\""
+ },
+ {
+  "id": "trusted/script-warning-silent",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    warnScriptElement(tagName);\n",
+  "replace": "",
+  "note": "h('script') builds a script element with no development warning before 3.0.0 refuses it (DR-19, FORMA-109). Verified by: src/dom/__tests__/trusted-html.test.ts > \"h('script') warns once in development and still builds the element\""
+ },
+ {
+  "id": "trusted/ssr-refuses-trusted",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (isTrustedHtml(html)) return String(html);\n",
+  "replace": "",
+  "note": "./ssr throws on a dangerouslySetInnerHTML given trustedHtml(), so a component shared with the browser cannot take the typed form (L-18). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the SSR renderers write a trustedHtml() value's markup and still refuse a non-string\""
  }
 ]
