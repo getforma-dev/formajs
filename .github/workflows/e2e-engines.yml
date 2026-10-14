@@ -34,8 +34,13 @@ jobs:
     # MEASURED in CI on the PR that added this (FORMA-027, cold browser
     # cache): whole job 55s chromium, 1m6s firefox, 1m19s webkit, of which
     # `install --with-deps` was 26s / 22s / 40s and the 45 tests 13s / 30s /
-    # 25s. 10 is >7x the slowest and bounds a slow apt mirror.
-    timeout-minutes: 10
+    # 25s. The 10 minutes this had did not bound a slow apt mirror: in run
+    # 38570775920 (formajs#28's first dispatch) WebKit's `install --with-deps`
+    # was still downloading its 181 system packages (117 MB, normally 15s) at
+    # about 100 kB/s when the job timed out. The two install steps below are
+    # now bounded on their own, with one retry each (at most 9 and 5 minutes);
+    # 20 holds both at their worst plus the ~2m the rest takes.
+    timeout-minutes: 20
     strategy:
       # Each engine reports on its own: one red engine does not hide another.
       fail-fast: false
@@ -49,17 +54,75 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Browser binaries cached per engine, keyed on the resolved Playwright
-      # version. `--with-deps` still runs so the OS packages are present; only
-      # the download is skipped on a hit.
-      - name: Resolve Playwright version
+      # The engine is installed in two halves, each from a cache when it can
+      # be, each bounded with one retry (FORMA-179). The system packages come
+      # from the runner's apt mirror; the browser binary from Playwright's CDN.
+      # Both caches are keyed on the resolved Playwright version, which decides
+      # the browser build and the package list; the packages' key also names
+      # the runner image, whose package versions they must match. This job
+      # restores caches because it only tests: release.yml calls it as its
+      # `engines` gate, and SR43 keeps every cache out of `pack` and `publish`.
+      - name: Resolve Playwright version and runner image
         id: pw
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+
+      # The .deb archives apt downloaded for this engine. apt checks each
+      # restored archive against the signed package index before it installs
+      # it, and downloads again any whose version or checksum differs.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/playwright-apt
+          key: playwright-apt-${{ steps.pw.outputs.image }}-${{ steps.pw.outputs.version }}-${{ matrix.browser }}
+      - name: Install ${{ matrix.browser }}'s system packages, retried once
+        # Normally under a minute (WebKit's 117 MB in 15s, Chromium's 22 MB in
+        # 2s); each attempt is cut at 4 minutes, so a stalled mirror costs two
+        # attempts, not the job.
+        timeout-minutes: 9
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          shopt -s nullglob
+          mkdir -p ~/.cache/playwright-apt
+          cached=(~/.cache/playwright-apt/*.deb)
+          echo "${#cached[@]} archives restored from the cache"
+          if [ "${#cached[@]}" -gt 0 ]; then sudo cp "${cached[@]}" /var/cache/apt/archives/; fi
+          for attempt in 1 2; do
+            if timeout --kill-after=20s 4m npx playwright install-deps "$BROWSER"; then
+              break
+            fi
+            if [ "$attempt" = 2 ]; then
+              echo "::error::installing $BROWSER's system packages failed twice; see the apt output above"
+              exit 1
+            fi
+            echo "::warning::installing $BROWSER's system packages failed or ran past 4 minutes; retrying once"
+            sudo dpkg --configure -a
+          done
+          fresh=(/var/cache/apt/archives/*.deb)
+          if [ "${#fresh[@]}" -gt 0 ]; then cp "${fresh[@]}" ~/.cache/playwright-apt/; fi
+          echo "${#fresh[@]} archives kept for the cache"
+
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ matrix.browser }}
-      - run: npx playwright install --with-deps ${{ matrix.browser }}
+      - name: Install ${{ matrix.browser }}, retried once
+        # A no-op on a cache hit. Cold, FORMA-027 measured the whole install,
+        # system packages included, at 22 to 40s; each attempt is cut at 2
+        # minutes.
+        timeout-minutes: 5
+        env:
+          BROWSER: ${{ matrix.browser }}
+        run: |
+          for attempt in 1 2; do
+            if timeout --kill-after=20s 2m npx playwright install "$BROWSER"; then
+              exit 0
+            fi
+            echo "::warning::installing $BROWSER failed or ran past 2 minutes (attempt $attempt of 2)"
+          done
+          echo "::error::installing $BROWSER failed twice; see the output above"
+          exit 1
 
       # Builds dist, then runs every spec in this engine's project.
       - run: npm run test:e2e:engines -- --project=${{ matrix.browser }}

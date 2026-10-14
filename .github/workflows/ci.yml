@@ -13,19 +13,16 @@ on:
       - 'LICENSE'
   pull_request:
     branches: [main]
-  schedule:
-    # Nightly, for the mutation-probe corpus only — it runs the whole suite once
-    # per probe, so it is minutes rather than seconds and does not belong on a PR.
-    - cron: '17 3 * * *'
+  # No `schedule` here (FORMA-179): the nightly mutation run is its own
+  # workflow, nightly-probes.yml, so no PR or push shows a job that only a
+  # schedule could start as permanently "skipped".
   workflow_dispatch:
 
 # This repo previously had NO concurrency group on CI (only docs.yml had one,
 # `group: pages`), so every superseded push kept its runners. On 2026-08-06 the
 # four Forma repos asked for ~44 concurrent jobs against a 20-job limit and
 # jobs sat 20-58 minutes waiting for a runner; that queue time was misread as
-# hanging jobs. `github.ref` keeps the nightly schedule (ref = main) from
-# cancelling itself against a same-minute push, and vice versa, only in the
-# sense that the newer run wins — which is the behaviour we want.
+# hanging jobs. A newer run on the same ref cancels the one it supersedes.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
@@ -71,7 +68,7 @@ jobs:
   # takes seconds and catches the failure mode where a refactor silently turns
   # a mutant into a no-op and the detection rate climbs for free.
   # The expensive half — actually applying each probe and running the suite —
-  # is the nightly job below.
+  # is nightly-probes.yml, on a schedule of its own.
   # Verified by: src/__tests__/probe-corpus.test.ts > "every probe still applies to the file it names"
   probes-check:
     permissions:
@@ -88,41 +85,6 @@ jobs:
           cache: npm
       - run: npm ci
       - run: node scripts/run-probes.mjs --check
-
-  # Nightly mutation run with a detection floor. A survivor is a property
-  # nothing in the suite defends, so the floor is a ratchet: it may go up.
-  probes:
-    permissions:
-      contents: read
-    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-latest
-    # MEASURED locally: the full run — apply each of the 93 probes, run the
-    # whole vitest suite, revert — completed in 411s (6.9m) at 90/90 = 100%
-    # detection. A 2-core hosted runner is roughly 2-3x slower than the machine
-    # that measured it, so budget 15-20m; 35 is ~2x that. The previous value,
-    # 60, was a round number nobody had measured — and it was this fleet's ONLY
-    # timeout-minutes anywhere, sitting on the one job that never runs per-PR,
-    # so effective per-PR timeout coverage was exactly zero.
-    # MEASURED on a hosted runner (FORMA-128, workflow_dispatch run
-    # 38584952503): 325 of 338 probes in 35.4 min, about 6.5 s a probe, when
-    # the 35-minute limit cancelled it; 274 had taken 25.5 min. The corpus is
-    # 328 with FORMA-128's tiered-mount probes, so a run is about 36 min; 75 is
-    # ~2x that, as above.
-    timeout-minutes: 75
-    steps:
-      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
-      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
-        with:
-          node-version: 24
-          cache: npm
-      - run: npm ci
-      - run: node scripts/run-probes.mjs --floor=85
-      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
-        if: always()
-        with:
-          name: mutation-probe-results
-          path: probes/results.json
-          retention-days: 30
 
   # Packaging surface. Split out because it is Node-version independent and
   # would have caught the node10 / global-subpath / missing-package.json
@@ -160,9 +122,10 @@ jobs:
     # in 7.3s, all green). In CI the healthy run measured 5.4m end to end, of
     # which playwright install was 0.3m. The Playwright config gives webServer
     # no explicit timeout, so it inherits the 60s default — `npx serve` failing
-    # to bind fails the run at 60s and cannot hang. 12 is >2x the measured CI
-    # number and ~50x the local one.
-    timeout-minutes: 12
+    # to bind fails the run at 60s and cannot hang. The two install steps are
+    # bounded on their own with one retry each (at most 9 and 5 minutes,
+    # FORMA-179), so 20 holds both at their worst plus a slow run of the rest.
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
@@ -171,18 +134,61 @@ jobs:
           cache: npm
       - run: npm ci
 
-      # Cache the browser binaries (~130 MB) keyed on the resolved Playwright
-      # version. `--with-deps` still runs so the OS packages are present; only
-      # the download is skipped on a hit.
-      - name: Resolve Playwright version
+      # Chromium is installed as e2e-engines.yml installs each engine
+      # (FORMA-179): its system packages, then the browser, each from a cache
+      # keyed on the resolved Playwright version, each bounded with one retry.
+      # The keys are the ones e2e-engines.yml's chromium leg writes.
+      - name: Resolve Playwright version and runner image
         id: pw
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+        run: |
+          echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+          echo "image=${ImageOS:-unknown}-${ImageVersion:-unknown}" >> "$GITHUB_OUTPUT"
+      # apt checks each restored archive against the signed package index
+      # before it installs it, and downloads again any that differs.
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/.cache/playwright-apt
+          key: playwright-apt-${{ steps.pw.outputs.image }}-${{ steps.pw.outputs.version }}-chromium
+      - name: Install chromium's system packages, retried once
+        # Normally seconds (22 MB in 2s); each attempt is cut at 4 minutes.
+        timeout-minutes: 9
+        run: |
+          shopt -s nullglob
+          mkdir -p ~/.cache/playwright-apt
+          cached=(~/.cache/playwright-apt/*.deb)
+          echo "${#cached[@]} archives restored from the cache"
+          if [ "${#cached[@]}" -gt 0 ]; then sudo cp "${cached[@]}" /var/cache/apt/archives/; fi
+          for attempt in 1 2; do
+            if timeout --kill-after=20s 4m npx playwright install-deps chromium; then
+              break
+            fi
+            if [ "$attempt" = 2 ]; then
+              echo "::error::installing chromium's system packages failed twice; see the apt output above"
+              exit 1
+            fi
+            echo "::warning::installing chromium's system packages failed or ran past 4 minutes; retrying once"
+            sudo dpkg --configure -a
+          done
+          fresh=(/var/cache/apt/archives/*.deb)
+          if [ "${#fresh[@]}" -gt 0 ]; then cp "${fresh[@]}" ~/.cache/playwright-apt/; fi
+          echo "${#fresh[@]} archives kept for the cache"
       - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-chromium
+      - name: Install chromium, retried once
+        # A no-op on a cache hit; each attempt is cut at 2 minutes.
+        timeout-minutes: 5
+        run: |
+          for attempt in 1 2; do
+            if timeout --kill-after=20s 2m npx playwright install chromium; then
+              exit 0
+            fi
+            echo "::warning::installing chromium failed or ran past 2 minutes (attempt $attempt of 2)"
+          done
+          echo "::error::installing chromium failed twice; see the output above"
+          exit 1
 
-      - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         if: failure()

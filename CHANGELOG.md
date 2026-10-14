@@ -788,6 +788,24 @@ All notable changes to this project will be documented in this file.
   on the publish or pack job, and a checkout of another repository or ref;
   every rule has a seed in `--self-test`, which fails if one does not. The
   artefact test flips a byte instead of writing one that may already be there.
+- **No permanently skipped job, no flaky timing test, a bounded browser
+  install** (FORMA-179, FORMA-177). The nightly mutation-probe run leaves
+  `ci.yml` for its own workflow, `nightly-probes.yml` (schedule and
+  `workflow_dispatch` only, the same pins, token, timeout and artefact), and
+  `ci.yml` drops its `schedule`, so no PR or push shows `probes` as skipped.
+  `e2e-engines.yml` (and so the release's `engines` gate) and `ci.yml`'s
+  Chromium `e2e` install each engine in two steps, its system packages and
+  then the browser, each restored from a cache keyed on the Playwright version
+  (the packages' also on the runner image) and each bounded, with one retry;
+  a slow apt mirror once held WebKit's install past the job's 10 minutes.
+  `publish` and `pack` still restore no cache. The three heaviest task-budget
+  tests and a native-cost test get explicit timeouts about 3x their slowest
+  CI run (one had timed out under coverage on Node 20). Two unit tests stop
+  timing themselves: native-cost's 50 ms bound goes (the native never reached
+  and the heap not grown are its deterministic checks; `e2e/sr33.spec.ts`
+  keeps the 50 ms in three browsers), and string-growth's 200 ms ceiling
+  becomes a count: a refused loop stops before a tenth of the interpreter
+  steps it takes over short strings. The published package is unchanged.
 
 ## [2.0.3] - 2026-10-14
 

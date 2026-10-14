@@ -17,7 +17,10 @@ concurrency:
 # Only `publish` holds `id-token: write`, the permission that lets a job mint
 # the OIDC token npm exchanges for a publish credential. Everything that runs
 # the dependency tree runs in a job without it:
-#   engines  the e2e suite in Chromium, Firefox and WebKit (DR-9, FORMA-027)
+#   engines  the e2e suite in Chromium, Firefox and WebKit (DR-9, FORMA-027);
+#            it restores the browsers and their system packages from caches
+#            (e2e-engines.yml, FORMA-179); SR43 bars a cache from `pack` and
+#            `publish` only
 #   test     typecheck and the unit suite
 #   pack     builds, runs the size and package gates, checks the version against
 #            the tag, packs the tarball and writes its SHA-256 record; restores
