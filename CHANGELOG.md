@@ -24,11 +24,13 @@ All notable changes to this project will be documented in this file.
   `042e353`.)
 - **A component that returns a detached DOM node while hydrating is reported.**
   2.0.1 counted it as adopted and removed `data-forma-ssr` with nothing bound.
-  Now the error `FORMA_E_HYDRATE_NODE` is logged in every build and the server's
-  DOM stays as served: `activateIslands` marks that island `error`, and
-  `mount()` and `hydrateIsland()` keep `data-forma-ssr` (`mount()` also disposes
-  the component's effects). Neither throws. Returning the island's own element,
-  or a node inside it, works as in 2.0.1.
+  Now the error `FORMA_E_HYDRATE_NODE` is logged in every build and passed to
+  `onError` handlers (source `'hydration'`), and the server's DOM stays as
+  served: `activateIslands` marks that island `error`, and `mount()` and
+  `hydrateIsland()` keep `data-forma-ssr` (`mount()` also disposes the
+  component's effects; a direct `hydrateIsland()` caller owns its root). Neither
+  throws. Returning the island's own element, a node inside it, or a fragment
+  the component already appended into it (now empty) works as in 2.0.1.
 
 ### Fixed
 

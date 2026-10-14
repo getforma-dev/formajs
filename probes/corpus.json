@@ -5,7 +5,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (isHydrateNodeError(err)) console.error(`${err.message} (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
+  "find": "    if (isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
   "replace": "    if (__DEV__)",
   "note": "an island failed by FORMA_E_HYDRATE_NODE leaves no coded log line naming it"
  },
@@ -244,6 +244,16 @@
   "note": "a detached DOM node returned while hydrating counts as adopted: data-forma-ssr removed, island active, nothing bound, nothing logged"
  },
  {
+  "id": "hydrate/empty-fragment-is-an-error",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    descriptor instanceof Node && descriptor !== target && !target.contains(descriptor) &&\n    !(descriptor.nodeType === 11 && !descriptor.firstChild)",
+  "replace": "    descriptor instanceof Node && descriptor !== target && !target.contains(descriptor)",
+  "note": "an island that appended its fragment into `el` and returned it (templateMany) is marked error and its effects disposed (FORMA-003 S-b)"
+ },
+ {
   "id": "hydrate/eventhandler-guard-off",
   "file": "src/dom/hydrate.ts",
   "tags": [
@@ -274,6 +284,26 @@
   "note": "every update after activation skips an edited control, so a controlled input stops following its signal"
  },
  {
+  "id": "hydrate/hydrate-node-error-not-logged",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  console.error(err.message + where);\n  reportError(err, 'hydration');",
+  "replace": "  reportError(err, 'hydration');",
+  "note": "FORMA_E_HYDRATE_NODE is not logged with its code; production builds would show nothing"
+ },
+ {
+  "id": "hydrate/hydrate-node-error-skips-onerror",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  console.error(err.message + where);\n  reportError(err, 'hydration');",
+  "replace": "  console.error(err.message + where);",
+  "note": "FORMA_E_HYDRATE_NODE never reaches the documented onError hook, so production error reporting misses it (FORMA-003 S-a)"
+ },
+ {
   "id": "hydrate/nested-fragment-skipped",
   "file": "src/dom/hydrate.ts",
   "tags": [
@@ -289,8 +319,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "  } else if (descriptor instanceof Node && descriptor !== target && !target.contains(descriptor)) {",
-  "replace": "  } else if (descriptor instanceof Node) {",
+  "find": "    descriptor instanceof Node && descriptor !== target && !target.contains(descriptor) &&\n    !(descriptor.nodeType === 11 && !descriptor.firstChild)",
+  "replace": "    descriptor instanceof Node",
   "note": "an island returning its own element (2.0.1's imperative pattern) is marked error and its effects disposed (FORMA-003 B1)"
  },
  {
@@ -299,7 +329,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (!isHydrateNodeError(err)) throw err;\n    console.error(err.message);\n    return target;",
+  "find": "    if (!isHydrateNodeError(err)) throw err;\n    reportHydrateNodeError(err);\n    return target;",
   "replace": "    throw err;",
   "note": "hydrateIsland() throws for a detached node, which 2.0.1 never did (a breaking change in a patch)"
  },

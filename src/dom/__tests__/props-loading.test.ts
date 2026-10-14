@@ -23,9 +23,9 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (_el, props) => {
+      Comp: (el, props) => {
         receivedProps = props;
-        return document.createElement('div');
+        return el;
       },
     });
 
@@ -44,9 +44,9 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (_el, props) => {
+      Comp: (el, props) => {
         receivedProps = props;
-        return document.createElement('div');
+        return el;
       },
     });
 
@@ -64,9 +64,9 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (_el, props) => {
+      Comp: (el, props) => {
         receivedProps = props;
-        return document.createElement('div');
+        return el;
       },
     });
 
@@ -92,7 +92,7 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Broken: () => document.createElement('div'),
+      Broken: (el) => el,
       // Wires its server DOM itself and returns its own element (2.0.1's
       // imperative pattern), so it activates like any working island.
       Working: (el) => {
@@ -125,9 +125,9 @@ describe('props loading', () => {
     island.setAttribute('data-forma-props', '{"label":"Say \\"hello\\""}');
 
     activateIslands({
-      Comp: (_el, props) => {
+      Comp: (el, props) => {
         receivedProps = props;
-        return document.createElement('div');
+        return el;
       },
     });
 

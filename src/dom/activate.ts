@@ -7,7 +7,7 @@
  */
 
 import { createUnownedRoot, __DEV__ } from 'forma/reactive';
-import { hydrateIslandOrFail, isHydrateNodeError } from './hydrate.js';
+import { hydrateIslandOrFail, isHydrateNodeError, reportHydrateNodeError } from './hydrate.js';
 
 /**
  * Function that hydrates an island.
@@ -419,10 +419,10 @@ function hydrateIslandRoot(
 
     activeRoot.setAttribute('data-forma-status', 'active');
   } catch (err) {
-    // A coded hydration error is logged in every build: in production the
-    // island's `error` status would otherwise be its only trace.
+    // A coded hydration error is logged in every build and passed to onError:
+    // in production the island's `error` status would otherwise be its only trace.
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns a detached DOM node is marked error with its code, its sibling unaffected"
-    if (isHydrateNodeError(err)) console.error(`${err.message} (island "${componentName}", id=${id})`);
+    if (isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island "${componentName}", id=${id})`);
     else if (__DEV__) console.error(`[forma] Island "${componentName}" (id=${id}) failed:`, err);
     // Dispose whatever was built before the throw: a failed island must not
     // leave live effects writing into DOM nobody will hydrate again.

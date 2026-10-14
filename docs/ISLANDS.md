@@ -195,12 +195,14 @@ adoption walks them in place: their handlers and bindings attach to the
 server's nodes. A root `createShow` or `createList` with no wrapping element is
 adopted the same way.
 
-**A component that returns a DOM node.** Returning the island's own element (or
-a node inside it) means the component wired the server's DOM itself: the island
+**A component that returns a DOM node.** Returning the island's own element, a
+node inside it, or a fragment it already appended into the element (and so
+emptied) means the component wired the server's DOM itself: the island
 activates as usual. A node built while hydrating that is not part of the
 server's HTML cannot be adopted. The server's DOM stays as served, and the
-error `FORMA_E_HYDRATE_NODE` is logged in every build. `activateIslands` marks
-that island `error` and carries on with the others. `mount()` and
+error `FORMA_E_HYDRATE_NODE` is logged in every build and passed to `onError`
+handlers with the source `'hydration'`. `activateIslands` marks that island
+`error` and carries on with the others. `mount()` and
 `hydrateIsland()` keep `data-forma-ssr` on the container and do not throw;
 `mount()` also disposes the effects the component created. A component that
 returns nothing (an island that sets up its own effects) still activates.
@@ -211,6 +213,8 @@ Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "a root createShow or
 Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "an island that returns its own element stays active and keeps updating"
 Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "an island that returns a detached DOM node is marked error with its code, its sibling unaffected"
 Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "mount() of a detached DOM node keeps the server DOM, logs the code, disposes its effects and does not throw"
+Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "an island that appends a fragment into its element and returns it, now empty, stays active"
+Verified by `src/dom/__tests__/hydrate-fragment.test.ts` > "onError receives FORMA_E_HYDRATE_NODE from activateIslands, mount() and hydrateIsland()"
 
 **Form controls.** What a user enters between first paint and activation is
 kept. For a bound `value`, `checked` or `selected`, adoption first compares the

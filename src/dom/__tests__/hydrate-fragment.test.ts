@@ -11,13 +11,14 @@
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { createEffect, createSignal } from 'forma/reactive';
+import { createEffect, createSignal, onError } from 'forma/reactive';
 import { h, Fragment, fragment } from '../element';
 import { mount } from '../mount';
 import { activateIslands } from '../activate';
 import { createShow } from '../show';
 import { createList } from '../list';
 import { hydrateIsland } from '../hydrate';
+import { templateMany } from '../template';
 
 afterEach(() => {
   document.body.innerHTML = '';
@@ -206,7 +207,7 @@ describe('Fragment adoption', () => {
       '<div data-forma-island="1" data-forma-component="Good"><span>y</span></div>';
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     activateIslands({
-      Bad: () => document.createDocumentFragment(),
+      Bad: () => document.createElement('span'),
       Good: () => h('div', null, h('span', null, 'y')),
     });
     const logged = error.mock.calls.map((call) => String(call[0]));
@@ -216,6 +217,64 @@ describe('Fragment adoption', () => {
     expect(statuses).toEqual(['error', 'active']);
     expect(logged.filter((line) => line.includes('FORMA_E_HYDRATE_NODE') && line.includes('"Bad"'))).toHaveLength(1);
     expect(document.querySelector('[data-forma-island="0"]')!.innerHTML).toBe('<span>x</span>');
+  });
+
+  it('an island that appends a fragment into its element and returns it, now empty, stays active', () => {
+    // The templateMany pattern: build, append into `el`, wire, return the
+    // fragment, which appending emptied. 2.0.1 kept such islands active.
+    document.body.innerHTML = [0, 1].map((id) =>
+      `<div data-forma-island="${id}" data-forma-component="Many"><p>server ${id}</p></div>`).join('');
+    const setters: Array<(v: number) => void> = [];
+    activateIslands({
+      Many: (el) => {
+        const fragment = templateMany('<button>0</button><i>tail</i>');
+        el.append(fragment);
+        const [n, setN] = createSignal(0);
+        setters.push(setN);
+        const button = el.querySelector('button')!;
+        createEffect(() => { button.textContent = String(n()); });
+        return fragment;
+      },
+    });
+
+    const islands = Array.from(document.querySelectorAll<HTMLElement>('[data-forma-island]'));
+    expect(islands.map((i) => i.getAttribute('data-forma-status'))).toEqual(['active', 'active']);
+    setters[0]!(5);
+    setters[1]!(7);
+    setters[0]!(6);
+    expect(islands.map((i) => i.querySelector('button')!.textContent)).toEqual(['6', '7']);
+    expect(islands[0]!.textContent).toBe('server 06tail');
+  });
+
+  it('onError receives FORMA_E_HYDRATE_NODE from activateIslands, mount() and hydrateIsland()', () => {
+    const received: Array<[string, string | undefined]> = [];
+    const off = onError((err, info) => {
+      received.push([String((err as { code?: unknown }).code), info?.source]);
+    });
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      document.body.innerHTML =
+        '<div data-forma-island="0" data-forma-component="Detached"><span>x</span></div>' +
+        '<div id="app" data-forma-ssr><p>m</p></div><div id="direct" data-forma-ssr><p>d</p></div>';
+      activateIslands({ Detached: () => document.createElement('span') });
+      mount(() => document.createElement('p') as unknown as HTMLElement, '#app');
+      hydrateIsland(() => document.createElement('p'), document.getElementById('direct')!);
+    } finally {
+      error.mockRestore();
+      off();
+    }
+
+    expect(received).toEqual([
+      ['FORMA_E_HYDRATE_NODE', 'hydration'],
+      ['FORMA_E_HYDRATE_NODE', 'hydration'],
+      ['FORMA_E_HYDRATE_NODE', 'hydration'],
+    ]);
+    // A working island reports nothing.
+    document.body.innerHTML = '<div data-forma-island="0" data-forma-component="Fine"><b>ok</b></div>';
+    const off2 = onError((err) => received.push([String(err), 'unexpected']));
+    activateIslands({ Fine: (el) => el });
+    off2();
+    expect(received).toHaveLength(3);
   });
 
   it('mount() of a detached DOM node keeps the server DOM, logs the code, disposes its effects and does not throw', () => {

@@ -9,7 +9,7 @@
  */
 
 import { createUnownedRoot } from 'forma/reactive';
-import { hydrateIslandOrFail, isHydrateNodeError } from './hydrate.js';
+import { hydrateIslandOrFail, isHydrateNodeError, reportHydrateNodeError } from './hydrate.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -78,7 +78,7 @@ export function mount(
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "mount() of a detached DOM node keeps the server DOM, logs the code, disposes its effects and does not throw"
     if (failure) {
       disposeRoot();
-      console.error(failure.message);
+      reportHydrateNodeError(failure);
     }
   } else {
     // Normal mount — clear and append

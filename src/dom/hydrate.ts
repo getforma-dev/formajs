@@ -8,6 +8,7 @@
  */
 
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
+import { reportError } from '../reactive/dev.js';
 import { h, Fragment } from './element.js';
 import {
   adoptFormControlProperty,
@@ -1319,6 +1320,19 @@ export function isHydrateNodeError(err: unknown): err is Error {
 }
 
 /**
+ * Report a `FORMA_E_HYDRATE_NODE` error: logged in every build (in production
+ * an island's `error` status would otherwise be its only trace), and passed to
+ * the `onError` handlers with the source `'hydration'`, for an application's
+ * error reporting.
+ *
+ * Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "onError receives FORMA_E_HYDRATE_NODE from activateIslands, mount() and hydrateIsland()"
+ */
+export function reportHydrateNodeError(err: Error, where = ''): void {
+  console.error(err.message + where);
+  reportError(err, 'hydration');
+}
+
+/**
  * Hydrate an SSR island in-place. Runs the component in hydration mode so
  * h() returns descriptors, then walks the descriptor tree against the SSR DOM
  * to attach event handlers and reactive bindings. No DOM elements are created.
@@ -1345,7 +1359,7 @@ export function hydrateIsland(component: () => unknown, target: Element): Elemen
     return hydrateIslandOrFail(component, target);
   } catch (err) {
     if (!isHydrateNodeError(err)) throw err;
-    console.error(err.message);
+    reportHydrateNodeError(err);
     return target;
   }
 }
@@ -1421,7 +1435,10 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a root Fragment binds its click handler and reactive text after mount() adoption"
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a Fragment at an island root is adopted, each island on its own"
     adoptChildren([descriptor], target, target.firstChild, null);
-  } else if (descriptor instanceof Node && descriptor !== target && !target.contains(descriptor)) {
+  } else if (
+    descriptor instanceof Node && descriptor !== target && !target.contains(descriptor) &&
+    !(descriptor.nodeType === 11 && !descriptor.firstChild)
+  ) {
     // A detached DOM node built while hydrating cannot be matched to the
     // server's nodes, and reporting success would leave the server's DOM inert
     // behind a removed data-forma-ssr.
@@ -1434,9 +1451,12 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
     throw err;
   }
   // Anything else has nothing to adopt: nothing at all (an island that sets up
-  // its own effects), or the target or a node inside it (the component adopted
-  // the server's DOM itself, such as an island returning its own `el`).
+  // its own effects), the target or a node inside it (the component adopted
+  // the server's DOM itself, such as an island returning its own `el`), or an
+  // empty DocumentFragment (one it appended into its element, the templateMany
+  // pattern).
   // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns its own element stays active and keeps updating"
+  // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that appends a fragment into its element and returns it, now empty, stays active"
 
   // 5. Remove SSR marker
   target.removeAttribute('data-forma-ssr');
