@@ -66,7 +66,8 @@ jobs:
     permissions:
       contents: read
     runs-on: ubuntu-latest
-    # MEASURED locally: build 6s, check:size 1s, check:pack 4s, npm pack 1s;
+    # MEASURED locally: build 6s, check:size 1s, check:pack 10s (FORMA-169: it
+    # packs and lints the development build too), npm pack 1s;
     # `npm ci` without a cache about a minute on a runner. 10 is ~5x.
     timeout-minutes: 10
     outputs:

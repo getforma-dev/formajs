@@ -22,7 +22,8 @@ npm run build   # build dist/ (ends with scripts/verify-dist.mjs)
 - `npm run test:e2e:engines` — the same suite in Chromium, Firefox and WebKit (`npx playwright install chromium firefox webkit` once); a release runs it before publishing, and `gh workflow run e2e-engines.yml --ref <branch>` runs it in CI
 - `npm run build` — build all output formats, then verify them
 - `npm run check:size` — gzip the real ESM import graph per entry (the CI gate)
-- `npm run check:pack` — `publint` + `@arethetypeswrong/cli`
+- `npm run check:pack` — `publint` + `@arethetypeswrong/cli`, over the package and again over its development build (`scripts/check-pack-development.mjs`)
+- `npm run check:baseline -- [ref]` — after `npm run build`: build `ref` (default `origin/main`) in a temporary worktree and fail unless every production file under `dist/` is byte-identical to it; for a change that claims to leave the published files as they were
 - `npm run typecheck` — type check without emitting (covers `tsup.config.ts` and `scripts/`)
 - `ruby scripts/check-release-workflow.rb --self-test` and `bash scripts/test-release-artifacts.sh` — the release workflow's SR43 lint (only the publish job holds `id-token: write`, with no cache and no dependency code beside it) and the packed-tarball check the publish job runs before publishing; CI's `release-workflow` job runs both after actionlint
 
