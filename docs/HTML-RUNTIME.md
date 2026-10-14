@@ -364,7 +364,8 @@ posts one message carrying one `MessageChannel` port at the frame's first load
 frame takes the first such message whose source is its parent and stops
 listening on its window. On the port it accepts only `{ type: 'module', html }`
 (the first mounts it with `tier: 'unreviewed'` and no grants, each later one
-updates it) and sends only `{ type: 'ready' }`, `{ type: 'resize', height }`
+updates it; it mints the module with `trustedHtml()`, so the frame's policy can
+require Trusted Types) and sends only `{ type: 'ready' }`, `{ type: 'resize', height }`
 and `{ type: 'error', code, message }`: a refused message (`FRAME_E_MESSAGE`),
 a module it could not render (`FRAME_E_RENDER`), and each of the module's
 diagnostics with its own code. The host's half (the `iframe`'s

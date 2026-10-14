@@ -338,8 +338,10 @@ All notable changes to this project will be documented in this file.
   document's height) and `error` (`FRAME_E_MESSAGE`, `FRAME_E_RENDER`, and the
   module's own diagnostics by code). `scripts/verify-dist.mjs` checks the
   published file can be inlined as it is. Copying it into an application's
-  assets as `forma-runtime.js` is the build's half (FORMA-175). Size: 37,526 B
-  gzipped, gated at 38,000 B (`scripts/check-size.mjs`, the README's table).
+  assets as `forma-runtime.js` is the build's half (FORMA-175). It mints the
+  module with `trustedHtml()`, so the frame's policy may require Trusted Types.
+  Size: 38,492 B gzipped, gated at 38,500 B (`scripts/check-size.mjs`, the
+  README's table).
   Tests: `src/__tests__/runtime-frame.test.ts` ("takes one port from its
   parent, renders each module in tier (c) and answers only ready, resize and
   error", "ignores a port from any window but its parent, and every port after

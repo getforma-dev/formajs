@@ -10,9 +10,10 @@ import { resolve } from 'node:path';
  * The frame document is what forma-server's `PageResponse::frame` (FORMA-125)
  * writes: `<div id="forma-frame">` and the runtime inline, under an enforced
  * policy with `sandbox allow-scripts` (no `allow-same-origin`),
- * `connect-src 'none'`, `frame-ancestors` the host's origin, and scripts
- * allowed by the runtime's SHA-256 hash, so the runtime runs only if its
- * bytes are the ones hashed. The host page is the application's half (L-12,
+ * `connect-src 'none'`, `frame-ancestors` the host's origin, scripts allowed
+ * by the runtime's SHA-256 hash, so the runtime runs only if its bytes are the
+ * ones hashed, and Trusted Types required, so the runtime renders the module
+ * only through its policies. The host page is the application's half (L-12,
  * L-33): an `iframe sandbox="allow-scripts"`, one `MessageChannel` port
  * handed over at the first load, the module sent on it, the frame torn down on
  * any later load.
@@ -30,7 +31,8 @@ async function host(page: Page): Promise<void> {
     headers: {
       'content-security-policy':
         `default-src 'none'; script-src 'sha256-${HASH}'; connect-src 'none'; ` +
-        `frame-ancestors ${ORIGIN}; sandbox allow-scripts`,
+        `frame-ancestors ${ORIGIN}; sandbox allow-scripts; ` +
+        "require-trusted-types-for 'script'; trusted-types forma forma-runtime",
     },
     body: '<!DOCTYPE html>\n<html lang="en">\n<head>\n<meta charset="utf-8">\n<title>Preview</title>\n</head>\n' +
       `<body>\n<div id="forma-frame"></div>\n<script>${RUNTIME}</script>\n</body>\n</html>`,
@@ -114,8 +116,17 @@ test('markup injected outside the root stays unbound: the frame never watches bo
   await send(page, { type: 'module', html: `<div data-forma-state='{"n":1}'><p id="in" data-text="{n}">-</p></div>` });
   const preview = page.frameLocator('#preview');
   await expect(preview.locator('#in')).toHaveText('1');
+  // Built with DOM calls: the frame requires Trusted Types, so a string to an
+  // HTML sink is refused before any runtime could see it.
   await frameOf(page).evaluate(() => {
-    document.body.insertAdjacentHTML('beforeend', `<div data-forma-state='{"n":2}'><p id="out" data-text="{n}">raw</p></div>`);
+    const scope = document.createElement('div');
+    scope.setAttribute('data-forma-state', '{"n":2}');
+    const p = document.createElement('p');
+    p.id = 'out';
+    p.setAttribute('data-text', '{n}');
+    p.textContent = 'raw';
+    scope.appendChild(p);
+    document.body.appendChild(scope);
   });
   await page.waitForTimeout(100);
   await expect(preview.locator('#out')).toHaveText('raw');

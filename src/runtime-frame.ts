@@ -28,8 +28,9 @@
  *    posted to the window, before or after, is ignored.
  * 2. On the port the host sends only the module:
  *    `{ type: 'module', html: string }`. The first renders it into
- *    `#forma-frame` with `mountMarkup(root, html, { tier: 'unreviewed' })`, no
- *    grants: a `data-fetch` is refused before any request (and
+ *    `#forma-frame` with `mountMarkup(root, trustedHtml(html), { tier:
+ *    'unreviewed' })`, no grants (minted, so the frame's policy may require
+ *    Trusted Types): a `data-fetch` is refused before any request (and
  *    `connect-src 'none'` would refuse it again), `$el` stops at the root, and
  *    `click()` is refused. Each later one updates it, reconciled.
  * 3. The frame sends only three messages on the port:
@@ -46,7 +47,7 @@
  * Verified by: src/__tests__/runtime-frame.test.ts > "ignores a port from any window but its parent, and every port after the first"
  * Verified by: src/__tests__/runtime-frame.test.ts > "refuses every message but the module, and changes nothing"
  */
-import { mountMarkup, type MountHandle } from './runtime';
+import { mountMarkup, trustedHtml, type MountHandle } from './runtime';
 
 declare const __FORMA_FRAME_BUILD__: boolean | undefined;
 
@@ -93,8 +94,13 @@ export function connectFrame(win: FrameWindow): void {
     const root = doc.getElementById(FRAME_ROOT_ID);
     try {
       if (!root) throw new Error(`the frame document has no #${FRAME_ROOT_ID}`);
-      if (mounted) mounted.update(html);
-      else mounted = mountMarkup(root, html, { tier: 'unreviewed', config: { name: 'preview' } });
+      // The frame vouches for the module only as content for this document,
+      // an opaque origin with no network, which is what it exists to render:
+      // so it is minted as trusted markup, and the frame's policy may require
+      // Trusted Types (the reconciler parses it through forma-runtime).
+      const markup = trustedHtml(html);
+      if (mounted) mounted.update(markup);
+      else mounted = mountMarkup(root, markup, { tier: 'unreviewed', config: { name: 'preview' } });
     } catch (err) {
       fail('FRAME_E_RENDER', err instanceof Error ? err.message : String(err));
     }
