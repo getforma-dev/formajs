@@ -13,6 +13,8 @@
 /**
  * Returns the client-side swap script as a string, ready to be injected
  * into the HTML stream (typically right after <body> or before first Suspense).
+ *
+ * @deprecated `@getforma/core/ssr` is removed in 3.0.0 (FORMA_W_DEPRECATED_SSR): render on the server with the Rust walker (forma-server).
  */
 export function getSwapScript(): string {
   return `<script>
@@ -45,6 +47,8 @@ function safeJsonStringify(val: unknown): string {
 /**
  * Returns a script tag that swaps a specific Suspense boundary's content.
  * Called when an async resource resolves during streaming.
+ *
+ * @deprecated `@getforma/core/ssr` is removed in 3.0.0 (FORMA_W_DEPRECATED_SSR): render on the server with the Rust walker (forma-server).
  */
 export function getSwapTag(id: string, html: string): string {
   // safeJsonStringify escapes <, >, U+2028, and U+2029 so the serialized

@@ -186,16 +186,6 @@
   "note": "a reactive child inside an svg builds a title or an a as HTML on its later runs. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a function child inside an svg builds in the SVG namespace on every run\""
  },
  {
-  "id": "element/namespace-warning-silent",
-  "file": "src/dom/element.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "    if (__DEV__) warnNamespace(parent, child);\n",
-  "replace": "",
-  "note": "a title or an a built before its svg parent is inserted as HTML with no development warning pointing at svg(). Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a title or an a passed to h() before its svg parent exists stays HTML, warns in development, and is SVG inside svg()\""
- },
- {
   "id": "element/no-mathml",
   "file": "src/dom/element.ts",
   "tags": [
@@ -702,6 +692,26 @@
   "find": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V {",
   "replace": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V { if (v && typeof v === 'object') return v;",
   "note": "history entries alias live objects — undo/redo returns mutated state"
+ },
+ {
+  "id": "http/ws-random-unchecked",
+  "file": "src/http/ws.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    return r >= 0 && r < 1 ? r : Math.random();",
+  "replace": "    return r;",
+  "note": "a random draw outside [0, 1) (2, -1, NaN, 1e9) sets the reconnect delay past its cap or to zero. Verified by: src/http/__tests__/ws-reconnect.test.ts > \"a random option that is not a function, and a draw outside [0, 1), fall back to Math.random\""
+ },
+ {
+  "id": "http/ws-reconnect-no-jitter",
+  "file": "src/http/ws.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "Math.floor(random() * baseInterval",
+  "replace": "Math.floor(baseInterval",
+  "note": "every client reconnects after exactly 2^(n-1) s, so after a deploy they all reconnect in step (L-46). Verified by: src/http/__tests__/ws-reconnect.test.ts > \"with a seeded random source, the n-th reconnect delay lies between 0 and 2^(n-1) s and differs across simulated clients\""
  },
  {
   "id": "hydrate/attr-equal-value-rewritten",
@@ -1353,6 +1363,46 @@
   "find": "  if (isUrlAttr(name) && isDangerousUrl(value, tag)) return true;",
   "replace": "  if (isUrlAttr(name) && isDangerousUrl(value, 'img')) return true;",
   "note": "data-bind: judges every sink as an image sink"
+ },
+ {
+  "id": "runtime/data-fetch-no-timeout",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "fetch(url, { method, signal: ctrl.signal })",
+  "replace": "fetch(url, { method })",
+  "note": "a data-fetch to a stalled endpoint is never aborted: its loading: target stays true and its error: target never hears of it (L-46). Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch to a stalled endpoint aborts at 30 s into its error: target\""
+ },
+ {
+  "id": "runtime/data-fetch-outlives-teardown",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "        for (const stop of inflight) stop();\n",
+  "replace": "",
+  "note": "unmounting or removing a scope leaves each in-flight data-fetch request running with its 30 s timer, which later aborts it into a disposed scope. Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"unmount() stops every in-flight request of a polling data-fetch, and removing the element does too\""
+ },
+ {
+  "id": "runtime/data-fetch-timeout-message-from-engine",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "ctrl.signal.aborted ? `data-fetch timed out after ${FETCH_TIMEOUT_MS} ms` : err.message",
+  "replace": "err.message",
+  "note": "a timed-out data-fetch writes the engine's own abort text to its error: target (WebKit's is \"Fetch is aborted\"), which does not say it timed out. Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch to a stalled endpoint aborts at 30 s into its error: target\""
+ },
+ {
+  "id": "runtime/data-fetch-timer-outlives-answer",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "          .finally(() => { clearTimeout(timer); inflight.delete(stop); });",
+  "replace": "          .finally(() => { inflight.delete(stop); });",
+  "note": "a data-fetch's 30 s timer is not cleared when the answer arrives, so it aborts a finished request. Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch answered before 30 s lands in its target and is never aborted\""
  },
  {
   "id": "sec/attrname-allow-quote",

@@ -424,8 +424,7 @@ markup, wherever it can know it.
   `h("svg", null, h("title", null, "Close"))` the `title` is created first, as
   HTML. Build a hand-written SVG tree with such a tag inside `svg()`, which
   creates it in SVG. That holds for a helper's first render too: inside `svg()`
-  it is SVG from the start. Development builds warn when `h()` inserts a
-  dual-use element into content of another namespace.
+  it is SVG from the start.
 
 ```ts
 import { svg, h } from "@getforma/core";
@@ -454,7 +453,7 @@ through `h()` building each child with its parent known, through
 `renderToString`, and through each browser's parser and adoption in Chromium,
 Firefox and WebKit.
 
-Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a title or an a passed to h() before its svg parent exists stays HTML, warns in development, and is SVG inside svg()"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a title or an a passed to h() before its svg parent exists stays HTML, and is SVG inside svg()"
 Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a foreignObject's or desc's content is HTML when built there: an eager child, a reactive child, and content built outside svg()"
 Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a function child inside an svg builds in the SVG namespace on every run"
 Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a createShow inside an svg renders each branch once, in SVG, inside svg() from its first render and on every toggle"
@@ -495,7 +494,7 @@ sections above cover the ones with non-obvious semantics.
 | Control flow | `createShow`, `createSwitch`, `createList`, `reconcileList`, `createPortal`, `createSuspense`, `createErrorBoundary`, `cleanup` |
 | Components | `defineComponent`, `disposeComponent`, `onMount`, `onUnmount`, `createContext`, `provide`, `inject`, `unprovide` |
 | State | `createStore`, `createHistory`, `persist(source, key, options?)` — mirrors a `[get, set]` pair into `localStorage` |
-| Islands | `activateIslands`, `hydrateIsland`, `deactivateIsland`, `deactivateAllIslands`, `sanitizePropsDeep` |
+| Islands | `activateIslands`, `hydrateIsland`, `deactivateIsland`, `deactivateAllIslands`, `sanitizePropsDeep`, `browserOnly(component)` — a component that renders in the browser alone ([ISLANDS.md](ISLANDS.md#browser-only-components-browseronly)) |
 | Events | `createBus`, `delegate(container, selector, event, handler)`, `onKey(combo, handler, options?)` |
 | DOM utils | `$`, `$$`, `addClass`, `removeClass`, `toggleClass`, `setStyle`, `setAttr`, `setText`, `setHTMLUnsafe`, `closest`, `children`, `siblings`, `parent`, `nextSibling`, `prevSibling`, `onResize`, `onIntersect`, `onMutation` |
 

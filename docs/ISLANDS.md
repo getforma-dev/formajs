@@ -293,6 +293,91 @@ Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "adoption creates
 
 ---
 
+## Browser-only components: `browserOnly()`
+
+Some components cannot render on the server: a chart that measures the
+viewport, a map, an editor. Wrap such a component in `browserOnly()`, the one
+marker for a subtree that renders in the browser alone (one name, so a search
+finds every use):
+
+```ts
+import { activateIslands, browserOnly, h } from "@getforma/core";
+
+// chart.tsx: declared once, at the top level of a module.
+export const Chart = browserOnly((props: { title: string }) =>
+  h("canvas", { "aria-label": props.title }),
+);
+
+// The page renders it like any component: <Chart title="Sales" />.
+// The entry registers it under that name:
+activateIslands({ Chart });
+```
+
+`@getforma/compiler` 0.3.7 and later emit it as a registered island whose
+server output is its empty host element with its declared props:
+
+```html
+<div data-forma-island="0" data-forma-component="Chart" data-forma-status="pending"
+     data-forma-hydrate="load" data-forma-props='{"title":"Sales"}'></div>
+```
+
+`activateIslands` finds the host empty and renders the component in its place,
+with those props (or `{}`), carrying the island's `data-forma-*` attributes over
+to the component's root. Register it as `browserOnly()` returns it: activation
+calls it with the island's element and props, and it passes the props to the
+component. In a client-rendered page it renders as any component. Where there
+is no document (Node rendering) it renders nothing.
+
+- **Props.** Only props the compiler can evaluate to a string, number, boolean
+  or null reach the host: literals and module-level consts. A function, a
+  spread, an array or object, or a value only the browser knows is left out
+  and reported (`BUILD-706`); read such a value in the browser. A handler
+  cannot change them; 3.0.0's declared island props do (DR-4).
+- **Registration.** On a page that activates islands from a literal registry,
+  a browser-only component the registry does not name never renders, and the
+  build says so (`BUILD-708`).
+- **Development builds** log, for each browser-only island, that it has no SSR
+  content and falls back to client rendering. For these islands that is what
+  was asked for.
+
+Verified by `src/dom/__tests__/browser-only.test.ts` > "registered in activateIslands, renders the component in its empty host, from the server props"
+Verified by `src/dom/__tests__/browser-only.test.ts` > "called as a component, renders it as any component in a client-rendered tree"
+
+---
+
+## What adoption skips today
+
+Adoption has no handling for the constructs below, so a server-rendered page
+that uses one is not adopted as written (FORMA-016). Since compiler 0.3.7 each
+is reported at build time with its code, file and line, and `@getforma/build`'s
+strict mode makes it an error; the way out is to render the subtree in the
+browser with `browserOnly()`, or to write it as a construct the server renders.
+
+What each one does, measured in Chromium on a `mount()` root built with
+compiler 0.3.7 and activated by this runtime, with a counter button after the
+construct:
+
+| Construct | What a server-rendered page gets today | Build code | Instead |
+|---|---|---|---|
+| A plain array child: `{rows.map(r => <li>…</li>)}` without `createList` | The server renders an empty island shell nothing registers; adoption skips the array, so the rows never appear. The rest of the page activates | `BUILD-701` | `createList(rows, keyFn, (r) => …)`, or `...CONST.map(…)` over a module-level const |
+| The same in a reactive child: `{() => rows.map(r => <li>…</li>)}` | The server renders empty text; after activation the page shows the elements as text, `[object HTMLLIElement],[object HTMLLIElement]`. The rest of the page activates | `BUILD-701` | The same |
+| `createErrorBoundary` | The server renders an empty shell where it stands, and **activation throws** `TypeError: Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'`: nothing after the construct activates (the button stays dead) | `BUILD-702` | Move the boundary out of the server-rendered tree |
+| `createSwitch` | The same: activation throws, and nothing after it activates | `BUILD-703` | A `createShow` per case |
+| `createPortal` | No error, and the rest of the page activates, but the portal's content never appears: the server's empty shell stays where it stood | `BUILD-704` | Create the portal from an effect after activation |
+| `createSuspense` | The same as `createErrorBoundary`: activation throws, and nothing after it activates | `BUILD-705` | Render the loaded state from server data |
+
+A reactive child that returns an element, `{() => c() ? <el /> : null}`,
+renders right on the server, but adoption binds it as text: beside the
+server's element the page shows `[object HTMLElement]` (or `null`), and the
+element is never removed. Write it as `createShow(() => c(), () => <el />)`.
+Client-rendered, all of these work.
+
+Whether adoption learns these constructs, with parity vectors and a browser
+fixture each, or 3.0.0's compiler refuses them in a server-rendered component,
+is decided for 3.0.0 (DR-1).
+
+---
+
 ## Hydration triggers
 
 Control when an island hydrates via `data-forma-hydrate`:

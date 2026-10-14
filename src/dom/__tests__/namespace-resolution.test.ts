@@ -7,9 +7,8 @@
  * (a reactive child, a control-flow helper's renders once it is in the
  * document, a portal, `mount()`, adoption) that is the parent's content
  * namespace, as the parser gives it. A child passed to h() is built before its
- * parent exists, so it is HTML unless the tree is built inside `svg()`; h()
- * warns about it in development builds. SVG and MathML names are created in
- * their namespace wherever they appear.
+ * parent exists, so it is HTML unless the tree is built inside `svg()`. SVG
+ * and MathML names are created in their namespace wherever they appear.
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
@@ -41,33 +40,16 @@ function parsed(html: string): Element {
   return host.firstElementChild!;
 }
 
-/** The development warnings h() gives while `build` runs. */
-function warnings(build: () => unknown): string[] {
-  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-  try {
-    build();
-    return warn.mock.calls.map((call) => String(call[0]));
-  } finally {
-    warn.mockRestore();
-  }
-}
-
 describe('h() gives a dual-use tag the namespace of the content it is built in', () => {
-  it('a title or an a passed to h() before its svg parent exists stays HTML, warns in development, and is SVG inside svg()', () => {
+  it('a title or an a passed to h() before its svg parent exists stays HTML, and is SVG inside svg()', () => {
     const tree = () => h('svg', { viewBox: '0 0 10 10' },
       h('title', null, 'Close'),
       h('a', { href: '#close' }, h('path', { d: 'M0 0L10 10' })),
     ) as unknown as Element;
 
-    let eager!: Element;
-    const warned = warnings(() => { eager = tree(); });
-    expect(namespaces(eager)).toEqual([`svg:${SVG}`, `title:${XHTML}`, `a:${XHTML}`, `path:${SVG}`]);
-    expect(warned).toHaveLength(2);
-    expect(warned[0]).toContain('<title>');
-    expect(warned[0]).toContain('svg()');
+    expect(namespaces(tree())).toEqual([`svg:${SVG}`, `title:${XHTML}`, `a:${XHTML}`, `path:${SVG}`]);
 
-    let wrapped!: Element;
-    expect(warnings(() => { wrapped = svg(tree); })).toEqual([]);
+    const wrapped = svg(tree);
     const server = parsed('<svg viewBox="0 0 10 10"><title>Close</title><a href="#close"><path d="M0 0L10 10"></path></a></svg>');
     expect(namespaces(wrapped)).toEqual(namespaces(server));
     expect(wrapped.outerHTML).toBe(server.outerHTML);
@@ -94,10 +76,10 @@ describe('h() gives a dual-use tag the namespace of the content it is built in',
     const content = h('div', null, h('a', { href: '#out' }, 'out'));
     const wrapped = svg(() => h('svg', null, h('foreignObject', null, content))) as unknown as Element;
     expect(namespaces(wrapped)).toEqual([`svg:${SVG}`, `foreignObject:${SVG}`, `div:${XHTML}`, `a:${XHTML}`]);
-    // Built inside svg(), an eager a is SVG there, and development builds say so.
-    const warned = warnings(() => svg(() => h('svg', null, h('foreignObject', null, h('a', { href: '#in' }, 'in')))));
-    expect(warned).toHaveLength(1);
-    expect(warned[0]).toContain('<a>');
+    // Built inside svg(), an eager a is SVG there: the documented reason to
+    // build that content outside svg().
+    const inside = svg(() => h('svg', null, h('foreignObject', null, h('a', { href: '#in' }, 'in')))) as unknown as Element;
+    expect(inside.querySelector('a')!.namespaceURI).toBe(SVG);
   });
 
   it('a function child inside an svg builds in the SVG namespace on every run', () => {
@@ -168,12 +150,8 @@ describe('control flow builds in the namespace of the element it inserts into', 
 
   it('without svg(), a createShow inside an svg renders its first branch, built before the svg existed, in HTML, and every later branch in SVG', () => {
     const [on, setOn] = createSignal(true);
-    let built!: Element;
-    const warned = warnings(() => {
-      built = h('svg', null, createShow(on, () => h('title', null, 'On'), () => h('a', { href: '#off' }, 'Off'))) as unknown as Element;
-    });
+    const built = h('svg', null, createShow(on, () => h('title', null, 'On'), () => h('a', { href: '#off' }, 'Off'))) as unknown as Element;
     expect(built.firstElementChild!.namespaceURI).toBe(XHTML);
-    expect(warned).toHaveLength(1);
     for (const next of [false, true, false]) {
       setOn(next);
       expect(built.firstElementChild!.localName).toBe(next ? 'title' : 'a');
@@ -189,8 +167,7 @@ describe('control flow builds in the namespace of the element it inserts into', 
       const tree = () => h('svg', null, h('g', null,
         createList(items, (k) => k, (k) => { renders++; return h('a', { href: `#${k}`, 'data-k': k }, h('title', null, k)); }),
       )) as unknown as Element;
-      let built!: Element;
-      warnings(() => { built = wrap ? svg(tree) : tree(); });
+      const built = wrap ? svg(tree) : tree();
       document.body.appendChild(built);
 
       const rows = () => Array.from(built.querySelectorAll('g > a'));

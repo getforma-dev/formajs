@@ -36,7 +36,6 @@ export const Fragment: (props: { children?: unknown }) => DocumentFragment =
 
 export { SVG_NS, MATHML_NS };
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
-const XHTML_NS = 'http://www.w3.org/1999/xhtml';
 
 /**
  * Tags that exist in BOTH HTML and SVG, so their namespace must be resolved by
@@ -56,14 +55,13 @@ const DUAL_USE_SVG_TAGS = new Set(['a', 'title', 'script', 'style', 'font']);
  * control-flow helper's renders once it is in the document, a portal into an
  * SVG, `mount()` into an SVG element, and what adoption creates. Inside
  * `svg()`, build a `foreignObject`'s, `desc`'s or `title`'s content outside it,
- * where it is HTML. In development builds, h() warns when it inserts a dual-use
- * element into content of another namespace.
+ * where it is HTML.
  *
  * ```ts
  * const icon = svg(() => h('svg', { viewBox: '0 0 10 10' }, h('a', { href: '#' })));
  * ```
  *
- * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a title or an a passed to h() before its svg parent exists stays HTML, warns in development, and is SVG inside svg()"
+ * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a title or an a passed to h() before its svg parent exists stays HTML, and is SVG inside svg()"
  */
 export function svg<T extends Node>(build: () => T): T {
   return withNamespace(SVG_NS, build);
@@ -747,28 +745,6 @@ function applyStaticProp(el: Element, key: string, value: unknown): void {
   el.setAttribute(key, strVal);
 }
 
-/**
- * Development builds: warn when a dual-use element (or one at the top of a
- * fragment) is inserted into content of another namespace than it was built
- * in. It was built before its parent existed; `svg()` is the remedy.
- *
- * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a title or an a passed to h() before its svg parent exists stays HTML, warns in development, and is SVG inside svg()"
- */
-function warnNamespace(parent: Node, child: Node): void {
-  if (parent.nodeType !== 1) return;
-  const want = contentNs(parent) ?? XHTML_NS;
-  const check = (n: Node | null) => {
-    if (n && n.nodeType === 1 && DUAL_USE_SVG_TAGS.has((n as Element).localName) && (n as Element).namespaceURI !== want) {
-      console.warn(
-        `[forma] <${(n as Element).localName}> was built in ${(n as Element).namespaceURI} but goes into <${(parent as Element).localName}>, ` +
-        `whose content is ${want}: h() built it before its parent existed. Build the tree inside svg() (docs/API.md, "SVG and MathML").`,
-      );
-    }
-  };
-  if (child.nodeType === 11) for (let n = child.firstChild; n; n = n.nextSibling) check(n);
-  else check(child);
-}
-
 /** Append a single child to a parent node. */
 function appendChild(parent: Node, child: unknown): void {
   // Rationale for the branch ORDER, not a measured claim: the Node check is
@@ -778,7 +754,6 @@ function appendChild(parent: Node, child: unknown): void {
   // (The earlier version of this comment asserted "70%+ of children are Nodes"
   // and "saves 3-5 comparisons"; neither figure was ever measured.)
   if (child instanceof Node) {
-    if (__DEV__) warnNamespace(parent, child);
     parent.appendChild(child);
     return;
   }

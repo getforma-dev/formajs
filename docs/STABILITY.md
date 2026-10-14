@@ -5,7 +5,10 @@ What you can build on, what is still moving, and what is known to be broken.
 **Stable** means the API and its observable behaviour are not expected to
 change, and a change would be a breaking release with a migration note in
 `CHANGELOG.md`. **Beta** means it works and is tested, but the shape may still
-move. **Experimental** means do not build on it yet.
+move. **Experimental** means do not build on it yet. **Deprecated** means it
+still works as documented and is removed in the major its row names; when core
+runs from source it logs a coded warning, and an installed package shows it as
+`@deprecated` in its types. See [Deprecated entry points](#deprecated-entry-points).
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -24,10 +27,11 @@ move. **Experimental** means do not build on it yet.
 | `createResource` / `createSuspense` | **Stable** | Abortable; the Suspense boundary is captured at resource creation |
 | `createPortal`, `svg()`, `template()` | **Stable** | |
 | `data-fetch`, `data-transition:*`, `data-ref` | **Stable** | |
-| SSR (`renderToString`, `renderToStream`) | **Beta** | Functional; the API may still evolve |
+| Server functions (`@getforma/core/server`: `"use server"` RPC, `createAction`, the revalidation helpers) | **Deprecated** | Removed in 3.0.0. Serve the call from a route in the application's Rust server. Logs `FORMA_W_DEPRECATED_SERVER`. |
+| SSR (`@getforma/core/ssr`: `renderToString`, `renderToStream`) | **Deprecated** | Removed in 3.0.0. Render on the server with the Rust walker (forma-server); its form controls differ from the walker's, see [SSR form controls](#ssr-form-controls). Logs `FORMA_W_DEPRECATED_SSR`. |
 | Streaming SSR under strict CSP | **Known gap** | Suspense swap scripts carry no `nonce`, so a strict `script-src 'nonce-…'` blocks them and out-of-order content never swaps in. Use non-streaming SSR under strict CSP; do not add `'unsafe-inline'`. See [`../CSP.md`](../CSP.md). |
 | TC39 Signals compat (`State`, `Computed`) | **Beta** | Tracks an evolving TC39 proposal |
-| WASM render (`@getforma/core/wasm`) | **Experimental** | Needs `window.__FORMA_WASM__`; first shipped in the next release ‡ |
+| WASM render (`@getforma/core/wasm`) | **Deprecated** | Removed in 3.0.0. Re-render an island in the browser with core's `h()`, as islands already do. Needs `window.__FORMA_WASM__`; first shipped in 2.0.0 ‡. Logs `FORMA_W_DEPRECATED_WASM`. |
 
 † The island figure counts the test cases in `activate`, `activate-isolation`,
 `activate-reactivate`, `activate-triggers`, `activate-visible`,
@@ -37,14 +41,52 @@ move. **Experimental** means do not build on it yet.
 
 Verified by `src/__tests__/docs-truth.test.ts` > "the island coverage figure matches the island test files"
 
-‡ `./wasm` is an `exports` subpath in `package.json` today, but that is a
-working-tree fact, not a published one: the subpath had no build entry, no dist
+‡ `./wasm` first resolved in 2.0.0. The subpath had no build entry, no dist
 output and no `exports` key in any release from 0.7.1 through 1.5.0, so
-`import "@getforma/core/wasm"` always failed. It first resolves in whatever
-release cuts the current `## [Unreleased]` CHANGELOG entry. The row says "the
-next release" rather than a number because the number is not decided, and a
-guessed version in a stability table is how the previous claim ("unreachable
-before 1.6.0") stopped being checkable.
+`import "@getforma/core/wasm"` failed until then.
+
+## Deprecated entry points
+
+`@getforma/core/server`, `@getforma/core/ssr` and `@getforma/core/wasm` keep
+working through 2.x and are removed in 3.0.0.
+
+| Entry | Code | Instead |
+|---|---|---|
+| `@getforma/core/server` | `FORMA_W_DEPRECATED_SERVER` | A route in the application's Rust server, called with `fetch` |
+| `@getforma/core/ssr` | `FORMA_W_DEPRECATED_SSR` | The Rust walker: forma-server renders the page |
+| `@getforma/core/wasm` | `FORMA_W_DEPRECATED_WASM` | Core's `h()`, which islands already re-render with |
+
+The first time one of them is loaded where core runs from source, it logs its
+code once, as `[forma] FORMA_W_DEPRECATED_SSR: …`, with what replaces it. That
+is the rule for every dev-only diagnostic in core (`__DEV__`): in Node, core
+compiled from its source with `NODE_ENV` other than `production`; in a browser
+bundle of the source, which has no `process`, only with the global
+`__FORMA_DEV__` set. The files under `dist/` that npm installs, and the CDN
+bundles, are production builds. They log nothing, even in an application's own
+development build, their JavaScript is byte for byte what it was before the
+deprecation, and `scripts/verify-dist.mjs` fails a build that leaks a code into
+one. What an installed package shows instead is in its type declarations: every
+function these entries export is marked `@deprecated`, which editors strike
+through. The `FORMA_W_` codes are listed here and nowhere else.
+
+Verified by `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its deprecation once in development, with its code"
+Verified by `src/__tests__/deprecated-entries.test.ts` > "a production build of each deprecated entry carries no warning"
+
+## SSR form controls
+
+`renderToString` (`@getforma/core/ssr`) writes a `textarea`'s and a
+`select`'s `value` prop as a `value` attribute, static or reactive. The HTML
+parser ignores that attribute on both, so the page as served shows an empty
+textarea and a select on its first option, before activation and with
+JavaScript off. forma-ir 0.2.1, the Rust walker, writes the textarea's value as
+its text and the select's as `selected` on the matching option, so the two
+server renderers disagree here. Adoption writes the client's values into both
+controls, so an activated page is right. `./ssr` keeps this behaviour until it
+is removed in 3.0.0; to serve these controls right without JavaScript, write
+the textarea's text as its child and mark the option `selected` yourself.
+
+Verified by `src/ssr/__tests__/render-form-controls.test.ts` > "writes a textarea's and a select's value prop as a value attribute, static or reactive"
+Verified by `src/ssr/__tests__/render-form-controls.test.ts` > "the parsed page shows an empty textarea and the first option until adoption writes the values"
 
 ## About the numbers on this page
 

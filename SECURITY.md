@@ -15,8 +15,8 @@ FormaJS v1.0.0+ uses subpath exports to segment capabilities by trust level:
 | `@getforma/core/runtime-hardened` | HTML Runtime (tree-shaken bundling) | Identical source and identical guarantee; a second bundling, kept because two documented CDN URLs point at it |
 | `@getforma/core/http` | `createFetch`, `createSSE`, `createWebSocket` | Network access (intentional) |
 | `@getforma/core/storage` | `createLocalStorage`, `createIndexedDB` | Browser storage access (intentional) |
-| `@getforma/core/server` | `$$serverFunction`, `handleRPC` | Network + `process.env` (server-side) |
-| `@getforma/core/wasm` | `renderLocal`, `renderIsland` | Loads and instantiates a WASM module from `window.__FORMA_WASM__` |
+| `@getforma/core/server` (deprecated, removed in 3.0.0) | `$$serverFunction`, `handleRPC` | Network + `process.env` (server-side) |
+| `@getforma/core/wasm` (deprecated, removed in 3.0.0) | `renderLocal`, `renderIsland` | Loads and instantiates a WASM module from `window.__FORMA_WASM__` |
 
 The root entry's "no network" row is a real boundary, not a convention: `fetch`, `WebSocket` and the storage APIs live only behind their subpaths and are absent from the root barrel.
 
@@ -208,6 +208,9 @@ Verified by: `src/state/__tests__/store-proto-hijack.test.ts` > "setState with a
 Verified by: `src/state/__tests__/store-proto-hijack.test.ts` > "assigning __proto__ directly on the proxy does not replace the prototype"
 
 ## RPC / server functions (`@getforma/core/server`)
+
+Deprecated, and removed in 3.0.0 with server functions: serve the call from a
+route in the application's Rust server ([STABILITY.md](docs/STABILITY.md#deprecated-entry-points)).
 
 `handleRPC` executes registered `"use server"` functions. Its protections and their limits:
 
