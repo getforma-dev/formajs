@@ -4,6 +4,20 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`browserOnly(component)`, the browser-only marker** (DR-1, L-1, FORMA-119).
+  Wraps a component that renders in the browser alone; one name, so a search
+  finds every use. `@getforma/compiler` 0.3.7 and later emit
+  `const X = browserOnly(Impl)` as a registered island whose server output is
+  its empty host element with its declared props (`data-forma-props`).
+  Registered as it is (`activateIslands({ X })`), activation calls it with the
+  island's element and props, and it renders `Impl(props)` in the host's place;
+  called as a component in a client-rendered tree it renders `Impl(props)`;
+  with no document it renders nothing. Additive: no existing export changes.
+  The core entry grows 103 B gzipped (27,703 to 27,806 B of its 30,000 B gate)
+  and the browser ESM bundle 99 B; the CDN runtimes do not change.
+
 ### Changed
 
 - **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
@@ -29,6 +43,25 @@ All notable changes to this project will be documented in this file.
   gates, which rise to the measured size rounded up to the next 500 B: 34,000
   to 34,500 B and 33,000 to 33,500 B (`scripts/check-size.mjs`, the README's
   size table).
+
+### Documentation
+
+- **`docs/ISLANDS.md` states what adoption skips today** (FORMA-016): a plain
+  array child (`.map()` without `createList`), `createErrorBoundary`,
+  `createSwitch`, `createPortal` and `createSuspense`, and a reactive child
+  that returns an element; what a server-rendered page gets with each,
+  measured in Chromium (on a `mount()` root, `createErrorBoundary`,
+  `createSwitch` and `createSuspense` make activation throw and nothing after
+  them activates; `createPortal`'s content never appears; a reactive `.map()`
+  shows its elements as `[object HTMLLIElement]` text), the build code
+  compiler 0.3.7 reports for it, and what to write instead. It also documents
+  `browserOnly()`.
+- **`./ssr`'s form controls are documented as a known gap** (FORMA-017, DR-24).
+  `renderToString` writes a `textarea`'s and a `select`'s `value` as a `value`
+  attribute, which the HTML parser ignores, where forma-ir 0.2.1 writes the
+  textarea's text and `selected` on the option. The renderer is unchanged
+  until `./ssr` is removed in 3.0.0; `docs/STABILITY.md` says what the served
+  page shows and how to write these controls instead, and two tests pin it.
 
 ### CI
 

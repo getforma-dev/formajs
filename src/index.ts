@@ -20,6 +20,8 @@ export type { SignalGetter, SignalSetter, SignalOptions, Owner, Ref, Dispatch, R
 // DOM
 export { h, svg, Fragment, fragment, createText, mount, createList, cleanup, createShow, createSwitch, createPortal, createErrorBoundary, createSuspense, hydrateIsland, activateIslands, deactivateIsland, deactivateAllIslands, sanitizePropsDeep, reconcileList, template, templateMany } from './dom';
 export type { IslandHydrateFn, ReconcileResult, ListTransitionHooks, CreateListOptions, SwitchCase } from './dom';
+// The browser-only marker (DR-1, L-1): one name, so a search finds every use.
+export { browserOnly } from './dom/browser-only';
 
 // Component
 export { defineComponent, disposeComponent, trackDisposer, onMount, onUnmount, createContext, provide, inject, unprovide } from './component';
