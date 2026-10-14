@@ -1,5 +1,7 @@
 name: Release
 
+# The release tag is the only trigger (SR43, FORMA-134): no branch push, pull
+# request or dispatch starts this workflow, so none of them reaches `publish`.
 on:
   push:
     tags: ['v*']
@@ -11,6 +13,27 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# How a tag becomes a release (SR43; decision brief L-34, L-42; FORMA-134).
+# Only `publish` holds `id-token: write`, the permission that lets a job mint
+# the OIDC token npm exchanges for a publish credential. Everything that runs
+# the dependency tree runs in a job without it:
+#   engines  the e2e suite in Chromium, Firefox and WebKit (DR-9, FORMA-027)
+#   test     typecheck and the unit suite
+#   pack     builds, runs the size and package gates, checks the version against
+#            the tag, packs the tarball and writes its SHA-256 record; restores
+#            no cache, since the bytes it packs are the bytes that publish
+#   publish  restores no cache and installs nothing; downloads this run's packed
+#            artefact, checks every file against the record whose own hash
+#            `pack` passed as a job output, and publishes that tarball with
+#            --ignore-scripts, so it runs no package script either
+#   notify   the create-forma-app dispatch, after publish, with no permissions
+# CI's `release-workflow` job runs scripts/check-release-workflow.rb, which
+# fails if this shape is lost, and seeds each violation to prove it can fail.
+# Verified by: scripts/check-release-workflow.rb > "id-token: write on the pack job"
+# A file altered after `pack`, by any job of this run, fails publish's check
+# before `npm publish` runs, so nothing ships.
+# Verified by: scripts/test-release-artifacts.sh > "a tarball altered by one byte fails"
+# Verified by: scripts/test-release-artifacts.sh > "a replaced tarball with a rewritten record fails"
 jobs:
   # The e2e suite in Chromium, Firefox and WebKit on the tagged commit
   # (decision brief DR-9, FORMA-027). `publish` needs it: if any engine is red,
@@ -20,74 +43,46 @@ jobs:
     permissions:
       contents: read
 
-  publish:
-    needs: engines
-    runs-on: ubuntu-latest
-    # MEASURED: on 2026-08-06 run #16 this job passed EVERY gate — npm ci,
-    # typecheck, test, playwright install, test:e2e, build, check:size,
-    # check:pack, version-matches-tag — and then failed at `npm publish` after
-    # 1.2m. Locally the gates sum to ~40s of work; in CI the equivalent jobs
-    # measured ~5.4m for e2e alone. Realistic worst case ~8m; 20 is ~2.5x and
-    # bounds a slow registry without ever cutting a publish short.
-    timeout-minutes: 20
-    # NOTE — this comment used to claim "Required reviewers / deployment
-    # secrets are configured on this environment, so a tag push cannot publish
-    # unattended." That was FALSE and it mattered: the GitHub API shows
-    # `npm-publish` with `protection_rules: []`, auto-created at
-    # 2026-08-06T16:39:47Z the instant this workflow first referenced it.
-    # Nothing gates it, no human click is needed, and a tag push DOES publish
-    # unattended. Environment approval was never why nothing published.
-    #
-    # The environment is kept because npm's trusted-publisher entry binds to
-    # the OIDC claim, and that claim includes the environment name. If the npm
-    # side is configured with an empty environment while this job declares
-    # `npm-publish`, the claim will not match and publish fails with an auth
-    # error that looks nothing like a configuration error.
-    #
-    # OWNER DECISION REQUIRED, pick one and make the comment true again:
-    #   (a) add Required reviewers under Settings -> Environments -> npm-publish,
-    #       which makes the original claim true; or
-    #   (b) delete the environment here and on npmjs.com, and accept that a tag
-    #       push publishes unattended (which is what happens today).
-    environment: npm-publish
-    env:
-      # Cross-repo dispatch PAT (optional). Surfaced as env so the notify step
-      # can skip cleanly when it isn't configured, rather than erroring.
-      FORMA_DISPATCH_TOKEN: ${{ secrets.FORMA_DISPATCH_TOKEN }}
+  test:
     permissions:
       contents: read
-      id-token: write  # Required for npm trusted publishing (OIDC)
+    runs-on: ubuntu-latest
+    # MEASURED locally: typecheck 4s, the unit suite 9s; `npm ci` 30-60s on a
+    # runner (ci.yml's test job). 10 is the bound ci.yml gives that job.
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
-          # npm >= 11.5.1 is required for OIDC trusted publishing; Node 24
-          # ships it. Do not lower this.
           node-version: 24
           cache: npm
-          registry-url: https://registry.npmjs.org
-
       - run: npm ci
       - run: npm run typecheck
       - run: npm run test
 
-      # The e2e suite is the only thing that exercises the built artifacts in a
-      # real browser. The CI badge implies it gates the code, so release must
-      # run it too — a hydration regression it catches must not ship. This gate
-      # is NOT weakened: the browser cache below only skips a download.
-      - name: Resolve Playwright version
-        id: pw
-        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+  pack:
+    permissions:
+      contents: read
+    runs-on: ubuntu-latest
+    # MEASURED locally: build 6s, check:size 1s, check:pack 4s, npm pack 1s;
+    # `npm ci` without a cache about a minute on a runner. 10 is ~5x.
+    timeout-minutes: 10
+    outputs:
+      record-sha256: ${{ steps.record.outputs.record-sha256 }}
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
         with:
-          path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
-      - run: npx playwright install --with-deps chromium
-      - run: npm run test:e2e   # builds, then drives dist/formajs-runtime.global.js
-
-      - run: npm run build
-      - run: npm run check:size
-      - run: npm run check:pack
+          persist-credentials: false
+      # No cache in this job: a poisoned cache restored here could change the
+      # bytes that publish. setup-node v5 caches on its own when package.json
+      # names a packageManager, so that is turned off explicitly.
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: 24
+          package-manager-cache: false
+      - run: npm ci
 
       - name: Verify version matches tag
         run: |
@@ -98,31 +93,124 @@ jobs:
             exit 1
           fi
 
+      - run: npm run build
+      - run: npm run check:size
+      - run: npm run check:pack
+
+      # --ignore-scripts: no prepack or prepare script rebuilds dist after the
+      # gates above measured it, so the tarball holds exactly those bytes.
+      - name: Pack the tarball
+        run: |
+          mkdir release
+          npm pack --ignore-scripts --pack-destination release
+          ls -l release
+
+      - name: Record the SHA-256 of each packed file
+        id: record
+        run: |
+          RECORD_SHA256=$(bash scripts/release-artifacts.sh record release)
+          cat release/SHA256SUMS
+          echo "record-sha256=$RECORD_SHA256" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: release-packed
+          path: release/
+          if-no-files-found: error
+
+  publish:
+    needs: [engines, test, pack]
+    # The trigger already admits only `v*` tags; this repeats it where the
+    # credential is, so a trigger added by mistake still cannot publish.
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    # A download, a hash check and one `npm publish`: about a minute. On
+    # 2026-08-06 run #16's publish step failed after 1.2m of the old job. 10
+    # bounds a slow registry without cutting a publish short.
+    timeout-minutes: 10
+    # `npm-publish` was auto-created at 2026-08-06T16:39:47Z, the instant this
+    # workflow first referenced it, with no protection rule. Since 2026-10-14
+    # it admits deployments only from tags matching `v*` (its deployment tag
+    # policy; the GitHub API lists one rule, `branch_policy`), so no branch can
+    # run this job in it. It has no required reviewer: a `v*` tag push still
+    # publishes with no human click.
+    #
+    # The environment is kept because npm's trusted-publisher entry binds to
+    # the OIDC claim, and that claim includes the environment name. If the npm
+    # side is configured with an empty environment while this job declares
+    # `npm-publish`, the claim will not match and publish fails with an auth
+    # error that looks nothing like a configuration error.
+    #
+    # OWNER DECISION REQUIRED (M1, DR-31, deferred by the founder), still open:
+    #   (a) add Required reviewers under Settings -> Environments -> npm-publish,
+    #       so each publish waits for one approval; or
+    #   (b) keep the tag policy alone and accept that a `v*` tag push publishes
+    #       unattended (which is what happens today).
+    environment: npm-publish
+    permissions:
+      contents: read
+      id-token: write  # npm trusted publishing (OIDC) and provenance; this job only
+    steps:
+      # Only the verifier, from the tagged commit: no package.json, no lockfile,
+      # nothing to install, so no dependency code reaches this job.
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/release-artifacts.sh
+          sparse-checkout-cone-mode: false
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          # npm >= 11.5.1 is required for OIDC trusted publishing; Node 24
+          # ships it. Do not lower this.
+          node-version: 24
+          package-manager-cache: false
+          registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: release-packed
+          path: release
+          digest-mismatch: error
+
+      # The record's hash comes from `pack`'s job output, not from the
+      # artefact, so a tarball replaced together with its record fails too.
+      - name: Check every packed file against pack's record
+        env:
+          RECORD_SHA256: ${{ needs.pack.outputs.record-sha256 }}
+        run: bash scripts/release-artifacts.sh verify release "$RECORD_SHA256"
+
       # Recorded for the failure explainer below: an OIDC publish that fails
       # because npm is too old looks identical to one that fails on auth.
       - name: Record toolchain
         run: |
           echo "node $(node -v) / npm $(npm -v) — OIDC trusted publishing needs npm >= 11.5.1"
 
-      # Trusted publishing: uses OIDC for auth, no npm token needed.
-      # Provenance is generated automatically.
+      # Trusted publishing: OIDC for auth, no npm token; --provenance signs the
+      # statement linking the tarball to this run.
       # Configure at: npmjs.com/package/@getforma/core → Settings → Trusted Publisher
-      #
-      # --ignore-scripts skips prepublishOnly, which would otherwise rebuild
-      # dist AFTER the gates above measured it. The bytes that get published are
-      # then exactly the bytes check:size and check:pack inspected.
-      - run: npm publish --access public --ignore-scripts
+      # The tarball is the one `pack` built and the checked record lists; npm
+      # uploads a tarball as it is, and --ignore-scripts runs none of its scripts.
+      - name: Publish the verified tarball
+        run: |
+          TARBALLS=$(awk '$2 ~ /\.tgz$/ { print $2 }' release/SHA256SUMS)
+          if [ "$(printf '%s\n' "$TARBALLS" | grep -c .)" != 1 ]; then
+            echo "::error::the record must list exactly one tarball, found: $TARBALLS"
+            exit 1
+          fi
+          npm publish "./release/$TARBALLS" --provenance --access public --ignore-scripts
 
       # run #16 failed here and the run page said only "failure". These causes
       # need different responses and only one of them is fixed by re-running.
       - name: Explain a publish failure
         if: failure()
         run: |
-          echo "::error title=@getforma/core publish failed::Read the npm error above, then match it here."
+          echo "::error title=@getforma/core publish failed::Read the error above, then match it here."
+          echo "'differs from the packed file' / 'is not the record the pack job wrote' / 'is not in the record'"
+          echo "  -> The packed artefact changed between pack and publish. NOTHING WAS PUBLISHED."
+          echo "     Do not re-run until you know what wrote to this run's artefacts."
           echo "5xx / ETIMEDOUT / 'Unable to get OIDC token' / 'Service Unavailable'"
           echo "  -> GitHub Actions or npm incident. The Actions API mints the OIDC token that npm"
           echo "     exchanges for a registry credential, so an Actions outage breaks publish auth."
-          echo "     RE-RUN THIS RUN. Do not re-tag; the tag is fine."
+          echo "     RE-RUN THE FAILED JOBS. Do not re-tag; the tag is fine."
           echo "ENEEDAUTH / E403 / 'Unable to authenticate, need: Basic realm=npm'"
           echo "  -> Trusted publishing is not configured, OR it is configured with the wrong"
           echo "     environment. This job runs in environment 'npm-publish', so the entry at"
@@ -133,11 +221,25 @@ jobs:
           echo "E409 / 'cannot publish over the previously published versions'"
           echo "  -> This version already shipped. Bump the version and re-tag."
 
+  # The create-forma-app dispatch, moved out of `publish` so that no third-party
+  # action runs beside the publish credential. It holds no GITHUB_TOKEN
+  # permission; the dispatch authenticates with its own PAT.
+  notify:
+    needs: publish
+    permissions: {}
+    runs-on: ubuntu-latest
+    # One API call. 5 bounds a slow GitHub API.
+    timeout-minutes: 5
+    env:
+      # Cross-repo dispatch PAT (optional). Surfaced as env so the notify step
+      # can skip cleanly when it isn't configured, rather than erroring.
+      FORMA_DISPATCH_TOKEN: ${{ secrets.FORMA_DISPATCH_TOKEN }}
+    steps:
       - name: Notify create-forma-app to update dependency
         # Skip silently when no dispatch PAT is configured (OIDC covers npm
         # publish but not cross-repo dispatch). continue-on-error is a
         # belt-and-suspenders for an expired/invalid token.
-        if: success() && env.FORMA_DISPATCH_TOKEN != ''
+        if: env.FORMA_DISPATCH_TOKEN != ''
         continue-on-error: true
         uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
         with:

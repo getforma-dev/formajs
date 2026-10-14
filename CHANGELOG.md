@@ -38,6 +38,25 @@ All notable changes to this project will be documented in this file.
   job in `ci.yml` declares `contents: read`; `release.yml`, `docs.yml` and
   `e2e-engines.yml` already declared their permissions and keep them. Every
   install was already `npm ci`. The published package is unchanged.
+- **Only the release's publish job can mint the publish credential** (SR43,
+  L-34, L-42, FORMA-134). `release.yml` splits into `engines`, `test`, `pack`
+  and `publish`. Tests and builds run in jobs without `id-token: write`; `pack`
+  restores no cache, packs the tarball and records its SHA-256; `publish`, the
+  only job holding `id-token: write`, restores no cache and installs nothing,
+  checks the downloaded tarball against that record (whose own hash travels as
+  a job output) and runs `npm publish <tarball> --provenance --ignore-scripts`.
+  The create-forma-app dispatch moves to a `notify` job with no permissions.
+  The tag stays the only trigger. CI's new `release-workflow` job runs
+  actionlint (binary checked against a pinned SHA-256),
+  `scripts/check-release-workflow.rb --self-test` and
+  `scripts/test-release-artifacts.sh`. The published package is unchanged.
+  The lint also refuses a publish job that could go on after a failed check
+  (`continue-on-error`, an `if:` on a step up to the publish, `always()`,
+  `failure()` or `cancelled()` in the job's `if`, a check line that can
+  swallow its failure, a shell without errexit), `container:` or `services:`
+  on the publish or pack job, and a checkout of another repository or ref;
+  every rule has a seed in `--self-test`, which fails if one does not. The
+  artefact test flips a byte instead of writing one that may already be there.
 
 ## [2.0.3] - 2026-10-14
 

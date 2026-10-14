@@ -24,6 +24,7 @@ npm run build   # build dist/ (ends with scripts/verify-dist.mjs)
 - `npm run check:size` — gzip the real ESM import graph per entry (the CI gate)
 - `npm run check:pack` — `publint` + `@arethetypeswrong/cli`
 - `npm run typecheck` — type check without emitting (covers `tsup.config.ts` and `scripts/`)
+- `ruby scripts/check-release-workflow.rb --self-test` and `bash scripts/test-release-artifacts.sh` — the release workflow's SR43 lint (only the publish job holds `id-token: write`, with no cache and no dependency code beside it) and the packed-tarball check the publish job runs before publishing; CI's `release-workflow` job runs both after actionlint
 
 ## Where the documentation lives
 
