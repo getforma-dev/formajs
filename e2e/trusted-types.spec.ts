@@ -226,6 +226,16 @@ for (const { mode, header, disposition } of MODES) {
         out.diff = live.textContent;
         runtime.reconcile(live, runtime.trustedHtml('<p data-forma-id="c">c</p>'));
         out.replaced = live.innerHTML;
+        // The diff path again, now with a TT-sink attribute changing on a
+        // matched element (formajs#29's review, S1): an iframe's srcdoc is
+        // minted through forma-runtime; an on* handler is never written.
+        const framed = (doc: string, handler: string) => runtime.trustedHtml(
+          `<div data-forma-id="f"><iframe sandbox="" srcdoc="&lt;p&gt;${doc}&lt;/p&gt;"></iframe>` +
+          `<button onclick="${handler}()">x</button></div>`);
+        runtime.reconcile(live, framed('one', 'a'));
+        runtime.reconcile(live, framed('two', 'b'));
+        runtime.reconcile(live, framed('three', 'c'));
+        out.morphed = [live.querySelector('iframe')!.getAttribute('srcdoc'), live.querySelector('button')!.getAttribute('onclick')];
         return out;
       });
 
@@ -238,12 +248,59 @@ for (const { mode, header, disposition } of MODES) {
         empty: '1',
         diff: '1b',
         replaced: '<p data-forma-id="c">c</p>',
+        morphed: ['<p>three</p>', null],
       });
       expect(await violations(page)).toEqual([]);
       expect(errors).toEqual([]);
     });
   });
 }
+
+test('the shared registry holds no policy object, and its forma-runtime handle mints nothing from a string (enforced)', async ({ page }) => {
+  // formajs#29's review (S2): the registry every copy of core shares on
+  // globalThis used to hold both live policies.
+  const { errors } = await underTrustedTypes(page, MODES[1].header);
+  await page.goto('/tt-sinks.html');
+  const out = await page.evaluate(async () => {
+    const core = await import('/tt-core.mjs' as string);
+    const runtime = (window as unknown as {
+      FormaRuntime: { reconcile(el: Element, html: unknown): void; trustedHtml(markup: string): unknown };
+    }).FormaRuntime;
+    core.trustedHtml('<b>makes forma</b>');
+    runtime.reconcile(document.getElementById('live')!, runtime.trustedHtml('<p>makes forma-runtime</p>'));
+    const reg = (globalThis as unknown as Record<symbol, Record<string, unknown>>)[Symbol.for('@getforma/core#trusted-types')]!;
+    // Every value at the registry's keys, and one level below: none is a policy.
+    const policies: string[] = [];
+    for (const [key, value] of Object.entries(reg)) {
+      const below = value && typeof value === 'object' && !(value instanceof WeakMap) && !(value instanceof Set)
+        ? Object.entries(value).map(([k, v]) => [`${key}.${k}`, v] as const) : [];
+      for (const [path, candidate] of [[key, value] as const, ...below]) {
+        if (typeof (candidate as { createHTML?: unknown })?.createHTML === 'function') policies.push(path);
+      }
+    }
+    const parse = reg.runtime as (value: unknown) => { srcdoc(el: Element): unknown } | null;
+    const planted = document.createElement('div');
+    planted.setAttribute('srcdoc', '<i>planted</i>');
+    return {
+      prototype: Object.getPrototypeOf(reg) === null,
+      keys: Object.keys(reg).sort(),
+      policies,
+      fromString: parse('<i id="laundered">no trustedHtml()</i>'),
+      fromLookAlike: parse({ toString: () => '<i>look-alike</i>' }),
+      plantedSrcdoc: parse(runtime.trustedHtml('<p>x</p>'))!.srcdoc(planted),
+    };
+  });
+  expect(out).toEqual({
+    prototype: true,
+    keys: ['forma', 'minted', 'runtime', 'warned'],
+    policies: [],
+    fromString: null,
+    fromLookAlike: null,
+    plantedSrcdoc: null,
+  });
+  expect(await violations(page)).toEqual([]);
+  expect(errors).toEqual([]);
+});
 
 test.describe('the controls: the policy is live in this engine', () => {
   test('under Report-Only a string written to innerHTML raises one report and still renders', async ({ page }) => {

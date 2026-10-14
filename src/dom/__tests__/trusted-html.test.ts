@@ -20,12 +20,14 @@ import { setHTMLUnsafe } from '../../dom-utils/mutate';
 import { renderToString, sh } from '../../ssr/render';
 import { renderToStream } from '../../ssr/stream';
 import {
+  POLICY_REFUSED_CODE,
   RAW_STRING_CODES,
   isTrustedHtml,
   trustedHtml,
   type RawSink,
   type TrustedHtml,
 } from '../trusted-html';
+import type { RuntimeParser } from '../runtime-parser';
 
 const REGISTRY = Symbol.for('@getforma/core#trusted-types');
 type Host = Record<symbol, unknown>;
@@ -316,6 +318,27 @@ describe('the raw sinks', () => {
     expect(lines[0]).toMatch(/^\[forma\] FORMA_W_SCRIPT_ELEMENT: h\('script'\)/);
     expect(lines[0]).toContain('3.0.0');
   });
+
+  it('a look-alike object or a String object is written as before and warns as a string does', () => {
+    // formajs#29's review (N1). Each sink treats a value that is not
+    // trustedHtml() as 2.0 did; the ones that converted it still do, and now
+    // say so with their code, as for a string.
+    const lookAlike = { toString: () => '<b>look-alike</b>' };
+    const boxed = new String('<i>boxed</i>');
+    const target = h('div');
+    setHTMLUnsafe(target, lookAlike as unknown as string);
+    expect(target.innerHTML).toBe('<b>look-alike</b>');
+    expect((template(boxed as unknown as string).cloneNode(true) as Element).outerHTML).toBe('<i>boxed</i>');
+    expect(h('iframe', { srcdoc: lookAlike }).getAttribute('srcdoc')).toBe('<b>look-alike</b>');
+    for (const code of ['FORMA_W_RAW_SET_HTML', 'FORMA_W_RAW_TEMPLATE', 'FORMA_W_RAW_SRCDOC']) {
+      expect(linesWith(warn, code), code).toHaveLength(1);
+    }
+    // The two that refused a non-string in 2.0 still refuse it, writing nothing.
+    const kept = h('div', null, 'kept');
+    expect(() => h('div', { dangerouslySetInnerHTML: { __html: boxed } })).toThrow(TypeError);
+    expect(() => reconcile(kept, boxed as unknown as string)).toThrow(TypeError);
+    expect(kept.textContent).toBe('kept');
+  });
 });
 
 describe('core under Trusted Types (simulated: happy-dom has none)', () => {
@@ -447,6 +470,142 @@ describe('core under Trusted Types (simulated: happy-dom has none)', () => {
     expect(frame.getAttribute('srcdoc')).toBe('<p>d</p>');
     expect(sim.violations).toEqual(['srcdoc <p>c</p>', 'srcdoc <p>d</p>']);
     expect(linesWith(warn, 'FORMA_W_RAW_SRCDOC')).toHaveLength(1);
+  });
+
+  it("reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src", () => {
+    // formajs#29's review (S1): patchAttributes copied every changed attribute
+    // as a string, so a changed iframe srcdoc, or on* handler, of markup that
+    // arrived trusted was refused on an enforcing page.
+    sim = enforceTrustedTypes();
+    const live = document.createElement('div');
+    const markup = (doc: string, handler: string, src: string) => trustedHtml(
+      `<div data-forma-id="a"><iframe sandbox="" srcdoc="&lt;p&gt;${doc}&lt;/p&gt;"></iframe>` +
+      `<button onclick="${handler}()">x</button><script type="text/x-inert" src="/${src}.js"></script><p title="${doc}">t</p></div>`,
+    );
+    reconcile(live, markup('one', 'a', 'a'));
+    expect(live.querySelector('iframe')!.getAttribute('srcdoc')).toBe('<p>one</p>');
+
+    // The diff path, three times: every TT-sink attribute changes each time.
+    for (const [doc, handler, src] of [['two', 'b', 'b'], ['three', 'c', 'c'], ['four', 'd', 'd']] as const) {
+      reconcile(live, markup(doc, handler, src));
+      expect(live.querySelector('iframe')!.getAttribute('srcdoc'), doc).toBe(`<p>${doc}</p>`);
+      // Not a sink: written as before.
+      expect(live.querySelector('p')!.getAttribute('title')).toBe(doc);
+      // A script attribute is never written: the stale one is gone.
+      expect(live.querySelector('button')!.getAttribute('onclick')).toBeNull();
+      expect(live.querySelector('script')!.getAttribute('src')).toBeNull();
+    }
+    expect(sim.violations).toEqual([]);
+    expect(sim.minted.filter((v) => v.policy === 'forma-runtime').map((v) => v.markup))
+      .toEqual(expect.arrayContaining(['<p>two</p>', '<p>three</p>', '<p>four</p>']));
+  });
+
+  it('the shared registry holds no policy, and its forma-runtime handle mints nothing from a string', () => {
+    // formajs#29's review (S2): the registry held both live policies, so any
+    // script could mint a forma-runtime value from a string.
+    sim = enforceTrustedTypes();
+    const live = document.createElement('div');
+    reconcile(live, trustedHtml('<p>made both policies</p>'));
+    expect(sim.policies).toEqual(['forma', 'forma-runtime']);
+
+    const reg = (globalThis as Host)[REGISTRY] as Record<string, unknown>;
+    expect(Object.getPrototypeOf(reg)).toBeNull();
+    // No policy object is reachable from it, at any key or one below (the
+    // shape the review found: reg.policies['forma-runtime']).
+    const reachable: string[] = [];
+    for (const [key, value] of Object.entries(reg)) {
+      const inner = value && typeof value === 'object' && !(value instanceof WeakMap) && !(value instanceof Set)
+        ? Object.entries(value as object).map(([k, v]) => [`${key}.${k}`, v] as const)
+        : [];
+      for (const [path, candidate] of [[key, value] as const, ...inner]) {
+        if (typeof (candidate as { createHTML?: unknown })?.createHTML === 'function') reachable.push(path);
+      }
+    }
+    expect(reachable).toEqual([]);
+    const runtime = reg.runtime as (value: unknown) => RuntimeParser | null;
+    const before = sim.minted.length;
+    // A string, a look-alike, and Forma's stand-in shape: no parser, no mint.
+    expect(runtime('<i id="laundered">no trustedHtml()</i>')).toBeNull();
+    expect(runtime({ toString: () => '<i>look-alike</i>' })).toBeNull();
+    expect(runtime(new String('<i>boxed</i>'))).toBeNull();
+    // A parser made from trusted markup mints only its own iframes' srcdoc.
+    const parser = runtime(trustedHtml('<iframe srcdoc="&lt;p&gt;own&lt;/p&gt;"></iframe>'))!;
+    // A div's srcdoc is no sink, so any string can be planted on one.
+    const foreign = document.createElement('div');
+    foreign.setAttribute('srcdoc', '<i>planted</i>');
+    expect(parser.srcdoc(foreign)).toBeNull();
+    const own = parser.parse().querySelector('iframe')!;
+    expect(String(parser.srcdoc(own))).toBe('<p>own</p>');
+    // What was minted: the trusted markup (forma, then forma-runtime) and the
+    // parser's own srcdoc, nothing from the string or the look-alikes.
+    expect(sim.minted.slice(before).map((v) => `${v.policy} ${v.markup}`)).toEqual([
+      'forma <iframe srcdoc="&lt;p&gt;own&lt;/p&gt;"></iframe>',
+      'forma-runtime <iframe srcdoc="&lt;p&gt;own&lt;/p&gt;"></iframe>',
+      'forma-runtime <p>own</p>',
+    ]);
+    expect(sim.violations).toEqual([]);
+  });
+
+  it('a polluted Object.prototype does not stand in for a policy', () => {
+    const proto = Object.prototype as Record<string, unknown>;
+    proto.forma = () => '<b>polluted</b>';
+    proto.runtime = () => null;
+    try {
+      sim = enforceTrustedTypes();
+      const value = trustedHtml('<b>real</b>') as unknown;
+      expect(value).toBeInstanceOf(FakeTrustedHTML);
+      expect(String(value)).toBe('<b>real</b>');
+      const live = document.createElement('div');
+      reconcile(live, trustedHtml('<p>real</p>'));
+      expect(live.innerHTML).toBe('<p>real</p>');
+      expect(sim.violations).toEqual([]);
+    } finally {
+      delete proto.forma;
+      delete proto.runtime;
+    }
+  });
+
+  it('a reconcile the page refused is not recorded, so the same markup as trustedHtml() is written', () => {
+    // formajs#29's review (N3).
+    sim = enforceTrustedTypes();
+    const live = document.createElement('div');
+    live.append(Object.assign(document.createElement('p'), { textContent: 'old' }));
+    live.firstElementChild!.setAttribute('data-forma-id', 'old');
+    expect(() => reconcile(live, '<p data-forma-id="new">new</p>')).toThrow(TypeError);
+    expect(live.textContent).toBe('old');
+    reconcile(live, trustedHtml('<p data-forma-id="new">new</p>'));
+    expect(live.textContent).toBe('new');
+    expect(sim.violations).toEqual(['innerHTML <p data-forma-id="new">new</p>']);
+  });
+
+  it('a refused policy name warns once in development, and the sinks then write strings the page refuses', () => {
+    // formajs#29's review (N4): another script took the name `forma` first.
+    sim = enforceTrustedTypes();
+    (globalThis as { trustedTypes?: { createPolicy(n: string, r: object): unknown } })
+      .trustedTypes!.createPolicy('forma', { createHTML: (s: string) => s.toUpperCase() });
+    const first = trustedHtml('<b>x</b>');
+    trustedHtml('<b>y</b>');
+    expect(first).not.toBeInstanceOf(FakeTrustedHTML);
+    const lines = linesWith(warn, POLICY_REFUSED_CODE);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[forma\] FORMA_W_TT_POLICY_REFUSED: .*"forma"/);
+    // It fails closed: the stand-in's markup reaches the sink as a string.
+    expect(() => h('div', { dangerouslySetInnerHTML: { __html: first } })).toThrow(TypeError);
+    expect(sim.violations).toEqual(['trusted-types forma', 'innerHTML <b>x</b>']);
+  });
+
+  it('an element named trustedTypes is not Trusted Types', () => {
+    // formajs#29's review (N5): DOM clobbering can put an element at
+    // window.trustedTypes in an engine without Trusted Types.
+    (globalThis as Record<string, unknown>).trustedTypes = document.createElement('a');
+    try {
+      expect(isTrustedHtml({ toString: () => '<b>x</b>' })).toBe(false);
+      const value = trustedHtml('<b>x</b>');
+      expect(isTrustedHtml(value)).toBe(true);
+      expect(h('div', { dangerouslySetInnerHTML: { __html: value } }).innerHTML).toBe('<b>x</b>');
+    } finally {
+      delete (globalThis as Record<string, unknown>).trustedTypes;
+    }
   });
 });
 
