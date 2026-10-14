@@ -134,9 +134,11 @@ def check_permissions(doc, config, out)
   end
   jobs_of(doc).each do |name, job|
     next if name == config[:publish_job]
-    next unless job.is_a?(Hash) && grants_id_token?(job['permissions'])
 
-    out << "P4 job `#{name}` holds `id-token: write`; only `#{config[:publish_job]}` may"
+    own = job.is_a?(Hash) && job.key?('permissions')
+    next unless grants_id_token?(own ? job['permissions'] : top)
+
+    out << "P4 job `#{name}` holds `id-token: write`#{own ? '' : ' (inherited from the workflow level)'}; only `#{config[:publish_job]}` may"
   end
 end
 
@@ -330,6 +332,10 @@ SEEDS = [
   ['contents: write on the publish job', 'P3', ->(d) { d['jobs'][CONFIG[:publish_job]]['permissions']['contents'] = 'write' }],
   ['id-token: write on the pack job', 'P4', ->(d) { d['jobs'][CONFIG[:pack_job]]['permissions'] = { 'contents' => 'read', 'id-token' => 'write' } }],
   ['write-all on the pack job', 'P4', ->(d) { d['jobs'][CONFIG[:pack_job]]['permissions'] = 'write-all' }],
+  ['the pack job inheriting id-token: write from the workflow level', 'P4', lambda do |d|
+    d['permissions'] = { 'id-token' => 'write' }
+    d['jobs'][CONFIG[:pack_job]].delete('permissions')
+  end],
   ['the publish job as a reusable workflow', 'J1', ->(d) { d['jobs'][CONFIG[:publish_job]] = { 'uses' => './.github/workflows/x.yml', 'permissions' => { 'contents' => 'read', 'id-token' => 'write' } } }],
   ['publish not waiting for the pack job', 'J2', ->(d) { d['jobs'][CONFIG[:publish_job]]['needs'] = needs_of(d['jobs'][CONFIG[:publish_job]]) - [CONFIG[:pack_job]] }],
   ['a new gate job publish does not wait for', 'J2', ->(d) { d['jobs']['late-gate'] = { 'permissions' => {}, 'runs-on' => 'ubuntu-latest', 'steps' => [{ 'run' => 'true' }] } }],
