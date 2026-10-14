@@ -89,10 +89,10 @@ describe('native-call cost preflight (DR-16)', () => {
       expect(outcome.code).toBe('FORMA_E_BUDGET');
     });
 
-    // Expected to fail until FORMA-004 (DR-16: a cost function per allowlisted
-    // native, checked before the call) lands; then remove `.fails`. On main
-    // the native builds the array and only then is the result refused.
-    it.fails('is refused before the native allocates', () => {
+    // Was `it.fails` until FORMA-004 (DR-16: a cost function per allowlisted
+    // native, checked before the call). Before it, the native built the array
+    // and only then was the result refused.
+    it('is refused before the native allocates', () => {
       expect(outcome.reached, 'Array.from was invoked with {length: 12000000} before the refusal').toBe(0);
     });
   });

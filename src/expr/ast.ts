@@ -44,6 +44,15 @@ export type Stmt =
  * limits bound its COST. Neither bounds termination — with no loops and no
  * recursion the language is total by construction, so nothing here is load
  * bearing for "does it stop".
+ *
+ * `ALLOC_BUDGET` is the units (array slots and string characters, see cost.ts)
+ * that the native calls of ONE evaluation may cost, checked before each call
+ * (DR-16). It is sized to N3's 50 ms long task: `Array.from({length: n})`, the
+ * costliest call per unit, measured 40.0 ms at n = 400,000 and 50.0 ms at
+ * 500,000 (medians of 21) in Chromium 151 at 4x CPU throttling on 2026-10-14;
+ * `node scripts/measure-alloc-budget.mjs` re-measures it and the largest call
+ * each cost row allows. Comments inside this object literal would ship in the
+ * runtime bundles, so they live here.
  */
 export const LIMITS = Object.freeze({
   MAX_SOURCE_LENGTH: 4096,
@@ -55,6 +64,7 @@ export const LIMITS = Object.freeze({
   MAX_OBJECT_KEYS: 24,
   MAX_ARRAY_ELEMENTS: 64,
   STEP_BUDGET: 100_000,
+  ALLOC_BUDGET: 400_000,
   MAX_ARRAY_LENGTH: 1_000_000,
   MAX_STRING_LENGTH: 1_048_576,
   MAX_REPEAT_COUNT: 10_000,

@@ -120,10 +120,14 @@ Verified by: `src/dom/__tests__/el-magic-safety.test.ts` > "$refs hands back a w
 
 ### Termination and budgets
 
-The language has no loops, no recursion, no generators and no way to name or store a function, so **every expression terminates by construction** — an arrow is legal only in the callback slot of nine allowlisted array methods, and cannot be assigned, stored, returned or re-invoked. Budgets therefore bound *cost*, not hanging: 4,096 source characters, 512 AST nodes, depth 32, arrow nesting 2, four call arguments, and a 100,000-step evaluation budget configurable per page with `data-forma-expr-budget` on the script tag. Argument-driven allocations are capped before the call (`repeat` ≤ 10,000, `flat` depth ≤ 8, strings ≤ 1 MiB, arrays ≤ 1,000,000).
+The language has no loops, no recursion, no generators and no way to name or store a function, so **every expression terminates by construction** — an arrow is legal only in the callback slot of nine allowlisted array methods, and cannot be assigned, stored, returned or re-invoked. Budgets therefore bound *cost*, not hanging: 4,096 source characters, 512 AST nodes, depth 32, arrow nesting 2, four call arguments, and a 100,000-step evaluation budget configurable per page with `data-forma-expr-budget` on the script tag. The step budget counts interpreter nodes, not the work inside a built-in, so **every built-in call is also charged before it runs** against one allocation budget per evaluation (DR-16): 400,000 units, where a unit is an array slot or a string character the call produces or converts, and a sixteenth of one for an element it only scans. Each call is charged the weight of its arguments as text (most built-ins convert an array argument with `join`), then its row in `src/expr/cost.ts` (`map` the receiver's length, `repeat` the receiver's length times the count, `Array.from` the length it is asked for, …). Converting an array or object with an operator (`'' + list`, `` `${list}` ``, `list < 1`, `x += list`) is charged the same way. Past the budget the call is refused with `FORMA_E_BUDGET` and never runs, so `Array.from({length: 12000000})` costs nothing, where 2.0.1 built a 139 MB array in a 300 ms task before refusing it. The budget is sized so that the costliest call per unit stays under a 50 ms task at 4x CPU throttling. `repeat` ≤ 10,000 and `flat` depth ≤ 8 are refused before the call as before, and results stay capped at 1 MiB strings and 1,000,000-element arrays.
 
 Verified by: `src/expr/__tests__/adversarial.test.ts` > "a nested callback over a large array trips the step budget"
 Verified by: `src/expr/__tests__/adversarial.test.ts` > "an argument that would allocate hundreds of megabytes is refused"
+Verified by: `src/expr/__tests__/native-cost.test.ts` > "every allowlisted native refuses an argument heavier than the budget before it runs"
+Verified by: `src/expr/__tests__/native-cost.test.ts` > "every size-driven cost refuses a hostile size before the native runs"
+Verified by: `src/expr/__tests__/native-cost.test.ts` > "the budget is per evaluation and cumulative across its calls"
+Verified by: `src/expr/__tests__/native-cost.test.ts` > "an operator does not convert a value heavier than the budget"
 
 ### Failure is always visible
 
@@ -177,12 +181,13 @@ Verified by: `src/security/__tests__/url-safety.test.ts` > "blocks data:image/sv
 
 ### Island props vs. RPC arguments — NOT equivalent
 
-Both channels strip `__proto__`, `constructor` and `prototype`, but to different depths, deliberately:
+Both channels strip `__proto__`, `constructor` and `prototype`, and since DR-21 both do it at every depth; they differ only in where:
 
-- **Island props** (inline `data-forma-props` and the shared `__forma_islands` block) are sanitized **shallowly** — top-level keys only. A pollution key nested inside a child object reaches your island. A deep walk of every payload on every hydration is a cost no island should pay by default. Export `sanitizePropsDeep(props)` from `@getforma/core` and call it yourself before handing props to anything that merges them (`createStore`, a deep-merge helper, an `Object.assign` chain). It is iterative with a `WeakSet`, so deep and cyclic payloads are safe.
+- **Island props** (inline `data-forma-props` and the shared `__forma_islands` block) are stripped **at every depth while they are parsed**, before any island sees them, with no opt-out. A nested pollution key never reaches an island, so a deep merge of its props (`createStore`, a deep-merge helper, an `Object.assign` chain) cannot carry one into a prototype. The pass is iterative with a `WeakSet`, so deep and cyclic payloads are safe. `sanitizePropsDeep(props)` stays exported for props that reach an island some other way.
 - **RPC arguments** are sanitized **recursively, with no opt-in**, before the server function is invoked — iteratively, so a deeply nested body cannot overflow the stack.
 
-Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "is opt-in: island activation still sanitizes only the top level"
+Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "island activation strips forbidden keys at every depth, inline and shared, with no opt-out"
+Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "island props nested 10,000 deep are parsed and stripped"
 Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "sanitizePropsDeep strips forbidden keys at every depth"
 Verified by: `src/server/__tests__/rpc-deep-strip.test.ts` > "strips forbidden keys at a depth that overflows a recursive walk"
 

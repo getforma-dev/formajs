@@ -297,7 +297,9 @@ SECURITY.md says island props are "stripped of `__proto__`, `constructor`, `prot
 
 **Fixed:** SECURITY.md and README now state the same thing — island props are sanitized shallowly, RPC arguments recursively — and say why the asymmetry is deliberate. An opt-in `sanitizePropsDeep` closes the gap for apps that need it.
 
-Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "is opt-in: island activation still sanitizes only the top level"
+*Superseded by DR-21 (FORMA-004): island activation now strips these keys at every depth while it parses props, with no opt-out; the test that pinned the shallow default was replaced by the one below.*
+
+Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "island activation strips forbidden keys at every depth, inline and shared, with no opt-out"
 Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "sanitizePropsDeep strips forbidden keys at every depth"
 
 #### `alien-signals-link-wrong-repo` - FIXED
@@ -515,7 +517,9 @@ Proposed: Export an opt-in deep sanitizer rather than changing the default: add 
 
 Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "sanitizePropsDeep strips forbidden keys at every depth"
 Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "sanitizePropsDeep terminates on cyclic props"
-Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "is opt-in: island activation still sanitizes only the top level"
+*Superseded by DR-21 (FORMA-004): island activation now strips these keys at every depth while it parses props, with no opt-out; the test that pinned the shallow default was replaced by the one below.*
+
+Verified by: `src/dom/__tests__/activate-isolation.test.ts` > "island activation strips forbidden keys at every depth, inline and shared, with no opt-out"
 
 #### `data-svg-scheme-comment-false` - FIXED (risk: none)
 

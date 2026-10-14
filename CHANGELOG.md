@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **A built-in call in an expression is charged before it runs** (FORMA-004,
+  DR-16). Every allowlisted native is charged, against one budget per
+  evaluation (`LIMITS.ALLOC_BUDGET`, 400,000 units: array slots and string
+  characters produced or converted, a sixteenth for those only scanned), the
+  weight of its arguments as text and then its row in `src/expr/cost.ts`, and is
+  refused with `FORMA_E_BUDGET` before it runs once the evaluation would pass
+  the budget. An operator that converts an array or object to text (`'' + list`,
+  `` `${list}` ``, `list < 1`, `x += list`, a write to `$el`) is charged the
+  same way. `Array.from({length: 12000000})` used to build a 139 MB array in a
+  300 ms task and only then be refused; it now costs nothing. The budget keeps
+  the costliest call per unit under a 50 ms task at 4x CPU throttling.
+  Behaviour change: an evaluation whose built-in calls would pass 400,000 units
+  is refused where 2.0.1 answered it. That includes a built-in that produces a
+  string or array longer than 400,000 (the 1 MiB and 1,000,000-element result
+  caps still apply to `+` and template literals), `Object.keys`, `values` or
+  `entries` of a string of more than about 44,000 characters, and a default
+  `sort()` of more than about 10,000 numbers. Rollback: pin 2.0.1.
+- **Island props are stripped of `__proto__`, `constructor` and `prototype` at
+  every depth while they are parsed** (FORMA-004, DR-21), inline and shared,
+  with no opt-out. 2.0.1 stripped the top level only, so a nested key reached
+  any island that deep-merged its props. The pass is iterative (a JSON reviver
+  would overflow the stack near 5,000 levels); `sanitizePropsDeep` stays
+  exported. Props that are valid JSON but not an object (`null`, `7`), inline
+  or in the shared block, now reach the island as that value; 2.0.1 threw and
+  marked the island `error`.
+
 ## [2.0.2] - 2026-10-14
 
 ### Changed

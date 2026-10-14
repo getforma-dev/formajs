@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FormaJS expression cost preflight (DR-16)</title>
+  <script>
+    // Registered before the runtime loads, so the runtime's own first task is observed.
+    window.__longTasks = [];
+    new PerformanceObserver(function (list) {
+      list.getEntries().forEach(function (e) { window.__longTasks.push(Math.round(e.duration)); });
+    }).observe({ type: 'longtask', buffered: true });
+  </script>
+</head>
+<body>
+  <!-- Audit verification run 4: before FORMA-004 the hostile binding built a
+       twelve-million-element array (139 MB, a 300 ms task) and only then was refused. -->
+  <div data-forma-state='{"n": 0}'>
+    <span id="hostile" data-text="{Array.from({length: 12000000}).length}">unset</span>
+    <span id="control" data-text="{Array.from({length: 1000}).length}">unset</span>
+  </div>
+  <script src="formajs-runtime.global.js" data-forma-diagnostics="true"></script>
+</body>
+</html>

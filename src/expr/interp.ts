@@ -54,6 +54,7 @@ import {
   STYLE_METHODS,
 } from './allowlist';
 import { hostObject, isHost, type Host } from './host';
+import { COSTS, DATA_ARGS, weigh } from './cost';
 
 export interface ScopeLike {
   getters: Record<string, () => unknown>;
@@ -71,6 +72,8 @@ export interface EvalCtx {
   frame: Frame | null;
   steps: number;
   budget: number;
+  /** Units charged to `LIMITS.ALLOC_BUDGET` so far in this evaluation. */
+  cost: number;
 }
 
 /** Prototype of a plain object literal, captured once. */
@@ -88,13 +91,57 @@ export function getStepBudget(): number {
 }
 
 export function makeCtx(scope: ScopeLike): EvalCtx {
-  return { scope, frame: null, steps: 0, budget: stepBudget };
+  return { scope, frame: null, steps: 0, budget: stepBudget, cost: 0 };
 }
 
 function step(ctx: EvalCtx, at: number): void {
   if (++ctx.steps > ctx.budget) {
     throw exprError('FORMA_E_BUDGET', `expression exceeded its ${ctx.budget}-step budget`, at);
   }
+}
+
+// ── The allocation budget (DR-16) ──
+
+/** Units left in this evaluation's allocation budget. */
+function room(ctx: EvalCtx): number {
+  return LIMITS.ALLOC_BUDGET - ctx.cost;
+}
+
+/**
+ * Charge `units` to the evaluation, or refuse with `FORMA_E_BUDGET`. A NaN or
+ * negative charge is refused too, so a cost that cannot be read fails closed.
+ * Verified by: src/expr/__tests__/native-cost.test.ts > "the budget is per evaluation and cumulative across its calls"
+ */
+function charge(ctx: EvalCtx, units: number, what: string, at: number): void {
+  if (!(units >= 0 && (ctx.cost += units) <= LIMITS.ALLOC_BUDGET)) {
+    throw exprError('FORMA_E_BUDGET', `${what} would exceed the ${LIMITS.ALLOC_BUDGET}-unit allocation budget`, at);
+  }
+}
+
+/**
+ * The preflight every native call passes BEFORE it runs: the text weight of
+ * each argument (unless the native reads them as data), then the native's row
+ * in the cost table, if it has one. The intrinsic is invoked only after both
+ * charges fit.
+ * Verified by: src/expr/__tests__/native-cost.test.ts > "every allowlisted native refuses an argument heavier than the budget before it runs"
+ * Verified by: src/expr/__tests__/native-cost.test.ts > "every size-driven cost refuses a hostile size before the native runs"
+ */
+function preflight(ctx: EvalCtx, name: string, recv: unknown, args: unknown[], at: number): void {
+  if (!DATA_ARGS.has(name)) {
+    for (const a of args) charge(ctx, weigh(a, room(ctx)), name, at);
+  }
+  const cost = Object.hasOwn(COSTS, name) ? COSTS[name]! : null;
+  if (cost) charge(ctx, cost(recv, args, room(ctx)), name, at);
+}
+
+/**
+ * An array or object an operator is about to convert to text or a number
+ * (`'' + list`, `${list}`, `list < 1`): the conversion is a `join`, so it is
+ * charged like a native's argument.
+ * Verified by: src/expr/__tests__/native-cost.test.ts > "an operator does not convert a value heavier than the budget"
+ */
+function coerce(ctx: EvalCtx, v: unknown, at: number): void {
+  if (typeof v === 'object' && v !== null) charge(ctx, weigh(v, room(ctx)), 'converting a value to text', at);
 }
 
 // ── The two audited member-access helpers ──
@@ -110,6 +157,9 @@ function step(ctx: EvalCtx, at: number): void {
 export function safeKey(raw: unknown, at: number): string {
   if (typeof raw === 'symbol') {
     throw exprError('FORMA_E_KEY_DENIED', 'a symbol cannot be used as a property key', at);
+  }
+  if (typeof raw === 'object' && raw !== null && weigh(raw, MAX_KEY_LENGTH) > MAX_KEY_LENGTH) {
+    throw exprError('FORMA_E_KEY_DENIED', 'property name is too long', at);
   }
   const key = typeof raw === 'string' ? raw : String(raw);
   if (key.length > MAX_KEY_LENGTH) {
@@ -372,7 +422,9 @@ function makeCallback(node: Expr, ctx: EvalCtx, maxParams: number, at: number): 
     const arity = Math.min(value.maxArgs, maxParams);
     return (...jsArgs: unknown[]) => {
       step(ctx, at);
-      return Reflect.apply(fn, undefined, jsArgs.slice(0, arity));
+      const args = jsArgs.slice(0, arity);
+      preflight(ctx, value.label, undefined, args, at);
+      return Reflect.apply(fn, undefined, args);
     };
   }
   throw exprError(
@@ -401,11 +453,9 @@ function evalCall(node: Expr & { k: 'Call' }, ctx: EvalCtx): unknown {
   if (callee.k === 'Identifier') {
     const target = resolveIdent(callee.name, ctx, callee.i);
     if (isHost(target) && target.kind === 'fn') {
-      const args = node.args.map((a) => evalArg(a, ctx));
-      return checkResultSize(
-        Reflect.apply(target.target as (...a: unknown[]) => unknown, undefined, args.slice(0, target.maxArgs)),
-        at,
-      );
+      const args = node.args.map((a) => evalArg(a, ctx)).slice(0, target.maxArgs);
+      preflight(ctx, target.label, undefined, args, at);
+      return checkResultSize(Reflect.apply(target.target as (...a: unknown[]) => unknown, undefined, args), at);
     }
     throw exprError(
       'FORMA_E_CALL_DENIED',
@@ -450,7 +500,18 @@ function evalCall(node: Expr & { k: 'Call' }, ctx: EvalCtx): unknown {
     else args.push(evalArg(argNode, ctx));
   });
 
+  preflight(ctx, `${kind}.${method}`, recv, args, at);
   guardArgs(method, args, at);
+  if (method === 'flatMap' && typeof args[0] === 'function') {
+    // Each array the callback returns is copied into the result: charged as
+    // it is returned, before flatMap copies it.
+    const cb = args[0] as (...a: unknown[]) => unknown;
+    args[0] = (...a: unknown[]) => {
+      const out = cb(...a);
+      if (Array.isArray(out)) charge(ctx, out.length, 'flatMap', at);
+      return out;
+    };
+  }
   const receiver = ARRAY_COPY_FIRST.has(method) ? (recv as unknown[]).slice() : recv;
   return checkResultSize(Reflect.apply(tbl[method]!, receiver, args), at);
 }
@@ -501,6 +562,7 @@ function callHostMethod(host: Host, method: string, argNodes: Expr[], ctx: EvalC
     if (typeof fn !== 'function') {
       throw exprError('FORMA_E_METHOD_DENIED', `${host.label}.${method} is not on the allowlist`, at);
     }
+    preflight(ctx, `${host.label}.${method}`, undefined, args, at);
     return checkResultSize(Reflect.apply(fn as (...a: unknown[]) => unknown, undefined, args), at);
   }
 
@@ -517,6 +579,8 @@ function callHostMethod(host: Host, method: string, argNodes: Expr[], ctx: EvalC
   if (!allowed || !allowed.has(method)) {
     throw exprError('FORMA_E_METHOD_DENIED', `${host.label}.${method}() is not on the allowlist`, at);
   }
+  // A DOM method converts its arguments to strings.
+  preflight(ctx, `${host.label}.${method}`, undefined, args, at);
   if (host.kind === 'style' && method === 'setProperty' && STYLE_DENY_PROPS.has(String(args[0]))) {
     throw exprError('FORMA_E_METHOD_DENIED', `style.setProperty("${String(args[0])}") is not available`, at);
   }
@@ -557,6 +621,7 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
       let out = node.quasis[0] ?? '';
       for (let i = 0; i < node.exprs.length; i++) {
         const value = evalExpr(node.exprs[i]!, ctx);
+        coerce(ctx, value, node.i);
         out += value === null || value === undefined ? '' : stringify(value, node.i);
         out += node.quasis[i + 1] ?? '';
         if (out.length > LIMITS.MAX_STRING_LENGTH) {
@@ -581,6 +646,7 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
       if (node.op === 'typeof') return typeof evalExpr(node.arg, ctx);
       const v = evalExpr(node.arg, ctx);
       if (node.op === '!') return !v;
+      coerce(ctx, v, node.i);
       if (node.op === '-') return -(v as number);
       return +(v as number);
     }
@@ -601,6 +667,10 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
       // Switched through a local so the exhaustiveness check below narrows the
       // OPERATOR to never, not the node it came from.
       const op: BinaryOp = node.op;
+      if (op !== '===' && op !== '!==') {
+        coerce(ctx, l, node.i);
+        coerce(ctx, r, node.i);
+      }
       switch (op) {
         case '===': return l === r;
         case '!==': return l !== r;
@@ -711,7 +781,17 @@ function writeMember(recv: unknown, key: string, value: unknown, at: number): vo
   throw exprError('FORMA_E_ASSIGN_DENIED', `cannot assign to a property of a ${describeKind(recv)} value`, at);
 }
 
-function applyOp(op: '=' | '+=' | '-=' | '*=' | '/=', current: unknown, operand: unknown): unknown {
+function applyOp(
+  ctx: EvalCtx,
+  at: number,
+  op: '=' | '+=' | '-=' | '*=' | '/=',
+  current: unknown,
+  operand: unknown,
+): unknown {
+  if (op !== '=') {
+    coerce(ctx, current, at);
+    coerce(ctx, operand, at);
+  }
   switch (op) {
     case '=': return operand;
     case '+=': return (current as number) + (operand as number);
@@ -745,7 +825,7 @@ function runStmt(stmt: Stmt, ctx: EvalCtx): void {
           );
         }
         const current = stmt.op === '=' ? undefined : resolveIdent(target.name, ctx, target.i);
-        setter(applyOp(stmt.op, current, evalExpr(stmt.value, ctx)));
+        setter(applyOp(ctx, target.i, stmt.op, current, evalExpr(stmt.value, ctx)));
         return;
       }
       const recv = evalExpr(target.object, ctx);
@@ -754,7 +834,10 @@ function runStmt(stmt: Stmt, ctx: EvalCtx): void {
       }
       const key = target.k === 'Member' ? target.key : safeKey(evalExpr(target.key, ctx), target.i);
       const current = stmt.op === '=' ? undefined : safeRead(recv, key, target.i, false);
-      writeMember(recv, safeKey(key, target.i), applyOp(stmt.op, current, evalExpr(stmt.value, ctx)), target.i);
+      const value = applyOp(ctx, target.i, stmt.op, current, evalExpr(stmt.value, ctx));
+      // A DOM property or style write converts the value to a string.
+      if (isHost(recv)) coerce(ctx, value, target.i);
+      writeMember(recv, safeKey(key, target.i), value, target.i);
       return;
     }
 
@@ -770,7 +853,7 @@ function runStmt(stmt: Stmt, ctx: EvalCtx): void {
             target.i,
           );
         }
-        setter((resolveIdent(target.name, ctx, target.i) as number) + delta);
+        setter(applyOp(ctx, target.i, '+=', resolveIdent(target.name, ctx, target.i), delta));
         return;
       }
       const recv = evalExpr(target.object, ctx);
@@ -781,7 +864,7 @@ function runStmt(stmt: Stmt, ctx: EvalCtx): void {
         target.k === 'Member' ? target.key : evalExpr(target.key, ctx),
         target.i,
       );
-      writeMember(recv, key, (safeRead(recv, key, target.i, false) as number) + delta, target.i);
+      writeMember(recv, key, applyOp(ctx, target.i, '+=', safeRead(recv, key, target.i, false), delta), target.i);
       return;
     }
 
