@@ -1,7 +1,7 @@
 /**
  * THE COST TABLE (DR-16). What each allowlisted native may cost, read from its
  * receiver and arguments BEFORE it runs, and charged to one allocation budget
- * per evaluation (`LIMITS.ALLOC_BUDGET`).
+ * (`LIMITS.ALLOC_BUDGET`), one per task in the runtime (FORMA-028).
  *
  * The step budget counts interpreter nodes, not the work inside a native, so a
  * single `Array.from({length: 12000000})` used to build a 139 MB array in a
@@ -12,12 +12,18 @@
  * one-sixteenth per element it only scans or shares. Every call is charged, in
  * order: the text weight of each argument (most natives convert an argument to
  * a string or a number, and an array becomes text through `join`), unless the
- * native is in `DATA_ARGS`; then its row below, if it has one. A native with no
- * row costs only the text of its arguments.
+ * native is in `DATA_ARGS`, or is a string method, which reads a string
+ * argument for a 32nd of a unit a character; then its row below, if it has
+ * one. A native with no row costs only the text of its arguments.
+ *
+ * The operators that build or read strings are charged with the weights below
+ * (`GROW`, `READ`, `PARSE`, `FLAT`), in interp.ts (FORMA-028).
  *
  * Verified by: src/expr/__tests__/native-cost.test.ts > "every allowlisted native refuses an argument heavier than the budget before it runs"
  * Verified by: src/expr/__tests__/native-cost.test.ts > "every size-driven cost refuses a hostile size before the native runs"
  */
+
+import { LIMITS } from './ast';
 
 // Captured once, like the allowlist's intrinsics, so a page script that later
 // replaces one of them cannot make a cost read low.
@@ -42,10 +48,63 @@ const NONE: unknown[] = [];
 const costly = RegExp.prototype.exec.bind(/[^\x00-\xff\u2000-\u20cf\u2100-\u2125]/);
 const nonAscii = RegExp.prototype.exec.bind(/[^\x00-\x7f]/);
 
+/**
+ * Whether a character (the first `costly` found) belongs to a script whose
+ * ordinary text lowercased at 4 to 19 ns a character at 4x CPU throttling,
+ * stored two bytes a character (FORMA-028): Latin Extended-A and B, the
+ * combining marks, Greek, Cyrillic, Armenian, Hebrew, Arabic, the Indic
+ * scripts, Thai, Tibetan, Latin Extended Additional (Vietnamese), the CJK
+ * blocks and kana, Hangul, and the emoji planes. Turkish `İ` (U+0130) is in
+ * Latin Extended-A and so in this tier, though it lowercases to two characters
+ * and measured 27 to 30 ns. Testing one character costs nothing; a full scan
+ * of two-byte text measured 6 to 7 ns a character, most of what lowercasing
+ * it costs, so the tier is read from the first character outside Latin-1.
+ * Text that opens with one such character is priced 1/16 whatever follows;
+ * SECURITY.md states the bound that leaves (about 160 ms a task).
+ */
+const middle = RegExp.prototype.test.bind(/[\u0100-\u024f\u0300-\u0fff\u1e00-\u1eff\u2e80-\u9fff\uac00-\ud7af\ud83c-\ud83e]/);
+
+/**
+ * Per character a `+`, `+=` or template literal produces (FORMA-028). Joining
+ * keeps the pieces as a rope; the first read of it copies the whole, which
+ * through the runtime measured 0.3 to 0.7 ns a produced character at 4x, and
+ * a default sort of such strings 1.3 to 2 ns: about a 128th of an
+ * `Array.from` slot for the copy, the sort's comparisons charged by its row.
+ */
+export const GROW = 1 / 128;
+
+/** Per character two strings are compared: 0.2 to 1.3 ns measured. */
+export const READ = 1 / 128;
+
+/** The fixed part of copying a rope an operand just built (plus a 32nd a character, to 512). */
+export const FLAT = 8;
+
+/** Per character a string is parsed as a number by an operator: 11 ns for digits. */
+export const PARSE = 1 / 8;
+
 type Cost = (recv: unknown, args: unknown[], room: number) => number;
 
 /** Elements in a string or array; 0 for anything else. */
 const len = (v: unknown): number => (typeof v === 'string' || isArray(v) ? v.length : 0);
+
+/** The longest string a result may be (`LIMITS.MAX_STRING_LENGTH`). */
+const MAX_TEXT = LIMITS.MAX_STRING_LENGTH;
+
+/**
+ * What searching an array for a long string reads: every element that is a
+ * string of the same length is compared to it whole.
+ * Verified by: src/expr/__tests__/string-growth.test.ts > "comparing long strings is charged by the characters compared"
+ */
+const alike = (r: unknown, v: unknown, room: number): number => {
+  let n = 0;
+  if (typeof v === 'string' && v.length > 127 && isArray(r)) {
+    for (const e of r) {
+      if (n > room) break;
+      if (typeof e === 'string' && e.length === v.length) n += v.length * READ;
+    }
+  }
+  return n;
+};
 
 /** A count argument as the native reads it, never negative. */
 const count = (v: unknown): number => max(0, toNumber(v) || 0);
@@ -86,6 +145,9 @@ const size = (v: unknown, room: number): number => {
  * Verified by: src/expr/__tests__/native-cost.test.ts > "weighing stops at the budget on a cyclic or deeply nested value"
  */
 export function weigh(root: unknown, room: number, depth = -1): number {
+  if (typeof root !== 'object' || root === null) {
+    return depth >= 0 ? 0 : typeof root === 'string' ? root.length : typeof root === 'number' ? 3 : 1;
+  }
   let total = 0;
   const todo: unknown[] = [root];
   const depths: number[] = [depth];
@@ -155,12 +217,16 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *
  * - `array.sort` charges n log n comparisons. The default order converts both
  *   elements to text at every comparison, so an element that is an array adds
- *   its text weight each time.
+ *   its text weight each time, and a string element its length at `READ`: two
+ *   strings that share a long prefix are read that far (FORMA-028; round 2
+ *   sorted 2,000 such strings for 1.5 s at 4x).
  * - `every`, `some` and `reduce` skip holes without calling back, so on a
  *   sparse array the step budget does not bound them. A hole measured about
  *   the cost of an array slot, so they cost the receiver's length.
  * - `includes`, `indexOf` and `lastIndexOf` compare the search value without
  *   converting it, but convert `fromIndex` to a number: that is weighed as text.
+ *   A search value that is a long string is compared whole with every element
+ *   of the same length (`alike`).
  * - `Array.from` converts an array-like's `length` to a number, so the
  *   array-like is weighed as text before that conversion.
  * - `Object.keys` / `values` / `entries` charge 16 per element or key: listing
@@ -170,9 +236,18 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *   constant times the receiver) are weighted by their measured cost per
  *   character against an `Array.from` slot (about 110 ns at 4x CPU
  *   throttling), by `node scripts/measure-alloc-budget.mjs --chars`. Case
- *   mapping is tiered by the costliest character (`costly`, then `nonAscii`):
- *   lowercasing a string stored one byte a character measured at most 2.1 ns,
- *   and anything costly up to about 43 ns (Turkish `İ`); uppercasing ASCII 1.3 ns,
+ *   mapping is refused before the call past the 1 MiB result cap, which it
+ *   would pass anyway, and tiered by the costliest character (`costly`, then
+ *   `nonAscii`): lowercasing a string stored one byte a character measured at
+ *   most 2.1 ns. Lowercasing two-byte text measured 4 to 19 ns a character in
+ *   the scripts `middle` names (most for all-capital Greek, least for text that
+ *   changes little, such as CJK; Turkish `İ` 27 to 30 ns) and 17 to 40 ns
+ *   beyond them (Georgian, Cherokee, Greek Extended, fullwidth Latin): such text costs 1/16 when its
+ *   first character above Latin-1 is in a `middle` script, else 1/2 (FORMA-028;
+ *   in 2.0.3 all of it cost 1/2, refusing a search over 1,716 records of Greek).
+ *   The first character decides because a full scan of two-byte text measured
+ *   6 to 7 ns a character, most of the cost of lowercasing it; SECURITY.md says
+ *   what that leaves open. Uppercasing ASCII 1.3 ns,
  *   Latin-1 up to 32 ns (`ß` and `ÿ` widen), and costly text up to 64 ns (`ΐ`
  *   becomes three characters). The cheap tier also takes text stored two bytes
  *   a character whose characters above U+00FF are only those self-mapping
@@ -180,10 +255,10 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *   A string stored two bytes a character costs more for the same text
  *   (lowercasing 4 to 11 ns, plus the tier scan's 3.5 ns) than the 1/32 its
  *   tier charges: up to about fourfold. A text search over 9,000 records with
- *   such characters still measured under 50 ms; a single long two-byte string
- *   does not, and SECURITY.md lists it under FORMA-028. The tier test is
+ *   such characters still measured under 50 ms; a budget's worth of calls on
+ *   long two-byte strings does not, and SECURITY.md lists it. The tier test is
  *   itself a scan (free on one-byte strings), skipped when even the cheapest
- *   tier is past `room`.
+ *   tier is past the whole budget.
  * - `includes`, `indexOf` and `lastIndexOf` on a string are weighted for
  *   ordinary text, under 1 ns a character. A pattern whose first characters
  *   fill the receiver (`'ab'` in `'aaaa…'`) measured 39 ns: SECURITY.md lists
@@ -204,15 +279,21 @@ rows((r) => len(r) / 64, 'string.endsWith string.slice string.startsWith string.
 rows((r) => len(r) / 32, 'string.includes string.indexOf string.lastIndexOf');
 // Whitespace runs measured 3.5 ns a character.
 rows((r) => len(r) / 16, 'string.trim string.trimEnd string.trimStart');
+// Case mapping never shortens a string, so a receiver past the 1 MiB result
+// cap is refused before the call instead of after it (FORMA-028: one call on
+// 8 million two-byte characters took 115 ms before that refusal).
 rows((r, _, room) => {
   const n = len(r);
-  return n / 32 > room || !costly(r as string) ? n / 32 : n / 2;
+  if (n > MAX_TEXT) return Infinity;
+  const first = n / 32 > room ? null : costly(r as string);
+  return !first ? n / 32 : n / 16 > room || middle(first[0]) ? n / 16 : n / 2;
 }, 'string.toLowerCase');
 rows((r, _, room) => {
   const n = len(r);
+  if (n > MAX_TEXT) return Infinity;
   return n / 16 > room ? n / 16 : costly(r as string) ? n : nonAscii(r as string) ? n / 2 : n / 16;
 }, 'string.toUpperCase');
-rows((r, a, room) => len(r) / 16 + weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');
+rows((r, a, room) => len(r) / 16 + weigh(a[1], room) + alike(r, a[0], room), 'array.includes array.indexOf array.lastIndexOf');
 // Every index is visited, holes included.
 rows((r) => len(r), 'array.every array.reduce array.some');
 rows((r, a) => {
@@ -230,6 +311,7 @@ rows((r, a, room) => {
     for (const e of r) {
       if (per > room) break;
       if (isArray(e)) per += weigh(e, room);
+      else if (typeof e === 'string') per += e.length * READ;
     }
   }
   return per * log2(len(r) + 1);

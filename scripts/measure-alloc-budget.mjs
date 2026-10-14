@@ -16,7 +16,11 @@
  *   row allows at a cap (`--cap`, default the budget in ast.ts). A case the
  *   budget refuses prints REFUSED: it is sized wrong. A RESIDUAL row is a
  *   content-dependent worst case the per-character weights do not bound
- *   (SECURITY.md, FORMA-028); it is printed, and left out of the sum.
+ *   (SECURITY.md, "What the budgets do not bound"); it is printed, and left
+ *   out of the sum. A case-mapping row is at most 1 MiB, the size past which
+ *   the call is refused before it runs (FORMA-028).
+ * - Each timed evaluation starts a task of its own: the budgets are one per
+ *   task (FORMA-028), so runs in one task would share them.
  * - Part 3 times one evaluation that exhausts the 100,000-step budget.
  * - `--chars` instead prints the per-character cost of the string rows, by
  *   the widest character of the text, against one `Array.from` slot: the table
@@ -33,7 +37,10 @@ import { resolve } from 'node:path';
 import { chromium } from '@playwright/test';
 
 const flag = (name, fallback) => Number(process.argv.find((a) => a.startsWith(`--${name}=`))?.split('=')[1] ?? fallback);
-const BUDGET = Number(/ALLOC_BUDGET: ([\d_e.]+)/.exec(readFileSync(resolve(process.cwd(), 'src/expr/ast.ts'), 'utf8'))[1].replace(/_/g, ''));
+const AST = readFileSync(resolve(process.cwd(), 'src/expr/ast.ts'), 'utf8');
+const BUDGET = Number(/ALLOC_BUDGET: ([\d_e.]+)/.exec(AST)[1].replace(/_/g, ''));
+/** Case mapping is refused before the call past the 1 MiB result cap (FORMA-028). */
+const MAX_TEXT = Number(/MAX_STRING_LENGTH: ([\d_e.]+)/.exec(AST)[1].replace(/_/g, ''));
 const RATE = flag('rate', 4);
 const RUNS = flag('runs', 41);
 const CAP = flag('cap', BUDGET);
@@ -62,6 +69,8 @@ const TEXT = {
   latinUpper: 'ÿµÿµ straße ',
   punctuation: 'The fox’s jump — over the dog… €12 ™ ',
   wideLower: 'İİİ ııı ',
+  middleLower: 'ΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΤΥΦΧΨΩ ',
+  dearLower: 'ᏣᎳᎩ ᎦᏬᏂᎯᏍᏗ ',
   wideUpper: 'ΐΰΐΰ ',
 };
 
@@ -146,10 +155,12 @@ const cases = [
   ['flat (pairs)', 'v.flat().length', 'pairs', Math.floor(CAP / 3) - 1],
   ['Array.from (string)', 'Array.from(v).length', 'chars', CAP - 1],
   ['concat (arrays)', 'v.concat(v).length', 'integers', Math.floor(CAP / 3) - 1],
-  ['toLowerCase (ASCII)', 'v.toLowerCase().length', 'ascii', 32 * (CAP - 1)],
-  ['toLowerCase (Latin-1, ß)', 'v.toLowerCase().length', 'latinLower', 32 * (CAP - 1)],
-  ['toLowerCase (wider, İ ı)', 'v.toLowerCase().length', 'wideLower', 2 * (CAP - 1)],
-  ['toUpperCase (ASCII)', 'v.toUpperCase().length', 'ascii', 16 * (CAP - 1)],
+  ['toLowerCase (ASCII)', 'v.toLowerCase().length', 'ascii', Math.min(MAX_TEXT, 32 * (CAP - 1))],
+  ['toLowerCase (Latin-1, ß)', 'v.toLowerCase().length', 'latinLower', Math.min(MAX_TEXT, 32 * (CAP - 1))],
+  ['toLowerCase (middle, İ ı)', 'v.toLowerCase().length', 'wideLower', Math.min(MAX_TEXT, 16 * (CAP - 1))],
+  ['toLowerCase (middle, Greek capitals)', 'v.toLowerCase().length', 'middleLower', Math.min(MAX_TEXT, 16 * (CAP - 1))],
+  ['toLowerCase (dear, Cherokee)', 'v.toLowerCase().length', 'dearLower', 2 * (CAP - 1)],
+  ['toUpperCase (ASCII)', 'v.toUpperCase().length', 'ascii', Math.min(MAX_TEXT, 16 * (CAP - 1))],
   ['toUpperCase (Latin-1, ÿ µ ß)', 'v.toUpperCase().length', 'latinUpper', 2 * (CAP - 1)],
   ['toUpperCase (wider, ΐ)', 'v.toUpperCase().length', 'wideUpper', CAP - 1],
   ["includes('needle'), ordinary text", "v.includes('needle')", 'ascii', 32 * (CAP - 7)],
@@ -157,13 +168,15 @@ const cases = [
   ['slice (concatenated receiver)', 'v.slice(1, 5)', 'rope', 64 * (CAP - 7)],
   ['text search, 9,000 records of 260', "v.filter(r => (r.title + ' ' + r.body).toLowerCase().includes('needle')).length", 'records', 9000],
   ['the same, one ’ in each record', "v.filter(r => (r.title + ' ' + r.body).toLowerCase().includes('needle')).length", 'curlyRecords', 9000],
-  ['RESIDUAL toLowerCase, two-byte with ’', 'v.toLowerCase().length', 'punctuation', 32 * (CAP - 1)],
-  ['RESIDUAL toLowerCase, two-byte ASCII', 'v.toLowerCase().length', 'twoByteAscii', 32 * (CAP - 1)],
+  // Each call is capped at 1 MiB, so the budget's worth of these is several calls.
+  ['RESIDUAL toLowerCase, two-byte with ’', `Array.from({length: ${Math.floor((CAP - 2010) / (MAX_TEXT / 32))}}).map(() => v.toLowerCase().length).length`, 'punctuation', MAX_TEXT],
+  ['RESIDUAL toLowerCase, two-byte ASCII', `Array.from({length: ${Math.floor((CAP - 2010) / (MAX_TEXT / 32))}}).map(() => v.toLowerCase().length).length`, 'twoByteAscii', MAX_TEXT],
+  ['RESIDUAL toLowerCase, middle Greek capitals', `Array.from({length: ${Math.floor((CAP - 2010) / (MAX_TEXT / 16))}}).map(() => v.toLowerCase().length).length`, 'middleLower', MAX_TEXT],
   ["RESIDUAL includes('ab') in 'aaaa…'", "v.includes('ab')", 'as', 32 * (CAP - 3)],
 ];
 
 async function timeBinding(expr, builder, n) {
-  return page.evaluate(({ expr, builder, n, runs, samples, forceGc }) => {
+  return page.evaluate(async ({ expr, builder, n, runs, samples, forceGc }) => {
     const flat = (unit, k) => { const s = unit.repeat(Math.ceil(k / unit.length) || 1).slice(0, k); s.charCodeAt(0); return s; };
     const words = 'alpha beta gamma delta epsilon zeta theta iota kappa lambda mu nu xi omicron pi rho ';
     const build = {
@@ -171,6 +184,8 @@ async function timeBinding(expr, builder, n) {
       latinLower: (k) => flat(samples.latinLower, k),
       latinUpper: (k) => flat(samples.latinUpper, k),
       wideLower: (k) => flat(samples.wideLower, k),
+      middleLower: (k) => flat(samples.middleLower, k),
+      dearLower: (k) => flat(samples.dearLower, k),
       wideUpper: (k) => flat(samples.wideUpper, k),
       punctuation: (k) => flat(samples.punctuation, k),
       twoByteAscii: (k) => { const s = ('\u0100' + flat(samples.ascii, k)).slice(1); s.charCodeAt(0); return s; },
@@ -214,6 +229,9 @@ async function timeBinding(expr, builder, n) {
         window.FormaRuntime.setScopeValue(root, 'w', Array.from({ length: 99_999 }, (_, i) => i));
       }
       if (forceGc) window.gc();
+      // The budget is one per task (FORMA-028): the timed evaluation starts a
+      // task of its own, as a page's update would.
+      await new Promise((res) => setTimeout(res, 0));
       const start = performance.now();
       window.FormaRuntime.setScopeValue(root, 'v', value);
       times.push(performance.now() - start);

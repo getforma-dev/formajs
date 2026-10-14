@@ -39,11 +39,14 @@ const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
  * prototype's size. A loose gate on top of that is how the next 5 KB arrives
  * unremarked, so these two are set close to the measurement on purpose.
  *
- * Until 3.0.0 the two runtime gates are ratchets (decision brief L-51): a
- * change that passes one raises it to its new measured size rounded up to the
- * next 500 B, and its CHANGELOG entry states the growth; a change that only
- * refactors never raises one. FORMA-132 (data-fetch's timeout) raised both,
- * 34,000 to 34,500 B and 33,000 to 33,500 B.
+ * Until 3.0.0 the two runtime gates are ratchets, not the size target
+ * (decision brief L-51: N2 is, gated at 3.0.0): a change that passes one
+ * raises it to its new measured size rounded up to the next 500 B, and its
+ * CHANGELOG entry states the growth; a change that only refactors never
+ * raises one. FORMA-132 (data-fetch's timeout) raised both, 34,000 to 34,500 B
+ * and 33,000 to 33,500 B (34,061 and 33,072 B measured). FORMA-028 and
+ * FORMA-025 (core 2.1.0) raised them again, to 36,000 and 35,000 B (35,540
+ * and 34,542 B measured).
  * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
 export const GATES = [
@@ -54,7 +57,7 @@ export const GATES = [
   },
   {
     entry: 'dist/formajs-runtime.global.js',
-    limit: 34500,
+    limit: 36000,
     note: 'CDN runtime bundle (single self-contained IIFE)',
   },
   {
@@ -67,7 +70,7 @@ export const GATES = [
     // release.yml — while being the build the docs pointed CSP-strict users at
     // and the target of the `runtime-csp` exports subpath.
     entry: 'dist/formajs-runtime-hardened.global.js',
-    limit: 33500,
+    limit: 35000,
     note: 'CDN hardened runtime bundle (single self-contained IIFE)',
   },
 ];

@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>FormaJS runtime, bare page for widgets a spec mounts</title>
+  <script>
+    // Registered before the runtime loads, so every task of the page is observed.
+    window.__longTasks = [];
+    try {
+      new PerformanceObserver(function (list) {
+        list.getEntries().forEach(function (e) { window.__longTasks.push(Math.round(e.duration)); });
+      }).observe({ type: 'longtask', buffered: true });
+    } catch (e) { /* engines without the Long Tasks API: specs time tasks themselves */ }
+  </script>
+</head>
+<body>
+  <script src="formajs-runtime.global.js" data-forma-diagnostics="true"></script>
+</body>
+</html>

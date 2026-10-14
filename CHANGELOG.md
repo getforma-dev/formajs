@@ -4,6 +4,157 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **Operators that build or read strings are charged before they run**
+  (FORMA-028, DR-16). Core 2.0.3 charged every built-in call but no operator,
+  and the engine keeps a joined string as a rope that its first read copies
+  whole, so an expression with no state could build a 524,288-character rope in
+  19 steps and read copies of it for 0.6 to 4.3 s at 4x CPU throttling (the
+  cases of formajs#14's second review). Now:
+  - `+`, `+=` and template literals pay a 128th of a unit for each character
+    they build past 511 (a string under 512 characters is free: the step
+    budget bounds how many one evaluation builds);
+  - comparing two strings of 128 characters or more pays a 128th a character
+    compared (`===` and `==` only when the lengths match), and an array search
+    for such a string pays for every element of the same length;
+  - an operator that parses a string of 32 characters or more as a number
+    (`s * 1`, `-s`, `s < 1`, `s == 1`) pays an eighth a character: parsing
+    digits measured 11 ns a character, and a thousand conversions of a million
+    digits ran for eleven seconds;
+  - comparing, or reading a character of (`at`, `charAt`, `charCodeAt`,
+    `s[i]`), a string the same expression has just built with `+` or a
+    template pays for copying it: 8 units plus a 32nd a character, to 512;
+  - a default `sort()` adds each string element's length, at a 128th, to every
+    level of its comparisons.
+
+  Each case of the review is refused with `FORMA_E_BUDGET` before the long
+  task: at 4x, in Chromium 151 on an Apple M1 Pro, the slowest of 41 runs took
+  27 ms. A loop of character reads is otherwise bounded by the step budget, as
+  before. `+=` now keeps the 1 MiB result cap that `+` has.
+- **The budgets are one per task and per event, not per evaluation**
+  (FORMA-028). The runtime keeps a meter of what the evaluations of the
+  current task have spent, and every evaluation it starts counts on from it,
+  for the 250,000 units and the 100,000 steps alike; an evaluation started
+  inside another (a `data-computed` a binding reads, a handler `$el.click()`
+  or `$dispatch` reaches) spends the running one's budget. Ten bindings at the
+  cap in one widget used to run in one 382 ms task. A binding refused only
+  because the bindings before it in its task spent the budget is not reported:
+  it renders in the next task, where it starts first, so those ten render one
+  task at a time, none over 42 ms at 4x. A binding over the budget on its own
+  is reported as before. A computed refused inside a heavy reader is evaluated
+  alone at the start of the next task, so its refusal is not cached as its
+  answer. A handler cannot be re-run, so an event the runtime has not seen
+  (and a `data-model` input) starts a fresh meter, and the handlers one event
+  reaches as it bubbles share it. A charge larger than the whole budget is
+  refused and reported at once, whatever the task had spent: no later task
+  could hold it, so it is not priced again in each retry.
+- **The runtime's own conversions of a result to text are charged before
+  they run** (FORMA-025). `data-text`, `data-bind:*`, `data-model`,
+  `data-persist`, and a `data-list` row's `{item.x}` placeholders and
+  `data-key` are charged, inside the binding's budget, for the `String()` or
+  `JSON.stringify` they are about to make of the value (an array or object at
+  its text weight; a string a row places, at a 128th a character). A list of a
+  thousand references to one 300,000-character string costs 2,000 units to
+  build and would be 300 million characters as text: `data-text` of it is
+  refused in 2 ms at 4x, and `String()` never runs.
+- **An ordinary search answers in Greek, Cyrillic, CJK and Latin Extended as
+  2.0.1 does** (FORMA-028, L-50). Core 2.0.3 charged lowercasing any text with
+  a character above Latin-1 at half a unit a character, so the text filter
+  `rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q))` over
+  260-character records was refused past about 1,716 records of such text.
+  Lowercasing two-byte text measured 4 to 19 ns a character at 4x in Latin
+  Extended, Greek, Cyrillic, Armenian, Hebrew, Arabic, the Indic scripts,
+  Thai, Vietnamese, CJK, kana, Hangul and emoji, and 17 to 40 ns beyond them.
+  Text whose first character above Latin-1 is in one of those scripts now costs
+  1/16 a character, so the search answers 9,090 records, where the step budget
+  stops it in every release, as it does for ASCII; Georgian, Cherokee, Greek
+  Extended or fullwidth Latin text keeps 1/2 (about 2,280 records, 2,170 in
+  2.0.3). Latin-1
+  text answers as in 2.0.3. A string method now reads a string argument (a
+  search pattern, a separator) for a 32nd of a unit a character instead of a
+  whole unit. `src/expr/__tests__/ordinary-search.test.ts` holds the corpus:
+  900 and 9,000 records in seven scripts.
+- **Case mapping past the 1 MiB result cap is refused before it runs**: 2.0.3
+  lowercased 8 million two-byte characters (115 ms at 4x) before refusing the
+  result.
+- **SR33 is checked in a browser**: `e2e/sr33.spec.ts` gives every allowlisted
+  native a hostile size, in Chromium at 4x and then in Firefox and WebKit, and
+  asserts that each is refused before the native runs, that no task reaches
+  50 ms and, in Chromium, that the heap grows under 16 MB. Its table is the one
+  `native-cost.test.ts` checks in Node.
+- **Still not bounded to 50 ms**, and listed in SECURITY.md ("What the budgets
+  do not bound"). The meter is zeroed by each event the runtime has not seen,
+  so the several events one task can deliver (those of one click or keystroke,
+  one per control of a submitted form) each get a budget: a widget that
+  handles all of them spends a budget per event in that task. Under A14 every
+  widget is the founder's reviewed code, and this is carried with the rest.
+  Each of the following is bounded to one evaluation per task: a string search
+  whose pattern's first characters fill the text (`'ab'` in `'aaaa…'`, 39 ns a
+  character where ordinary text takes 1; one evaluation ran up to 315 ms at
+  4x); case mapping of text stored two bytes a character but all Latin-1
+  (charged as one-byte text, up to about four times under: 56 ms for seven
+  calls on a million characters, 100 ms for alternating-case text); and text
+  whose first character above Latin-1 is in a `1/16` script but whose rest is
+  costlier (all-capital Greek 73 ms for four calls on 960,000 characters; a
+  Greek letter followed by Cherokee 90 ms), because a full scan of two-byte
+  text measured 6 to 7 ns a character, most of what lowercasing it costs. Its
+  bound is a task's 4 million characters at 1/16 lowercased at about 40 ns,
+  the costliest measured: about 160 ms. Turkish `İ` (U+0130) is a Latin
+  Extended-A letter, so text with it is priced 1/16 though it measured 27 to
+  30 ns a character: one call on a million ran 76 ms before the 1 MiB cap
+  refused its two-million-character result. Nor does the budget price
+  `data-list`'s rows: about 14 µs each at 4x, in 2.0.3 as here (FORMA-172).
+  The largest ordinary evaluation is near the line as well: the 9,000-record
+  search measured 24 ms median at 4x in ASCII and up to 50 ms in Greek, where
+  2.0.1 measured 19 and 42 ms in the same session.
+- **Behaviour change: what a task can no longer compute.** Measured with this
+  release's engine against 2.0.3's:
+  - Building a string with `reduce` and `+`, accepted by the lead (L-50):
+    `rows.reduce((s, r) => s + r.name + ', ', '')` over names of 20 characters
+    is refused past about 1,200 rows, where 2.0.3 answered about 14,300. Each
+    `+` is charged the whole length it builds, so an accumulator pays the
+    square of its length. `rows.map(r => r.name).join('')` stays cheap: it
+    answers about 11,360 rows of 20 characters, as 2.0.3 does, in 7 ms median
+    at 4x for 11,000; with separators, `rows.map(r => r.name).join(', ')`
+    answers about 10,400.
+  - Comparing two strings a callback has just built, or reading a character of
+    one: `(s + 'y') === (s + 'z')` over 100-character strings past about
+    10,280 iterations, `(s + 'y').charCodeAt(0)` past about 15,470 (2.0.3:
+    about 12,500 and 16,700, where the step budget stops them). A string read
+    from state, or held in a variable, costs what it did.
+  - A default `sort()` of 10-character strings past about 6,280, counting
+    everything else the evaluation does (numbers: about 6,400, as before).
+  - Bindings that together pass the budget in one task render over several
+    tasks: until its turn, a binding shows what it showed before.
+  - `data-forma-expr-budget` now sets the step budget of a task (of an event,
+    for a handler and the bindings it updates), not of each evaluation. A page
+    that set it low renders its bindings over more tasks than before, where
+    2.0.3 gave each binding the whole of it.
+  - A computed read inside a binding spends that binding's budget.
+  - Among the handlers one event reaches as it bubbles, one that finds the
+    budget spent by the handlers before it is refused with `FORMA_E_BUDGET`.
+  - A handler's `x += s` that would build a string past 1 MiB is refused, as
+    `x = x + s` was.
+  - What the runtime converts to text is charged as an expression converting it
+    would be (FORMA-025), so a value heavier than the budget is not written:
+    `data-text` (or `data-bind`, `data-model`) of an array of 20-character
+    strings past about 11,360 elements, counting what built it (2.0.3: about
+    33,000, where the step budget stops `map`); `data-persist` of a value past
+    about 250,000 characters as JSON, which is reported and leaves the stored
+    copy as it was; a `data-list` whose row template places a whole object
+    (`{item}`) past about 250,000 characters across its rows (2,500 rows of
+    100-character records). A string a row places costs a 128th a character,
+    so ordinary lists are not affected.
+
+  More is answered than in 2.0.3, too: the non-Latin search, and a string
+  method given a long string argument. Rollback: pin 2.0.3.
+- **Size** (L-51): measured on `main` with FORMA-132, the CDN runtime grows
+  by 1,479 B gzipped (34,061 to 35,540 B) and the hardened runtime by 1,470 B
+  (33,072 to 34,542 B); their gates rise from 34,500 to 36,000 B and from
+  33,500 to 35,000 B. This change leaves the core entry and the browser ESM
+  bundle as they were.
+
 ### Added
 
 - **`browserOnly(component)`, the browser-only marker** (DR-1, L-1, FORMA-119).
@@ -87,6 +238,44 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **List adoption fails the island on a row-count mismatch instead of deleting
+  rows** (FORMA-123, DR-8). Server rows without `data-forma-key` are matched by
+  index. Before, a client array shorter than the server's rows had the extra
+  rows removed and a longer one had rows rendered fresh, silently (ksx's #5 lost
+  the server rows absent from a list's array before its state was seeded). Now,
+  when the counts differ (including an empty array, or an empty server region
+  with items), no row is adopted, removed or rendered: the island keeps the
+  server's rows and is marked `error`, and `FORMA_E_HYDRATE_LIST_COUNT`, naming
+  both counts, is logged in every build and passed to `onError` handlers
+  (source `'hydration'`). An island in `error` is inert: the listeners attached
+  during adoption are removed, on the server's elements and on any adoption
+  built through `h()` before the failure, and the bindings it adopted are
+  disposed, also for a direct `hydrateIsland()` caller whose root lives on.
+  This holds for any adoption that fails part-way.
+  **Adoption now runs in a batch.** A signal written during adoption (in a
+  `ref`, say) takes its new value at once, but the effects that write triggers
+  in other islands or roots run when the walk ends, not during it. Adoption's
+  own bindings still run when they are created. So a failing island detaches
+  nothing that another island or `mount()` root built. Such a root's new rows
+  are no longer owned by the failing island either; before, they were disposed
+  with it, also on 2.0.x for an island failing by a throwing reactive child. Nodes adoption replaced or
+  added before the failing list (a tag mismatch, a fresh keyed row) stay as it
+  left them. `mount()` and `hydrateIsland()` keep `data-forma-ssr` and do not
+  throw, as for `FORMA_E_HYDRATE_NODE`. Equal counts adopt as before, and rows
+  that carry `data-forma-key` keep matching by key. Applications whose state
+  reaches the island from the server's data see no change.
+  **Migration:** the server writes an empty list region when the list's data
+  is not an array, so a list the client computes for itself inside a
+  server-rendered island was rendered fresh on 2.0.x and now leaves the island
+  inert. Start that list's signal empty and fill it after activation (an empty
+  array adopts the empty region), or render the list in the browser only.
+  Core's ESM entry grows by 365 B gzipped (28,411 to 28,776 B, gate 30,000 B
+  unchanged) and the CDN ESM bundle by 323 B (27,303 to 27,626 B, gate
+  29,000 B). A page with one island, bundled from the core entry with esbuild
+  (minified, gzip -9) as DR-35 counts N2, grows by about 205 B (a counter from
+  12,595 to 12,801 B). The CDN runtimes do not include adoption; each shrinks by
+  8 B, because a module-level `Symbol.for` call in the adoption code, kept in
+  their bundles as a side effect, is gone.
 - **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
   reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
   deploy every client of a server reconnected in the same instant. The delay is

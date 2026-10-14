@@ -19,13 +19,15 @@ import type { Expr, Stmt } from './ast';
 import { isExprError, type FormaExprError } from './errors';
 import { parseExpression, parseProgram } from './parser';
 import { validateExpression, validateProgram } from './validate';
-import { evalExpr, makeCtx, runProgram, type ScopeLike } from './interp';
+import { LIMITS } from './ast';
+import { charge, enter, evalExpr, leave, makeCtx, runProgram, type Meter, type ScopeLike } from './interp';
 
 export { LIMITS } from './ast';
 export { isExprError, type FormaExprError, type ExprErrorCode } from './errors';
 export { hostFn, hostObject, isHost, type Host } from './host';
 export { allowlistSnapshot, SAFE_GLOBALS } from './allowlist';
-export { safeKey, safeRead, setStepBudget, getStepBudget, type ScopeLike } from './interp';
+export { GROW, weigh } from './cost';
+export { safeKey, safeRead, setStepBudget, getStepBudget, type Meter, type ScopeLike } from './interp';
 
 const CACHE_MAX = 2048;
 
@@ -92,12 +94,41 @@ export function compileHandler(source: string): Stmt[] {
   }
 }
 
-/** Evaluate a compiled expression against a scope. */
-export function evaluateExpression(node: Expr, scope: ScopeLike): unknown {
-  return evalExpr(node, makeCtx(scope));
+/**
+ * What converting a value to text will cost, in budget units, given the room
+ * left: the runtime's own conversions of a result (FORMA-025).
+ */
+export type TextCost = (value: unknown, room: number) => number;
+
+/**
+ * Evaluate a compiled expression against a scope.
+ *
+ * With a `meter`, the evaluation counts on from what the task has spent and
+ * adds what it spends (FORMA-028). With `text`, the result is charged, inside
+ * the same budget and before it is returned, for the conversion the runtime
+ * is about to make of it (FORMA-025): `data-text` of a list that would build
+ * 300 million characters is refused before `String()` runs.
+ * Verified by: src/__tests__/runtime-text-cost.test.ts > "data-text of a value heavier than the budget is refused before it is converted"
+ */
+export function evaluateExpression(node: Expr, scope: ScopeLike, meter?: Meter | null, text?: TextCost): unknown {
+  const ctx = makeCtx(scope, meter);
+  const outer = enter(ctx);
+  try {
+    const value = evalExpr(node, ctx);
+    if (text) charge(ctx, text(value, LIMITS.ALLOC_BUDGET), 'converting the result to text', -1);
+    return value;
+  } finally {
+    leave(ctx, outer, meter);
+  }
 }
 
-/** Run a compiled handler against a scope. */
-export function runHandler(stmts: Stmt[], scope: ScopeLike): void {
-  runProgram(stmts, makeCtx(scope));
+/** Run a compiled handler against a scope, counting on from `meter` if given. */
+export function runHandler(stmts: Stmt[], scope: ScopeLike, meter?: Meter | null): void {
+  const ctx = makeCtx(scope, meter);
+  const outer = enter(ctx);
+  try {
+    runProgram(stmts, ctx);
+  } finally {
+    leave(ctx, outer, meter);
+  }
 }

@@ -5,7 +5,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (isIslandPropsError(err) || isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
+  "find": "    if (isIslandPropsError(err) || isHydrateError(err)) reportHydrateError(err, ` (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
   "replace": "    if (__DEV__)",
   "note": "an island failed by FORMA_E_HYDRATE_NODE leaves no coded log line naming it"
  },
@@ -15,8 +15,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (isIslandPropsError(err) || isHydrateNodeError(err))",
-  "replace": "    if (isHydrateNodeError(err))",
+  "find": "    if (isIslandPropsError(err) || isHydrateError(err))",
+  "replace": "    if (isHydrateError(err))",
   "note": "an island refused for its props type is marked error with no FORMA_E_ISLAND_PROPS line in a production build. Verified by: src/dom/__tests__/props-loading.test.ts > \"props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS\""
  },
  {
@@ -176,6 +176,16 @@
   "note": "reactive xlink:href writes javascript: URLs"
  },
  {
+  "id": "element/fresh-adoption-listeners-unrecorded",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    (el as any)[ABORT_SYM] = controller;\n    listened?.push(el);",
+  "replace": "    (el as any)[ABORT_SYM] = controller;",
+  "note": "a node adoption builds through h() before a failing list (a tag-drift replacement, a fresh keyed row, a show branch) keeps its click handler on an island in error. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"an island failed by the row count answers no click on the nodes adoption built fresh before the list\""
+ },
+ {
   "id": "element/function-child-outside-namespace",
   "file": "src/dom/element.ts",
   "tags": [
@@ -271,8 +281,8 @@
   "tags": [
    "security"
   ],
-  "find": "rows((r, a, room) => len(r) / 16 + weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');",
-  "replace": "rows((r, a, room) => weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');",
+  "find": "rows((r, a, room) => len(r) / 16 + weigh(a[1], room) + alike(r, a[0], room), 'array.includes array.indexOf array.lastIndexOf');",
+  "replace": "rows((r, a, room) => weigh(a[1], room) + alike(r, a[0], room), 'array.includes array.indexOf array.lastIndexOf');",
   "note": "includes/indexOf/lastIndexOf scan their receiver for free, so repeating one over a large array is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
  },
  {
@@ -401,8 +411,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "  if (!DATA_ARGS.has(name)) {",
-  "replace": "  if (DATA_ARGS) {",
+  "find": "  } else if (!DATA_ARGS.has(name)) {",
+  "replace": "  } else if (DATA_ARGS) {",
   "note": "predicates that never convert their argument (Boolean, Array.isArray, Number.isFinite) are charged its text, so rows.filter(Boolean) over large rows is refused. Verified by: src/expr/__tests__/native-cost.test.ts > \"a predicate native reads a large argument for free\""
  },
  {
@@ -481,9 +491,9 @@
   "tags": [
    "security"
   ],
-  "find": "return n / 32 > room || !costly(r as string) ? n / 32 : n / 2;",
-  "replace": "return n / 32;",
-  "note": "lowercasing costly text (Greek, Cyrillic, Turkish İ, Latin Extended) is charged as Latin-1, a sixteenth of its measured worst case (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\""
+  "find": "  return !first ? n / 32 : n / 16 > room || middle(first[0]) ? n / 16 : n / 2;",
+  "replace": "  return n / 32;",
+  "note": "lowercasing text above Latin-1 (Greek, Cyrillic, CJK, Latin Extended, and the costlier Georgian or Cherokee) is charged as Latin-1, an eighth to a sixteenth of its measured cost. Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\""
  },
  {
   "id": "expr/object-keys-of-object-free",
@@ -511,8 +521,8 @@
   "tags": [
    "security"
   ],
-  "find": "    for (const a of args) charge(ctx, weigh(a, room(ctx)), name, at);",
-  "replace": "    for (const a of args) weigh(a, room(ctx));",
+  "find": "    for (const a of args) charge(ctx, weigh(a, REACH), name, at);",
+  "replace": "    for (const a of args) weigh(a, REACH);",
   "note": "a native's arguments are not charged as text, so String(list) can build hundreds of MB before any check (DR-16). Verified by: src/expr/__tests__/native-cost.test.ts > \"every allowlisted native refuses an argument heavier than the budget before it runs\""
  },
  {
@@ -521,8 +531,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (cost) charge(ctx, cost(recv, args, room(ctx)), name, at);",
-  "replace": "  if (cost) cost(recv, args, room(ctx));",
+  "find": "  if (cost) charge(ctx, cost(recv, args, REACH), name, at);",
+  "replace": "  if (cost) cost(recv, args, REACH);",
   "note": "no cost row is charged: Array.from({length: 12000000}) builds 139 MB in a 300 ms task before the refusal (audit run 4, DR-16). Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\"; Verified by: src/expr/__tests__/native-preflight.test.ts > \"is refused before the native allocates\""
  },
  {
@@ -741,8 +751,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    (err as Error & { code: string }).code = HYDRATE_NODE_ERROR;\n    throw err;",
-  "replace": "    void err;",
+  "find": "    throw hydrateError(\n      HYDRATE_NODE_ERROR,",
+  "replace": "    void hydrateError(\n      HYDRATE_NODE_ERROR,",
   "note": "a detached DOM node returned while hydrating counts as adopted: data-forma-ssr removed, island active, nothing bound, nothing logged"
  },
  {
@@ -764,6 +774,36 @@
   "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) — use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
   "replace": "",
   "note": "hydration writes ONCLICK as an inline handler"
+ },
+ {
+  "id": "hydrate/failed-adoption-keeps-listeners",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    for (const el of attached) cleanup(el);",
+  "replace": "",
+  "note": "an island whose adoption failed part-way stays error but still answers clicks on the elements adopted before the failure. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"an island failed by the row count keeps no handler or binding that adoption attached before the list\""
+ },
+ {
+  "id": "hydrate/failed-walk-bindings-live",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    disposeWalk?.();\n",
+  "replace": "",
+  "note": "a binding adopted before a failing list stays live while a hydrateIsland() caller's root lives, writing into the server's DOM. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"hydrateIsland() called directly keeps no binding it adopted before the list failed\""
+ },
+ {
+  "id": "hydrate/failed-walk-unbatched",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  openBatch();\n  try {\n    createRoot((dispose) => {\n      disposeWalk = dispose;\n      adopt(descriptor, target);\n    });\n  } catch (err) {\n    disposeWalk?.();\n    for (const el of attached) cleanup(el);\n    throw err;\n  } finally {\n    recordListeners(outer);\n    closeBatchWithoutRoot();\n  }",
+  "replace": "  try {\n    createRoot((dispose) => {\n      disposeWalk = dispose;\n      adopt(descriptor, target);\n    });\n  } catch (err) {\n    disposeWalk?.();\n    for (const el of attached) cleanup(el);\n    throw err;\n  } finally {\n    recordListeners(outer);\n  }",
+  "note": "effects that a signal written during adoption triggers in other roots run mid-walk, so a failing walk detaches the listeners of nodes a second mount() root or another island built. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"a failing mount() whose ref writes a shared signal does not detach a second mount() root's new row\""
  },
  {
   "id": "hydrate/fallback-children-html",
@@ -857,6 +897,36 @@
   "all": true
  },
  {
+  "id": "hydrate/list-count-check-on-keyed-rows",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (useIndexFallback && ssrElements.length !== currentItems.length) {",
+  "replace": "  if (ssrElements.length !== currentItems.length) {",
+  "note": "rows that carry data-forma-key fail the island on a count difference instead of matching by key. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"rows that carry data-forma-key keep matching by key when the counts differ\""
+ },
+ {
+  "id": "hydrate/list-count-error-uncoded",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  return code === HYDRATE_NODE_ERROR || code === HYDRATE_LIST_COUNT_ERROR;",
+  "replace": "  return code === HYDRATE_NODE_ERROR;",
+  "note": "FORMA_E_HYDRATE_LIST_COUNT is not a coded adoption error: mount() and hydrateIsland() throw it and onError never hears of it. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"onError receives FORMA_E_HYDRATE_LIST_COUNT from activateIslands, mount() and hydrateIsland(), and each keeps the server rows\""
+ },
+ {
+  "id": "hydrate/list-count-rows-removed",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (useIndexFallback && ssrElements.length !== currentItems.length) {",
+  "replace": "  if (false) {",
+  "note": "unkeyed server rows are matched by index whatever the client's array holds: a shorter array removes the server's rows and a longer one renders rows fresh, silently (ksx #5, DR-8). Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"marks the island error with FORMA_E_HYDRATE_LIST_COUNT and removes or adds no row\""
+ },
+ {
   "id": "hydrate/mismatch-rebuilt-as-html",
   "file": "src/dom/hydrate.ts",
   "tags": [
@@ -892,7 +962,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (!isHydrateNodeError(err)) throw err;\n    reportHydrateNodeError(err);\n    return target;",
+  "find": "    if (!isHydrateError(err)) throw err;\n    reportHydrateError(err);\n    return target;",
   "replace": "    throw err;",
   "note": "hydrateIsland() throws for a detached node, which 2.0.1 never did (a breaking change in a patch)"
  },
@@ -1173,7 +1243,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "        if (!isHydrateNodeError(err)) throw err;\n        failure = err;",
+  "find": "        if (!isHydrateError(err)) throw err;\n        failure = err;",
   "replace": "        throw err;",
   "note": "mount() throws for a detached node, aborting the rest of the page's module (FORMA-003 B1)"
  },
@@ -1307,6 +1377,16 @@
   "find": "  const resolvedTarget = typeof target === 'string'\n    ? document.querySelector(target)\n    : (target ?? document.body);",
   "replace": "  const resolvedTarget = typeof target === 'string'\n    ? document.body\n    : (target ?? document.body);",
   "note": "string portal selector ignored — always body"
+ },
+ {
+  "id": "reactive/batch-flush-under-caller-root",
+  "file": "src/reactive/batch.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  runWithoutRoot(endBatch);",
+  "replace": "  endBatch();",
+  "note": "adoption's batch flushes with the failing island's root current, so another island's row created by the flush is owned by it and loses its bindings when it is disposed. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"another island's row created while a failing island adopts keeps its reactive binding\""
  },
  {
   "id": "reactive/untrack-noop",
@@ -1863,5 +1943,235 @@
   "find": "!== el",
   "replace": "!== null",
   "note": "siblings() now includes the element itself"
+ },
+ {
+  "id": "expr/grow-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (typeof v === 'string' && v.length > 511) charge(ctx, v.length * GROW, 'building a string', at);",
+  "replace": "  if (typeof v === 'string' && v.length > 511) return;",
+  "note": "a string `+` or a template builds is charged nothing, so 19 doublings build a 524,288-character rope and reading copies of it runs for seconds (formajs#14 round 2, FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"every round-2 rope case is refused before the long task\""
+ },
+ {
+  "id": "expr/template-grow-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      grow(ctx, out, node.i);\n",
+  "replace": "\n",
+  "note": "a template literal builds strings for free while `+` is charged (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"a template literal and += are charged by the length they produce\""
+ },
+ {
+  "id": "expr/compound-grow-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      grow(ctx, sum, at);\n",
+  "replace": "\n",
+  "note": "a handler's `x += s` builds strings for free while `x = x + s` is charged (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"a template literal and += are charged by the length they produce\""
+ },
+ {
+  "id": "expr/compare-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (n > 127) charge(ctx, n * READ, 'comparing strings', at);",
+  "replace": "    if (n > 127) return;",
+  "note": "comparing two long strings reads both whole for free, so twenty thousand comparisons of 200,000 characters run for seconds (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"comparing long strings is charged by the characters compared\""
+ },
+ {
+  "id": "expr/parse-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (typeof v === 'string' && v.length > 31) charge(ctx, v.length * PARSE, 'converting a string to a number', at);",
+  "replace": "  if (typeof v === 'string' && v.length > 31) return;",
+  "note": "`s * 1`, `-s` or `s < 1` parse a long string for free: a thousand conversions of a million digits is eleven seconds at 4x (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"an operator that parses a long string as a number is charged for it\""
+ },
+ {
+  "id": "expr/sort-strings-unweighed",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      else if (typeof e === 'string') per += e.length * READ;\n",
+  "replace": "\n",
+  "note": "a default sort compares string elements whole at every level for the price of numbers (round 2: 2,000 long strings sorted in 1.5 s at 4x; FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"comparing long strings is charged by the characters compared\""
+ },
+ {
+  "id": "expr/array-search-long-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (typeof e === 'string' && e.length === v.length) n += v.length * READ;",
+  "replace": "      if (typeof e === 'string' && e.length === v.length) n += 0;",
+  "note": "searching an array for a long string compares every same-length element whole for free (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"comparing long strings is charged by the characters compared\""
+ },
+ {
+  "id": "expr/string-args-full-weight",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, REACH), name, at);",
+  "replace": "    for (const a of args) charge(ctx, weigh(a, REACH), name, at);",
+  "note": "a string method's string argument is charged as converted text again, so `s.includes(q)` pays q in full on every call and the non-Latin search is refused (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"a string method reads a string argument for a thirty-second of a unit a character\""
+ },
+ {
+  "id": "expr/string-args-free",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, REACH), name, at);",
+  "replace": "    for (const a of args) charge(ctx, typeof a === 'string' ? 0 : weigh(a, REACH), name, at);",
+  "note": "a string method's non-string argument is still weighed, but a string one costs nothing however long (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"a string method reads a string argument for a thirty-second of a unit a character\""
+ },
+ {
+  "id": "expr/case-cap-after-call",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (n > MAX_TEXT) return Infinity;\n  const first",
+  "replace": "  const first",
+  "note": "lowercasing a receiver past the 1 MiB result cap runs before the cap refuses it: 115 ms for 8 million two-byte characters at 4x (FORMA-028). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+ },
+ {
+  "id": "expr/nested-eval-fresh-budget",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  const base = cur ?? meter;",
+  "replace": "  const base = meter;",
+  "note": "a computed read inside a binding gets a budget of its own, so a chain of computeds spends one budget each in one task (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a chain of computeds spends one budget between them\""
+ },
+ {
+  "id": "expr/spend-not-handed-back",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    base.cost = ctx.cost;\n",
+  "replace": "\n",
+  "note": "an evaluation's units are never added to the task's meter, so every binding in a task gets the whole allocation budget (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"ten bindings at the cap spend one budget per task and all of them render\""
+ },
+ {
+  "id": "expr/refused-charge-kept",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    ctx.cost = spent;\n",
+  "replace": "\n",
+  "note": "a refused charge, for a call that never ran, stays on the task's meter, so every binding after it in the task is pushed to the next one (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a binding over the budget on its own is reported, not retried\""
+ },
+ {
+  "id": "runtime/meter-not-passed",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    return evaluateExpression(compiled, scope, meter, text);",
+  "replace": "    return evaluateExpression(compiled, scope, null, text);",
+  "note": "bindings do not count on from the task's meter: ten bindings at the cap in one widget ran 382 ms in one task at 4x (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"ten bindings at the cap spend one budget per task and all of them render\""
+ },
+ {
+  "id": "runtime/deferral-reported",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "        if (err.defer) later();\n        else reportExprFailure(el, stripBraces(expression), err);",
+  "replace": "        reportExprFailure(el, stripBraces(expression), err);",
+  "note": "a binding refused only because its task's budget was spent is reported and left unrendered instead of retried (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"ten bindings at the cap spend one budget per task and all of them render\""
+ },
+ {
+  "id": "runtime/handler-event-shares-stale-meter",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (e !== meterEvent) {\n    meter.steps = meter.cost = 0;",
+  "replace": "  if (e !== meterEvent) {\n    meter.steps += 0;",
+  "note": "a handler for a new event inherits what an earlier task spent, so a click can be refused for work it did not do (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"the handlers one event reaches share one budget\""
+ },
+ {
+  "id": "runtime/data-text-unpriced",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    const evaluate = evaluator(textExpr, asText);",
+  "replace": "    const evaluate = evaluator(textExpr);",
+  "note": "data-text converts a list of a thousand references to a 300,000-character string with String(): 300 million characters (FORMA-025). Verified by: src/__tests__/runtime-text-cost.test.ts > \"data-text of a value heavier than the budget is refused before it is converted\""
+ },
+ {
+  "id": "runtime/list-rows-unpriced",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "              n += placed(f ? (item as Record<string, unknown> | null)?.[f] : item, room);",
+  "replace": "              n += 0;",
+  "note": "a data-list writes each row's {item.x} values and key into text unpriced: a thousand rows placing one long string (FORMA-025). Verified by: src/__tests__/runtime-text-cost.test.ts > \"every other conversion of a result to text is refused before it runs\""
+ },
+ {
+  "id": "runtime/persist-unpriced",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (!converts(el, scope, prop, value)) return;\n",
+  "replace": "\n",
+  "note": "data-persist JSON-stringifies a state value heavier than the budget (FORMA-025). Verified by: src/__tests__/runtime-text-cost.test.ts > \"every other conversion of a result to text is refused before it runs\""
+ },
+ {
+  "id": "runtime/model-input-stale-meter",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      const onModelInput = (e: Event) => {\n        begin(e);",
+  "replace": "      const onModelInput = (e: Event) => {\n        void e;",
+  "note": "a keystroke that runs before the reset timer inherits the last keystroke's spending, so the search it updates is pushed a task late (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a binding a keystroke updates starts on a fresh budget\""
+ },
+ {
+  "id": "expr/fresh-rope-copy-uncharged",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    charge(ctx, FLAT + Math.min(v.length, 512) / 32, 'copying a string just built', at);",
+  "replace": "    return;",
+  "note": "comparing or reading a character of a string the expression just built copies it for free: 12,400 comparisons of two 511-character ropes ran 56 ms inside the step budget at 4x (FORMA-028). Verified by: src/expr/__tests__/string-growth.test.ts > \"comparing or reading a string just built is charged for copying it\""
+ },
+ {
+  "id": "expr/oversized-charge-deferred",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    throw over(ctx, err, !(units <= REACH));",
+  "replace": "    throw over(ctx, err);",
+  "note": "a charge larger than the whole budget is deferred when the task had spent anything, so it is priced again in every retry tick before it is reported (FORMA-028 review, S2). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a binding too heavy for any task is priced once and reported once\""
+ },
+ {
+  "id": "expr/cost-counted-to-room-left",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "const REACH = LIMITS.ALLOC_BUDGET;",
+  "replace": "const REACH = LIMITS.ALLOC_BUDGET / 4;",
+  "note": "a cost is counted only part of the way to the budget, so an argument heavier than any task can hold reads as one that might fit: `s.includes(list)` with a 300,000-unit list is answered (FORMA-028 review, S2). Verified by: src/expr/__tests__/string-growth.test.ts > \"a string method reads a string argument for a thirty-second of a unit a character\""
  }
 ]
