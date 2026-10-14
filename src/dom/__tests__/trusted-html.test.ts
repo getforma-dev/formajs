@@ -465,6 +465,26 @@ describe('core under Trusted Types (simulated: happy-dom has none)', () => {
     expect(sim.violations).toEqual([]);
   });
 
+  it('a refused string does not block the same markup sent later as trustedHtml(), client-rendered and adopted', () => {
+    // formajs#32's review (N1): the markup was recorded as current before the
+    // write, so after an enforcing page refused it as a string, the same
+    // markup as trustedHtml() read as no change and was never written.
+    sim = enforceTrustedTypes();
+    document.body.innerHTML = trustedHtml('<div id="app" data-forma-ssr><article><b>old</b></article></div>') as unknown as string;
+    const [inner, setInner] = createSignal<{ __html: string | TrustedHtml }>({ __html: trustedHtml('<b>old</b>') });
+    const client = h('article', { dangerouslySetInnerHTML: () => inner() });
+    mount(() => h('article', { dangerouslySetInnerHTML: () => inner() }), '#app');
+    const adopted = document.querySelector('#app article')!;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    setInner({ __html: '<b>new</b>' });
+    expect(adopted.innerHTML).toBe('<b>old</b>');
+    expect(client.innerHTML).toBe('<b>old</b>');
+    setInner({ __html: trustedHtml('<b>new</b>') });
+    expect(adopted.innerHTML).toBe('<b>new</b>');
+    expect(client.innerHTML).toBe('<b>new</b>');
+    expect(sim.violations).toEqual(['innerHTML <b>new</b>', 'innerHTML <b>new</b>']);
+  });
+
   it("an adopted island's srcdoc binding writes trustedHtml() typed and warns once for a string", () => {
     sim = enforceTrustedTypes({ reportOnly: true });
     document.body.innerHTML = trustedHtml(

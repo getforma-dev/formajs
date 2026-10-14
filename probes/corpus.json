@@ -2490,8 +2490,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "        if (!first || el.innerHTML !== markup) el.innerHTML = sink;",
-  "replace": "        el.innerHTML = sink;",
+  "find": "    if (!adopting || !holdsMarkup(el, markup, sink)) el.innerHTML = sink;",
+  "replace": "    el.innerHTML = sink;",
   "note": "adoption rewrites markup the server's element already holds, replacing its nodes (DR-5, FORMA-176). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"adoption writes nothing where the server already holds the markup\""
  },
  {
@@ -2523,5 +2523,25 @@
   "find": "  } else if (inner == null || inner === false) {",
   "replace": "  } else if (inner === undefined) {",
   "note": "adoption skips the children of an element whose dangerouslySetInnerHTML is null or false, so their bindings never attach (formajs#32 review B1). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"a falsy static dangerouslySetInnerHTML is no prop: the server's children are adopted and bound (%s)\""
+ },
+ {
+  "id": "adopt/inner-html-byte-equality",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (current === markup) return true;\n  const tpl = document.createElement('template');\n  tpl.innerHTML = sink;\n  return tpl.innerHTML === current;",
+  "replace": "  return current === markup;",
+  "note": "adoption judges the server's markup by byte equality with the browser's serialisation, so ./ssr markup such as <br/> or &#39; is rewritten: iframes reload, typed text is lost (formajs#32 review S1, DR-5). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"markup the server wrote in a form the browser serialises differently is not rewritten: %j\""
+ },
+ {
+  "id": "el/inner-html-recorded-before-write",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (cache['innerHTML'] === markup) return;\n    const sink = rawHtml(html, 'innerHTML');\n    if (!adopting || !holdsMarkup(el, markup, sink)) el.innerHTML = sink;\n    cache['innerHTML'] = markup;",
+  "replace": "    if (cache['innerHTML'] === markup) return;\n    cache['innerHTML'] = markup;\n    const sink = rawHtml(html, 'innerHTML');\n    if (!adopting || !holdsMarkup(el, markup, sink)) el.innerHTML = sink;",
+  "note": "markup is recorded as current before the write, so a string the page refused blocks the same markup as trustedHtml() (formajs#32 review N1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a refused string does not block the same markup sent later as trustedHtml(), client-rendered and adopted\""
  }
 ]

@@ -156,6 +156,42 @@ describe('dangerouslySetInnerHTML in adoption', () => {
     expect(adopted.hasAttribute('dangerouslysetinnerhtml')).toBe(false);
   });
 
+  it.each([
+    '<br/>', '<img src="x.png" alt="a" />', "<a href='x'>link</a>", '<a href=x>link</a>', '<p class="a"  id="b">x</p>',
+    '<input disabled>', 'It&#39;s', '&quot;q&quot;', 'a & b', '&copy; 2026', '<B>upper</B>', '<p>one<p>two',
+    // (`<table><tr>` is the browsers' case only: happy-dom's template parser
+    // inserts no <tbody> where its element parser does. e2e/adoption.spec.ts
+    // runs it in three engines.)
+    '<svg><path d="M0 0"/></svg>', '<div title="a<b">x</div>', '<pre>\nx</pre>',
+    '<p>It&#39;s a &quot;test&quot;</p>\n<pre><code class="language-js">const a = &quot;b&quot;;\n</code></pre>\n',
+  ])('markup the server wrote in a form the browser serialises differently is not rewritten: %j', (markup) => {
+    // formajs#32's review (S1): ./ssr writes markup as it was given, and
+    // comparing it with the browser's serialisation byte for byte rewrote the
+    // server's nodes. Parsed through a template, it is the same content.
+    document.body.innerHTML = `<div id="app" data-forma-ssr><article id="doc">${markup}</article></div>`;
+    const doc = document.getElementById('doc')!;
+    const firstNode = doc.firstChild;
+    const observer = new MutationObserver(() => {});
+    observer.observe(doc, { subtree: true, childList: true, attributes: true, characterData: true });
+    const [inner, setInner] = createSignal<Inner>({ __html: markup });
+    mount(() => h('article', { id: 'doc', dangerouslySetInnerHTML: () => inner() }), '#app');
+    expect(observer.takeRecords()).toEqual([]);
+    observer.disconnect();
+    expect(doc.firstChild).toBe(firstNode);
+    // A change is still written.
+    setInner({ __html: '<p>changed</p>' });
+    expect(doc.innerHTML).toBe('<p>changed</p>');
+  });
+
+  it("text typed into an input inside the server's markup survives adoption", () => {
+    document.body.innerHTML = '<div id="app" data-forma-ssr><article id="doc"><label>Name <input id="name"></label></article></div>';
+    const input = document.getElementById('name') as HTMLInputElement;
+    input.value = 'typed before activation';
+    mount(() => h('article', { id: 'doc', dangerouslySetInnerHTML: { __html: '<label>Name <input id=name></label>' } }), '#app');
+    expect(document.getElementById('name')).toBe(input);
+    expect(input.value).toBe('typed before activation');
+  });
+
   it('adoption writes a string through the raw sink with its development warning, and trustedHtml() with none', () => {
     const [inner, setInner] = createSignal<Inner>({ __html: trustedHtml('<b>typed</b>') });
     const adopted = adopt('<article id="doc"></article>', () => h('article', { id: 'doc', dangerouslySetInnerHTML: () => inner() }));

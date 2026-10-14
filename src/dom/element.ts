@@ -482,39 +482,63 @@ function handleInnerHTML(el: Element, _key: string, value: unknown): void {
  * the two cannot drift.
  *
  * - Markup reaches the content through the raw sink: a `trustedHtml()` value
- *   typed, anything else as before, with its development warning.
+ *   typed, anything else as before, with its development warning. It is
+ *   recorded as current only once written, so a write the page refused (a
+ *   string under enforced Trusted Types) is tried again for the same markup.
  * - `null` empties the element and forgets the markup, so the same markup
  *   after a `null` is written again (A → null → A).
- * - `adopt` makes the first write an adoption (DR-5): markup the server's
- *   element already holds is not written again.
+ * - `adopt` makes the first run an adoption (DR-5): markup the server's
+ *   element already holds is not written again ({@link holdsMarkup}).
  *
  * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "an adopted reactive dangerouslySetInnerHTML shows its content, follows its signal through null and back, and matches client rendering ($name)"
  * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "A → null → A shows A again, client-rendered and adopted"
  * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "adoption writes nothing where the server already holds the markup"
+ * Verified by: src/dom/__tests__/trusted-html.test.ts > "a refused string does not block the same markup sent later as trustedHtml(), client-rendered and adopted"
  */
 export function bindInnerHTML(el: Element, value: unknown, adopt: boolean): void {
   let first = adopt;
   const write = (resolved: unknown): void => {
+    const adopting = first;
+    first = false;
     const cache = getCache(el);
     if (resolved == null) {
       cache['innerHTML'] = null;
       if (el.firstChild) el.replaceChildren();
-    } else {
-      const html = innerHtmlOf(resolved);
-      const markup = String(html);
-      if (cache['innerHTML'] !== markup) {
-        cache['innerHTML'] = markup;
-        const sink = rawHtml(html, 'innerHTML');
-        if (!first || el.innerHTML !== markup) el.innerHTML = sink;
-      }
+      return;
     }
-    first = false;
+    const html = innerHtmlOf(resolved);
+    const markup = String(html);
+    if (cache['innerHTML'] === markup) return;
+    const sink = rawHtml(html, 'innerHTML');
+    if (!adopting || !holdsMarkup(el, markup, sink)) el.innerHTML = sink;
+    cache['innerHTML'] = markup;
   };
   if (typeof value === 'function') {
     internalEffect(() => { write((value as () => unknown)()); });
   } else {
     write(value);
   }
+}
+
+/**
+ * True when `el`'s content already is what `sink` (whose text is `markup`)
+ * parses to: byte-equal to the browser's serialisation, or equal to it once
+ * `sink` is parsed through a `<template>` and serialised the same way. A
+ * server writes markup as it was given, and `<br/>`, single quotes, `&#39;`,
+ * an unclosed `<p>` or a `<table>` without `<tbody>` all serialise
+ * differently, so byte equality alone would rewrite the server's nodes (an
+ * iframe reloads, typed text is lost: DR-5). The parse writes `sink` itself,
+ * so `trustedHtml()` stays typed; a string is parsed as a string, which a page
+ * requiring Trusted Types reports or refuses, as it would the write.
+ *
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "markup the server wrote in a form the browser serialises differently is not rewritten: %j"
+ */
+function holdsMarkup(el: Element, markup: string, sink: string): boolean {
+  const current = el.innerHTML;
+  if (current === markup) return true;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = sink;
+  return tpl.innerHTML === current;
 }
 
 /**

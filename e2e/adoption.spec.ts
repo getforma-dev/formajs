@@ -611,3 +611,40 @@ test('a falsy static dangerouslySetInnerHTML is no prop: the server\'s children 
   await expect(page.locator('[dangerouslysetinnerhtml]')).toHaveCount(0);
   expect(errors).toEqual([]);
 });
+
+test('markup the server wrote in a form the browser serialises differently is adopted without one DOM write, and typed text survives', async ({ page }) => {
+  // formajs#32's review (S1): the reviewer's non-canonical markups, as ./ssr
+  // writes them. Compared through a template parse, each is the content the
+  // client would write, so adoption writes nothing (DR-5).
+  const markups = [
+    '<br/>', '<br />', '<img src="x.png" alt="a" />', '<a href=x>link</a>', "<a href='x'>link</a>", '<p class="a"  id="b">x</p>',
+    '<input disabled>', 'It&#39;s', '&quot;q&quot;', 'a & b', '&copy; 2026', '<B>upper</B>', '<p>one<p>two',
+    '<table><tr><td>x</td></tr></table>', '<svg><path d="M0 0"/></svg>', '<div title="a<b">x</div>', '<div title="a>b">x</div>',
+    '<pre>\n\nx</pre>', '<textarea>\nx</textarea>',
+    '<p>It&#39;s a &quot;test&quot;</p>\n<pre><code class="language-js">const a = &quot;b&quot;;\n</code></pre>\n',
+    "<label>Name <input id=typed value=''></label>",
+  ];
+  await serve(page, markups.map((m, i) => `<div id="m${i}" data-forma-ssr><article>${m}</article></div>`).join(''));
+  await page.locator('#typed').fill('typed before activation');
+  const writes = await page.evaluate(async (list) => {
+    const { h, mount, createSignal } = await import('/adoption-core.mjs' as string);
+    const firsts = list.map((_, i) => document.querySelector(`#m${i} article`)!.firstChild);
+    const observer = new MutationObserver(() => {});
+    for (let i = 0; i < list.length; i++) {
+      observer.observe(document.querySelector(`#m${i} article`)!, { subtree: true, childList: true, attributes: true, characterData: true });
+    }
+    list.forEach((markup, i) => {
+      const [inner] = createSignal({ __html: markup });
+      mount(() => h('article', { dangerouslySetInnerHTML: () => inner() }), `#m${i}`);
+    });
+    const records = observer.takeRecords();
+    observer.disconnect();
+    return {
+      records: records.length,
+      kept: list.map((_, i) => document.querySelector(`#m${i} article`)!.firstChild === firsts[i]),
+    };
+  }, markups);
+  expect(writes.records).toBe(0);
+  expect(writes.kept).toEqual(markups.map(() => true));
+  await expect(page.locator('#typed')).toHaveValue('typed before activation');
+});
