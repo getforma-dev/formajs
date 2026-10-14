@@ -4,6 +4,24 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
+  reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
+  deploy every client of a server reconnected in the same instant. The delay is
+  now drawn uniformly between 0 and that cap, still for at most
+  `maxReconnects` (5) attempts, and a successful open still restarts the count.
+  A new option, `random`, replaces `Math.random` as the source of the draw (a
+  test passes a seeded one).
+- **`data-fetch` aborts a request after 30 seconds** (FORMA-132, L-46), as
+  `createFetch` does. Before, a request the server never answered held its
+  `loading:` target true forever. Now the abort lands in the `error:` target as
+  `data-fetch timed out after 30000 ms`, and `loading:` turns false; each
+  request of a `poll:` fetch has its own 30 seconds. A shorter timeout granted
+  per mount comes with the tiered mount (FORMA-128). The CDN runtime grows by
+  122 B gzipped (33,983 B, gate 34,000 B) and the hardened runtime by 122 B
+  (32,995 B, gate 33,000 B); both stay under their gates, which are unchanged.
+
 ### CI
 
 - **Actions pinned to commits; every job declares its token** (DR-32, SR21,

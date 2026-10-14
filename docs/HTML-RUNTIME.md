@@ -207,6 +207,17 @@ Verified by `src/__tests__/readme-directive-table.test.ts` > "every Example cell
 Verified by `src/__tests__/readme-directive-table.test.ts` > "the three magic-variable rows actually do what the table says"
 Verified by `src/__tests__/readme-examples.test.ts` > "data-fetch loads into a state key and $refetch re-runs it, both without eval"
 
+**`data-fetch` gives up after 30 seconds**, as `createFetch` does. A request
+still unanswered then is aborted: its message (`data-fetch timed out after
+30000 ms`) lands in the `error:` target when the directive names one
+(`data-fetch="GET /api/items → items |loading:busy |error:failed"`), and the
+`loading:` target turns false. Each request of a `poll:` fetch has its own 30
+seconds.
+
+Verified by `src/__tests__/runtime-fetch-timeout.test.ts` > "a data-fetch to a stalled endpoint aborts at 30 s into its error: target"
+Verified by `src/__tests__/runtime-fetch-timeout.test.ts` > "a data-fetch answered before 30 s lands in its target and is never aborted"
+Verified by `src/__tests__/runtime-fetch-timeout.test.ts` > "each request of a polling data-fetch has its own 30 s"
+
 ---
 
 ## Where to go next

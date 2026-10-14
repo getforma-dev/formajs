@@ -674,6 +674,16 @@
   "note": "history entries alias live objects — undo/redo returns mutated state"
  },
  {
+  "id": "http/ws-reconnect-no-jitter",
+  "file": "src/http/ws.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "Math.floor(random() * baseInterval",
+  "replace": "Math.floor(baseInterval",
+  "note": "every client reconnects after exactly 2^(n-1) s, so after a deploy they all reconnect in step (L-46). Verified by: src/http/__tests__/ws-reconnect.test.ts > \"with a seeded random source, the n-th reconnect delay lies between 0 and 2^(n-1) s and differs across simulated clients\""
+ },
+ {
   "id": "hydrate/attr-equal-value-rewritten",
   "file": "src/dom/hydrate.ts",
   "tags": [
@@ -1273,6 +1283,26 @@
   "find": "  if (isUrlAttr(name) && isDangerousUrl(value, tag)) return true;",
   "replace": "  if (isUrlAttr(name) && isDangerousUrl(value, 'img')) return true;",
   "note": "data-bind: judges every sink as an image sink"
+ },
+ {
+  "id": "runtime/data-fetch-no-timeout",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "fetch(url, { method, signal: ctrl.signal })",
+  "replace": "fetch(url, { method })",
+  "note": "a data-fetch to a stalled endpoint is never aborted: its loading: target stays true and its error: target never hears of it (L-46). Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch to a stalled endpoint aborts at 30 s into its error: target\""
+ },
+ {
+  "id": "runtime/data-fetch-timer-outlives-answer",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "          .finally(() => clearTimeout(timer));",
+  "replace": "          ;",
+  "note": "a data-fetch's 30 s timer is not cleared when the answer arrives, so it aborts a finished request. Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch answered before 30 s lands in its target and is never aborted\""
  },
  {
   "id": "sec/attrname-allow-quote",

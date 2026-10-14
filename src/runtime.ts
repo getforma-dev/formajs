@@ -206,6 +206,13 @@ interface Scope {
 // trigger imperative refetches via $refetch('id').
 const _refetchRegistry = new Map<string, () => void>();
 
+/**
+ * How long a `data-fetch` request may take, in ms, before it is aborted into
+ * its `error:` target: `createFetch`'s default (decision brief L-46). A grant
+ * that shortens it comes with the tiered mount (FORMA-128).
+ */
+const FETCH_TIMEOUT_MS = 30_000;
+
 function $refetch(id: string): void {
   const fn = _refetchRegistry.get(id);
   if (fn) {
@@ -1924,9 +1931,18 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         scope.setters[errorTarget] = se as Setter;
       }
 
+      // A request the server never answers is aborted after FETCH_TIMEOUT_MS,
+      // its own timer per request, and the abort lands in the error: target.
+      // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch to a stalled endpoint aborts at 30 s into its error: target"
+      // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch answered before 30 s lands in its target and is never aborted"
       const doFetch = () => {
         if (loadingTarget) scope.setters[loadingTarget]!(true);
-        fetch(url, { method })
+        const ctrl = new AbortController();
+        const timer = setTimeout(
+          () => ctrl.abort(new Error(`data-fetch timed out after ${FETCH_TIMEOUT_MS} ms`)),
+          FETCH_TIMEOUT_MS,
+        );
+        fetch(url, { method, signal: ctrl.signal })
           .then(r => r.json())
           .then(data => {
             setTarget(data);
@@ -1935,7 +1951,8 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
           .catch(err => {
             if (errorTarget) scope.setters[errorTarget]!(err.message);
             if (loadingTarget) scope.setters[loadingTarget]!(false);
-          });
+          })
+          .finally(() => clearTimeout(timer));
       };
 
       // Register in $refetch registry if data-fetch-id is present
