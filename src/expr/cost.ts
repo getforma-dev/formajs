@@ -29,13 +29,18 @@ const max = Math.max;
 const min = Math.min;
 const toNumber = Number;
 const toText = String;
-const exec = RegExp.prototype.exec;
 const NONE: unknown[] = [];
 
-/** A character outside Latin-1 (the string is two bytes per character), or outside ASCII. */
-const WIDE = /[^\x00-\xff]/;
-const NON_ASCII = /[^\x00-\x7f]/;
-const has = (pattern: RegExp, v: unknown): boolean => typeof v === 'string' && Reflect.apply(exec, pattern, [v]) !== null;
+/**
+ * Whether the text holds a character whose case mapping costs more than
+ * Latin-1's: outside Latin-1 and outside the general punctuation, currency
+ * signs and letterlike symbols that map to themselves (U+2000 to U+20CF,
+ * U+2100 to U+2125: curly quotes, dashes, `…`, `€`, `™`). Or a character
+ * outside ASCII. Bound once, so neither a later page script nor a per-call
+ * argument list is involved.
+ */
+const costly = RegExp.prototype.exec.bind(/[^\x00-\xff\u2000-\u20cf\u2100-\u2125]/);
+const nonAscii = RegExp.prototype.exec.bind(/[^\x00-\x7f]/);
 
 type Cost = (recv: unknown, args: unknown[], room: number) => number;
 
@@ -163,13 +168,22 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *   per key.
  * - The string rows that amplify nothing (their output is at most a small
  *   constant times the receiver) are weighted by their measured cost per
- *   character against an `Array.from` slot (about 105 ns at 4x CPU
- *   throttling), worst case per tier, by `node scripts/measure-alloc-budget.mjs
- *   --chars`. Case mapping depends on the widest character: lowercasing Latin-1
- *   measured at most 2.2 ns a character and anything wider 34 ns (Turkish
- *   `İ`); uppercasing ASCII 1.3 ns, Latin-1 19 ns (`ÿ` widens), and wider
- *   64 ns (`ΐ` becomes three characters). The tier test is itself a scan, so
- *   it is skipped when even the cheapest tier is past `room`.
+ *   character against an `Array.from` slot (about 110 ns at 4x CPU
+ *   throttling), by `node scripts/measure-alloc-budget.mjs --chars`. Case
+ *   mapping is tiered by the costliest character (`costly`, then `nonAscii`):
+ *   lowercasing a string stored one byte a character measured at most 2.1 ns,
+ *   and anything costly up to 34 ns (Turkish `İ`); uppercasing ASCII 1.3 ns,
+ *   Latin-1 up to 32 ns (`ß` and `ÿ` widen), and costly text up to 64 ns (`ΐ`
+ *   becomes three characters). The cheap tier also takes text stored two bytes
+ *   a character whose characters above U+00FF are only those self-mapping
+ *   symbols, so one curly apostrophe in a record does not price it as Greek.
+ *   A string stored two bytes a character costs more for the same text
+ *   (lowercasing 4 to 11 ns, plus the tier scan's 3.5 ns) than the 1/32 its
+ *   tier charges: up to about fourfold. A text search over 9,000 records with
+ *   such characters still measured under 50 ms; a single long two-byte string
+ *   does not, and SECURITY.md lists it under FORMA-028. The tier test is
+ *   itself a scan (free on one-byte strings), skipped when even the cheapest
+ *   tier is past `room`.
  * - `includes`, `indexOf` and `lastIndexOf` on a string are weighted for
  *   ordinary text, under 1 ns a character. A pattern whose first characters
  *   fill the receiver (`'ab'` in `'aaaa…'`) measured 39 ns: SECURITY.md lists
@@ -192,11 +206,11 @@ rows((r) => len(r) / 32, 'string.includes string.indexOf string.lastIndexOf');
 rows((r) => len(r) / 16, 'string.trim string.trimEnd string.trimStart');
 rows((r, _, room) => {
   const n = len(r);
-  return n / 32 > room || !has(WIDE, r) ? n / 32 : n / 2;
+  return n / 32 > room || !costly(r as string) ? n / 32 : n / 2;
 }, 'string.toLowerCase');
 rows((r, _, room) => {
   const n = len(r);
-  return n / 16 > room ? n / 16 : has(WIDE, r) ? n : has(NON_ASCII, r) ? n / 4 : n / 16;
+  return n / 16 > room ? n / 16 : costly(r as string) ? n : nonAscii(r as string) ? n / 2 : n / 16;
 }, 'string.toUpperCase');
 rows((r, a, room) => len(r) / 16 + weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');
 // Every index is visited, holes included.

@@ -410,19 +410,32 @@ describe('the cost preflight, native by native (DR-16)', () => {
     const latin = st.rows.map((r) => ({ title: r.title.replace(/a/g, 'à'), body: r.body.replace(/e/g, 'é') }));
     expect(outcome("rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q)).length", { rows: latin, q: 'néédlé' }))
       .toEqual({ value: 900 });
-    // Two-sided: wider text costs 34 ns a character to lowercase at worst, so
-    // the same search over it is refused, as N3 requires.
+    // Review R4-1: one curly apostrophe, dash, `€`, `™` or `…` in each record
+    // (ordinary English from an editor) is charged as Latin-1, not as wide text.
+    const search = "rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q)).length";
+    const withOne = (ch: string) => st.rows.map((r) => ({ title: r.title, body: `${r.body.slice(0, 99)}${ch}${r.body.slice(100)}` }));
+    for (const ch of ['’', '—', '€', '™', '…']) {
+      expect(outcome(search, { rows: withOne(ch), q: 'needle' }), `one ${ch} per record`).toEqual({ value: 900 });
+    }
+    // Two-sided: costlier text measured up to 34 ns a character to lowercase,
+    // so the same search over it is refused, as N3 requires; one Greek letter
+    // or a case-mapped letterlike symbol (the Ohm sign U+2126, the Kelvin sign
+    // U+212A) is enough.
     const greek = st.rows.map((r) => ({ title: r.title, body: r.body.replace(/a/g, 'α') }));
-    expect(outcome("rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q)).length", { rows: greek, q: 'needle' }))
-      .toBe('FORMA_E_BUDGET');
+    expect(outcome(search, { rows: greek, q: 'needle' })).toBe('FORMA_E_BUDGET');
+    expect(outcome(search, { rows: withOne('’α'), q: 'needle' })).toBe('FORMA_E_BUDGET');
+    expect(outcome(search, { rows: withOne('\u2126'), q: 'needle' })).toBe('FORMA_E_BUDGET');
+    expect(outcome(search, { rows: withOne('\u212a'), q: 'needle' })).toBe('FORMA_E_BUDGET');
   });
 
-  it('case mapping is charged by the widest character of its receiver', () => {
-    // Each tier, either side of the budget. Lowercase: Latin-1 1/32 a
-    // character, wider 1/2. Uppercase: ASCII 1/16, Latin-1 1/4, wider 1. Past
-    // 1,048,576 characters the result cap refuses the call AFTER it runs, with
-    // the same code; only the allocation budget refuses it before, which is
-    // what the message tells apart.
+  it('case mapping is charged by the costliest character of its receiver', () => {
+    // Each tier, either side of the budget. Lowercase: Latin-1, and the
+    // punctuation, currency signs and letterlike symbols that map to themselves
+    // (U+2000 to U+20CF, U+2100 to U+2125), 1/32 a character; anything else
+    // 1/2. Uppercase: ASCII 1/16, Latin-1 and those symbols 1/2, anything else
+    // 1. Past 1,048,576 characters the result cap refuses the call AFTER it
+    // runs, with the same code; only the allocation budget refuses it before,
+    // which is what the message tells apart.
     const refusedBefore = (src: string, s: string): boolean => {
       try {
         evaluateExpression(compileExpression(src), scopeOf({ s }));
@@ -432,17 +445,23 @@ describe('the cost preflight, native by native (DR-16)', () => {
         return /allocation budget/.test((e as Error).message);
       }
     };
+    const text = (unit: string, n: number): string => unit.repeat(Math.ceil(n / unit.length)).slice(0, n);
     const cases: Array<[string, string, number, boolean]> = [
       ['toLowerCase', 'a', 7_900_000, false], ['toLowerCase', 'a', 8_100_000, true],
       ['toLowerCase', 'é', 7_900_000, false], ['toLowerCase', 'é', 8_100_000, true],
+      ['toLowerCase', 'it’s', 7_900_000, false], ['toLowerCase', 'it’s', 8_100_000, true],
+      ['toLowerCase', 'a—€™…', 7_900_000, false],
       ['toLowerCase', 'Σ', 490_000, false], ['toLowerCase', 'Σ', 510_000, true],
+      ['toLowerCase', 'a\u2126', 490_000, false], ['toLowerCase', 'a\u2126', 510_000, true],
+      ['toLowerCase', 'č', 490_000, false], ['toLowerCase', 'č', 510_000, true],
       ['toUpperCase', 'a', 3_900_000, false], ['toUpperCase', 'a', 4_100_000, true],
-      ['toUpperCase', 'é', 990_000, false], ['toUpperCase', 'é', 1_010_000, true],
+      ['toUpperCase', 'é', 490_000, false], ['toUpperCase', 'é', 510_000, true],
+      ['toUpperCase', 'it’s', 490_000, false], ['toUpperCase', 'it’s', 510_000, true],
       ['toUpperCase', 'Σ', 245_000, false], ['toUpperCase', 'Σ', 255_000, true],
     ];
     const wrong = cases
-      .filter(([method, ch, n, refused]) => refusedBefore(`s.${method}().length`, ch.repeat(n)) !== refused)
-      .map(([method, ch, n, refused]) => `${method} of ${n} × ${ch} should ${refused ? '' : 'not '}be refused before the call`);
+      .filter(([method, unit, n, refused]) => refusedBefore(`s.${method}().length`, text(unit, n)) !== refused)
+      .map(([method, unit, n, refused]) => `${method} of ${n} × ${unit} should ${refused ? '' : 'not '}be refused before the call`);
     expect(wrong).toEqual([]);
   });
 

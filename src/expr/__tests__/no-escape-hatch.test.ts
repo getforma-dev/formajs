@@ -98,7 +98,8 @@ describe('src/expr has no escape hatch', () => {
    * is the same mistake as widening dispatch, one file further out.
    */
   const OWNED_TABLES = new Set([
-    'COSTS', 'ELEMENT_HOST_PROPS', 'ELEMENT_METHOD_RESULT', 'HOF_CALLBACK_PARAMS', 'SAFE_GLOBALS',
+    'COSTS', 'ELEMENT_HOST_PROPS', 'ELEMENT_METHOD_RESULT', 'HOF_CALLBACK_PARAMS', 'NAMES', 'SAFE_GLOBALS',
+    'names',
     'tbl', 'members', 'ctx.scope.getters', 'ctx.scope.setters',
     'f.values', 'node.exprs', 'node.quasis', 'node.values',
     'plain', 'list', 'out',

@@ -16,17 +16,24 @@ All notable changes to this project will be documented in this file.
   row in `src/expr/cost.ts`, and is refused with `FORMA_E_BUDGET` before it runs
   once the evaluation would pass the budget. Rows that copy or produce cost a
   unit per element; string rows that amplify nothing are weighted by their
-  measured cost per character, by the widest character of the text: lowercasing
-  Latin-1 costs 1/32 of a unit a character and wider text 1/2, uppercasing
-  ASCII 1/16, Latin-1 1/4 and wider text 1, a string search 1/32, `slice` 1/64.
+  measured cost per character, tiered by the costliest character of the text:
+  lowercasing Latin-1 and the self-mapping punctuation, currency and
+  letterlike symbols costs 1/32 of a unit a character and any other text 1/2;
+  uppercasing ASCII 1/16, Latin-1 and those symbols 1/2, any other text 1; a
+  string search 1/32; `slice` 1/64.
   An operator that converts an array or object to text (`'' + list`,
   `` `${list}` ``, `list < 1`, `x += list`, a write to `$el`) is charged the
   same way; `x != null` and object-to-object `==` convert nothing and are not.
   The budget is sized from the tail of measurements at 4x CPU throttling with
   garbage collection counted (`scripts/measure-alloc-budget.mjs`): the slowest
-  of 41 runs of the largest call any row allows took 39.2 ms (a text search
-  over 9,000 records), and an evaluation that spends the budget and then
-  exhausts the step budget 28.7 ms. The bound is **per evaluation** (one
+  of 41 runs of the largest call any row allows took 46.6 ms (a text search
+  over 9,000 records with a curly apostrophe in each; 48.0 ms at most over 81
+  runs with a dash), and an evaluation that spends the budget and then exhausts
+  the step budget 23.7 ms. These figures hold for strings stored one byte a
+  character, and for that search's two-byte records; one long string stored two
+  bytes a character can take up to about four times its charge
+  (`toLowerCase` of 8 million such characters: up to 81 ms), listed under
+  FORMA-028. The bound is **per evaluation** (one
   binding or one handler run), not per task: a widget with many bindings can
   spend one budget in each; a per-task (per-widget) budget is a design change,
   left to a follow-up ticket. Not yet bounded (FORMA-028; SECURITY.md,
@@ -38,14 +45,20 @@ All notable changes to this project will be documented in this file.
   DR-16 accepts, the budget refuses, with `FORMA_E_BUDGET`, some evaluations
   2.0.2 answered. Measured with this release's engine and 2.0.2's on the same
   data:
-  - **String work per record in a callback counts toward the one budget.** A
-    text filter that lowercases about 260 characters per record,
-    `rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q))`,
-    is answered as in 2.0.2 for ASCII and Latin-1 text (up to about 9,000
-    records, where the step budget stops both releases). Over Greek, Cyrillic,
-    Turkish or other text wider than Latin-1, whose case mapping measured up to
-    0.6 of a slot a character, it is refused past about 1,700 records, where
-    2.0.2 answered about 9,000.
+  - **String work per record in a callback counts toward the one budget.** The
+    text filter `rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q))`
+    over records of about 260 characters:
+    - is answered as in 2.0.2, up to about 9,090 records (where the step
+      budget stops both releases), when every character of the records is
+      Latin-1 or one of the punctuation, currency and letterlike symbols that
+      map to themselves (U+2000 to U+20CF, U+2100 to U+2125): ASCII, `é`, curly
+      quotes `’ “ ”`, dashes `– —`, `…`, `€`, `™`, `№`;
+    - is refused past about 1,716 records, where 2.0.2 answered about 9,090,
+      when each record holds any other character above U+00FF: a Greek,
+      Cyrillic or CJK character, a Latin Extended letter such as `č`, `ł` or
+      `ő`, Turkish `İ` or `ı`, an emoji, or a symbol with a case mapping such as
+      the Ohm sign (U+2126). Such text measured up to 34 ns a character to
+      lowercase, against 2 ns for Latin-1.
   - A default `sort()` of more than about 6,400 strings or numbers, counting
     everything else the evaluation does (2.0.2 had no limit).
   - `rows.map(r => r.name).join(', ')` past about 18,000 rows (2.0.2: about

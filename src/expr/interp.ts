@@ -102,6 +102,9 @@ function step(ctx: EvalCtx, at: number): void {
 
 // ── The allocation budget (DR-16) ──
 
+/** `array.map` and the like, built once per method rather than once per call. */
+const NAMES: Record<string, Record<string, string>> = Object.create(null) as Record<string, Record<string, string>>;
+
 /** Units left in this evaluation's allocation budget. */
 function room(ctx: EvalCtx): number {
   return LIMITS.ALLOC_BUDGET - ctx.cost;
@@ -495,7 +498,8 @@ function evalCall(node: Expr & { k: 'Call' }, ctx: EvalCtx): unknown {
     else args.push(evalArg(argNode, ctx));
   });
 
-  preflight(ctx, `${kind}.${method}`, recv, args, at);
+  const names = (NAMES[kind] ??= Object.create(null) as Record<string, string>);
+  preflight(ctx, (names[method] ??= `${kind}.${method}`), recv, args, at);
   guardArgs(method, args, at);
   if (method === 'flatMap' && typeof args[0] === 'function') {
     // Each array the callback returns is copied into the result: charged as

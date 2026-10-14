@@ -50,10 +50,14 @@ export type Stmt =
  * (DR-16). It is sized to N3's 50 ms long task from the TAIL of the
  * measurements, with garbage collection counted: in Chromium 151 at 4x CPU
  * throttling on 2026-10-14, the slowest of 41 runs of the largest call any row
- * allows at 250,000 took 39.2 ms (a text search over 9,000 records), and of an
- * evaluation that spends the budget and then exhausts the step budget 28.7 ms
- * (34.8 and 19.9 ms with a collection forced before each run). In the first
- * sizing, at 300,000, the slowest row plus a full step budget came to 52.1 ms.
+ * allows at 250,000 took 46.6 ms (a text search over 9,000 records with a curly
+ * apostrophe in each; 48.0 ms at most over 81 runs with a dash), and of an
+ * evaluation that spends the budget and then exhausts the step budget 23.7 ms.
+ * In the first sizing, at 300,000, the slowest row plus a full step budget came
+ * to 52.1 ms. These hold for strings stored one byte a character, and for the
+ * search's two-byte records. A long string stored two bytes a character costs
+ * up to about four times what its case-mapping tier charges: `toLowerCase` of
+ * 8 million such characters took up to 81 ms (SECURITY.md, FORMA-028).
  * `node scripts/measure-alloc-budget.mjs [--cap=N] [--gc] [--chars]`
  * re-measures it. The budget is per evaluation (one binding or one handler
  * run), not per task. Comments inside this object literal would ship in the

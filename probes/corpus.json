@@ -346,6 +346,36 @@
   "note": "trim is free, so trimming a long whitespace run over and over is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
  },
  {
+  "id": "expr/costly-letterlike-too-broad",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
+  "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u214f]/);",
+  "note": "the case-mapped letterlike symbols (Ω U+2126, K U+212A, Å U+212B) are charged as symbols that map to themselves. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+ },
+ {
+  "id": "expr/costly-set-too-broad",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
+  "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u0370-\\u03ff\\u2000-\\u20cf\\u2100-\\u2125]/);",
+  "note": "Greek letters, which measured up to 34 ns a character to case-map, are charged as Latin-1. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+ },
+ {
+  "id": "expr/costly-set-too-narrow",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
+  "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff]/);",
+  "note": "one curly apostrophe, dash, € or ™ puts a record's lowercasing in the costly tier, refusing an ordinary English search past about 1,700 records (review R4-1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+ },
+ {
   "id": "expr/data-args-charged",
   "file": "src/expr/interp.ts",
   "tags": [
@@ -431,9 +461,9 @@
   "tags": [
    "security"
   ],
-  "find": "return n / 32 > room || !has(WIDE, r) ? n / 32 : n / 2;",
+  "find": "return n / 32 > room || !costly(r as string) ? n / 32 : n / 2;",
   "replace": "return n / 32;",
-  "note": "lowercasing text wider than Latin-1 is charged as Latin-1, a sixteenth of its measured worst case (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the widest character of its receiver\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\""
+  "note": "lowercasing costly text (Greek, Cyrillic, Turkish İ, Latin Extended) is charged as Latin-1, a sixteenth of its measured worst case (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\""
  },
  {
   "id": "expr/object-keys-of-object-free",
@@ -511,9 +541,9 @@
   "tags": [
    "security"
   ],
-  "find": "has(WIDE, r) ? n : has(NON_ASCII, r) ? n / 4 : n / 16",
+  "find": "costly(r as string) ? n : nonAscii(r as string) ? n / 2 : n / 16",
   "replace": "n / 16",
-  "note": "uppercasing Latin-1 or wider text is charged as ASCII, though it measured up to 64 ns a character (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the widest character of its receiver\""
+  "note": "uppercasing Latin-1 or wider text is charged as ASCII, though it measured up to 64 ns a character (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
  },
  {
   "id": "expr/weigh-elements-skipped",

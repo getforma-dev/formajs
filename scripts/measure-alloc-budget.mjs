@@ -59,7 +59,8 @@ console.log(`${await browser.version()}, CPU throttling ${RATE}x, ${RUNS} runs: 
 const TEXT = {
   ascii: 'The quick brown fox jumps over the lazy dog 0123456789 ',
   latinLower: 'ßßßß straße ',
-  latinUpper: 'ÿµÿµ ',
+  latinUpper: 'ÿµÿµ straße ',
+  punctuation: 'The fox’s jump — over the dog… €12 ™ ',
   wideLower: 'İİİ ııı ',
   wideUpper: 'ΐΰΐΰ ',
 };
@@ -77,12 +78,20 @@ if (process.argv.includes('--chars')) {
       return (worst * 1e6) / N;
     };
     const flat = (unit) => { const s = unit.repeat(Math.ceil(N / unit.length)).slice(0, N); s.charCodeAt(0); return s; };
+    // The same text stored two bytes a character: a slice of a string that
+    // held a character above U+00FF stays two-byte. Case mapping follows the
+    // storage, not the text.
+    const twoByte = (unit) => { const s = ('\u0100' + flat(unit)).slice(1); s.charCodeAt(0); return s; };
     const slot = (max(() => Array.from({ length: N / 8 })) * 8);
+    const costly = /[^\x00-\xff\u2000-\u20cf\u2100-\u2125]/;
     const rows = [];
     for (const [tier, unit] of Object.entries(text)) {
-      const s = flat(unit);
-      rows.push([`toLowerCase, ${tier}`, max(() => s.toLowerCase())]);
-      rows.push([`toUpperCase, ${tier}`, max(() => s.toUpperCase())]);
+      for (const [storage, s] of [['one-byte', flat(unit)], ['two-byte', twoByte(unit)]]) {
+        if (storage === 'one-byte' && /[^\x00-\xff]/.test(unit)) continue;
+        rows.push([`toLowerCase, ${tier}, ${storage}`, max(() => s.toLowerCase())]);
+        rows.push([`toUpperCase, ${tier}, ${storage}`, max(() => s.toUpperCase())]);
+        rows.push([`tier scan, ${tier}, ${storage}`, max(() => costly.exec(s))]);
+      }
     }
     const a = flat('a');
     const ascii = flat(text.ascii);
@@ -141,12 +150,15 @@ const cases = [
   ['toLowerCase (Latin-1, ß)', 'v.toLowerCase().length', 'latinLower', 32 * (CAP - 1)],
   ['toLowerCase (wider, İ ı)', 'v.toLowerCase().length', 'wideLower', 2 * (CAP - 1)],
   ['toUpperCase (ASCII)', 'v.toUpperCase().length', 'ascii', 16 * (CAP - 1)],
-  ['toUpperCase (Latin-1, ÿ µ)', 'v.toUpperCase().length', 'latinUpper', 4 * (CAP - 1)],
+  ['toUpperCase (Latin-1, ÿ µ ß)', 'v.toUpperCase().length', 'latinUpper', 2 * (CAP - 1)],
   ['toUpperCase (wider, ΐ)', 'v.toUpperCase().length', 'wideUpper', CAP - 1],
   ["includes('needle'), ordinary text", "v.includes('needle')", 'ascii', 32 * (CAP - 7)],
   ['trim (all whitespace)', 'v.trim().length', 'spaces', 16 * (CAP - 1)],
   ['slice (concatenated receiver)', 'v.slice(1, 5)', 'rope', 64 * (CAP - 7)],
   ['text search, 9,000 records of 260', "v.filter(r => (r.title + ' ' + r.body).toLowerCase().includes('needle')).length", 'records', 9000],
+  ['the same, one ’ in each record', "v.filter(r => (r.title + ' ' + r.body).toLowerCase().includes('needle')).length", 'curlyRecords', 9000],
+  ['RESIDUAL toLowerCase, two-byte with ’', 'v.toLowerCase().length', 'punctuation', 32 * (CAP - 1)],
+  ['RESIDUAL toLowerCase, two-byte ASCII', 'v.toLowerCase().length', 'twoByteAscii', 32 * (CAP - 1)],
   ["RESIDUAL includes('ab') in 'aaaa…'", "v.includes('ab')", 'as', 32 * (CAP - 3)],
 ];
 
@@ -160,6 +172,12 @@ async function timeBinding(expr, builder, n) {
       latinUpper: (k) => flat(samples.latinUpper, k),
       wideLower: (k) => flat(samples.wideLower, k),
       wideUpper: (k) => flat(samples.wideUpper, k),
+      punctuation: (k) => flat(samples.punctuation, k),
+      twoByteAscii: (k) => { const s = ('\u0100' + flat(samples.ascii, k)).slice(1); s.charCodeAt(0); return s; },
+      curlyRecords: (k) => Array.from({ length: k }, (_, i) => ({
+        title: `Record ${i} ${words}`.slice(0, 60),
+        body: `${i % 10 ? '' : 'Needle '}${words.repeat(3)}`.slice(0, 99) + '’' + words.repeat(3).slice(0, 100),
+      })),
       spaces: (k) => flat(' ', k),
       as: (k) => flat('a', k),
       rope: (k) => flat(samples.ascii, k / 2) + flat(samples.ascii, k / 2),
