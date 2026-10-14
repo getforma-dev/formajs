@@ -166,6 +166,20 @@ for (const rel of jsArtifacts()) {
 }
 
 // ---------------------------------------------------------------------------
+// 3b. The deprecated entries' warnings are development-only
+// ---------------------------------------------------------------------------
+// `./server`, `./wasm` and `./ssr` log a coded deprecation the first time they
+// load in a development build (src/deprecated.ts). Each call sits behind a
+// condition the production define folds to `false`, so the build drops it and
+// its import. If a code survives into an artifact, the fold broke and the
+// published bytes changed.
+for (const rel of jsArtifacts()) {
+  if (read(rel).includes('FORMA_W_DEPRECATED_')) {
+    fail(`${rel} contains a FORMA_W_DEPRECATED_ warning: the development-only deprecation was not folded away`);
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 4. NO artifact contains a dynamic-code path
 // ---------------------------------------------------------------------------
 // This used to check the two hardened runtime files. It now checks all of them:

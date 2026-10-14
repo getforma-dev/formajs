@@ -174,6 +174,43 @@ All notable changes to this project will be documented in this file.
   to 34,500 B and 33,000 to 33,500 B (`scripts/check-size.mjs`, the README's
   size table).
 
+### Deprecated
+
+- **`@getforma/core/server`, `@getforma/core/ssr` and `@getforma/core/wasm`
+  are deprecated, and are removed in 3.0.0** (FORMA-131; DR-22 to DR-24). They
+  keep working through 2.x. Server functions give way to routes in the
+  application's Rust server, `./ssr` to the Rust walker, and `./wasm` to
+  core's `h()`, which islands already re-render with. `docs/STABILITY.md` marks
+  each row **Deprecated** and lists the codes under *Deprecated entry points*;
+  `SECURITY.md` and `docs/CDN-AND-EXPORTS.md` mark the entries too.
+  - The first time one of them is loaded where core runs from source, it logs
+    one line with a stable code: `FORMA_W_DEPRECATED_SERVER`,
+    `FORMA_W_DEPRECATED_SSR` or `FORMA_W_DEPRECATED_WASM`, as
+    `[forma] FORMA_W_DEPRECATED_SSR: …`, naming 3.0.0 and the replacement. Once
+    per process: a second copy of the module stays quiet.
+  - The line logs only when core runs from source, as every `__DEV__`
+    diagnostic does: in Node with `NODE_ENV` other than `production`, in a
+    browser with the global `__FORMA_DEV__` set. The published files are
+    production builds and log nothing, so an application's own development
+    build of the npm package does not either (FORMA-169 tracks that gap for
+    every `__DEV__` diagnostic). An installed package shows the deprecation in
+    its types: every function the three entries export carries `@deprecated`.
+    Every `.js` and `.cjs` file under `dist/` is byte-identical to the build
+    before this change (all 33), so no size gate moved; the files that differ
+    are the three entries' type declarations and their source maps.
+  - The deprecated SSR row links to *SSR form controls* (FORMA-017) for how
+    `./ssr` differs from the walker, which that section states; it is no
+    longer a row of its own.
+  - `scripts/verify-dist.mjs` fails a build in which a deprecation code reaches
+    any published artifact.
+  - Tests: `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its
+    deprecation once in development, with its code", "$subpath stays quiet when
+    NODE_ENV is production", "decides a development build as __DEV__ does,
+    under every NODE_ENV", "a production build of each deprecated entry carries
+    no warning" (the real tsup configs) and its control, "a build without the
+    production flag keeps the warning". The exact export-surface test still
+    lists all three entries until 3.0.0 removes them.
+
 ### Documentation
 
 - **`docs/ISLANDS.md` states what adoption skips today** (FORMA-016): a plain
@@ -192,6 +229,9 @@ All notable changes to this project will be documented in this file.
   textarea's text and `selected` on the option. The renderer is unchanged
   until `./ssr` is removed in 3.0.0; `docs/STABILITY.md` says what the served
   page shows and how to write these controls instead, and two tests pin it.
+- `docs/STABILITY.md`'s footnote on `./wasm` said the subpath first resolves
+  "in the next release". It first resolved in 2.0.0 (npm's 1.5.0 has no
+  `./wasm` key; 2.0.0 has it), and the footnote now says so.
 
 ### CI
 

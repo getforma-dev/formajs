@@ -13,6 +13,8 @@ const registry = new Map<string, ServerFunction>();
 /**
  * Register a server function at a specific endpoint.
  * Called by the server-side compiled output.
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function registerServerFunction(endpoint: string, fn: ServerFunction): void {
   registry.set(endpoint, fn);
@@ -20,6 +22,8 @@ export function registerServerFunction(endpoint: string, fn: ServerFunction): vo
 
 /**
  * Get a registered server function by endpoint.
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function getServerFunction(endpoint: string): ServerFunction | undefined {
   return registry.get(endpoint);
@@ -27,6 +31,8 @@ export function getServerFunction(endpoint: string): ServerFunction | undefined 
 
 /**
  * Get all registered server function endpoints.
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function getRegisteredEndpoints(): string[] {
   return [...registry.keys()];
@@ -59,7 +65,11 @@ export type RPCGuard = (endpoint: string, args: unknown[], ctx: RPCContext) => b
 
 let globalGuard: RPCGuard | undefined;
 
-/** Install (or clear) a process-global RPC authorization guard. */
+/**
+ * Install (or clear) a process-global RPC authorization guard.
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
+ */
 export function setRPCGuard(fn: RPCGuard | undefined): void {
   globalGuard = fn;
 }
@@ -116,6 +126,9 @@ function deepStripForbidden<T>(value: T): T {
   return value;
 }
 
+/** "Crash Barrier": block prototype pollution attacks via endpoint names. */
+const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
+
 /**
  * Handle an incoming RPC request.
  * Call this from your HTTP server's request handler.
@@ -142,10 +155,9 @@ function deepStripForbidden<T>(value: T): T {
  * @param body - The parsed request body containing { args: [...] }
  * @param revalidateData - Optional revalidation data to include in the response
  *                         (for single-flight mutations)
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
-/** "Crash Barrier": block prototype pollution attacks via endpoint names. */
-const FORBIDDEN_KEYS = new Set(['__proto__', 'constructor', 'prototype']);
-
 export async function handleRPC(
   endpoint: string,
   body: RPCRequest,
@@ -221,6 +233,8 @@ export async function handleRPC(
  * import { createRPCMiddleware } from 'forma/server/rpc-handler';
  * app.use('/rpc', createRPCMiddleware());
  * ```
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function createRPCMiddleware(opts?: { guard?: RPCGuard }) {
   return async (
