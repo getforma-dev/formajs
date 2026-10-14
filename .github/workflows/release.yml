@@ -58,8 +58,8 @@ jobs:
       contents: read
       id-token: write  # Required for npm trusted publishing (OIDC)
     steps:
-      - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
         with:
           # npm >= 11.5.1 is required for OIDC trusted publishing; Node 24
           # ships it. Do not lower this.
@@ -78,7 +78,7 @@ jobs:
       - name: Resolve Playwright version
         id: pw
         run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
-      - uses: actions/cache@v4
+      - uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
         with:
           path: ~/.cache/ms-playwright
           key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}
@@ -139,7 +139,7 @@ jobs:
         # belt-and-suspenders for an expired/invalid token.
         if: success() && env.FORMA_DISPATCH_TOKEN != ''
         continue-on-error: true
-        uses: peter-evans/repository-dispatch@v4
+        uses: peter-evans/repository-dispatch@28959ce8df70de7be546dd1250a005dd32156697 # v4
         with:
           token: ${{ env.FORMA_DISPATCH_TOKEN }}
           repository: getforma-dev/create-forma-app

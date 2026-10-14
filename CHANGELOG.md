@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### CI
+
+- **Actions pinned to commits; every job declares its token** (DR-32, SR21,
+  FORMA-010). Each `uses:` names the commit its tag pointed to on 2026-10-14,
+  with the tag in a comment, so moving a tag no longer changes what runs. Every
+  job in `ci.yml` declares `contents: read`; `release.yml`, `docs.yml` and
+  `e2e-engines.yml` already declared their permissions and keep them. Every
+  install was already `npm ci`. The published package is unchanged.
+
 ## [2.0.3] - 2026-10-14
 
 ### Security
