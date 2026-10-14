@@ -181,9 +181,9 @@
   "tags": [
    "security"
   ],
-  "find": "if (kind === 'array' && /^\\d+$/.test(key) && Number(key) >= LIMITS.MAX_ARRAY_LENGTH) {",
-  "replace": "if (false) {",
-  "note": "a handler can write items[4294967294], giving the array a 4,294,967,295 length of holes (review B1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a handler cannot write an array index past the array limit\""
+  "find": "kind === 'array' && /^\\d+$/.test(key) &&\n      Number(key) >= LIMITS.ALLOC_BUDGET && Number(key) >= (recv as unknown[]).length",
+  "replace": "false",
+  "note": "a handler can write items[4294967294] or items[999999], giving the array that length of holes for a scan or data-list to visit (review B1, R3). Verified by: src/expr/__tests__/native-cost.test.ts > \"a handler cannot grow an array past the allocation budget\""
  },
  {
   "id": "expr/budget-edge-off-by-one",
@@ -301,9 +301,19 @@
   "tags": [
    "security"
   ],
-  "find": "  (r) => len(r) / 16,",
-  "replace": "  () => 0,",
-  "note": "scans (includes, indexOf, slice, trim, ...) are free, so repeating one over a large receiver is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+  "find": "rows((r) => len(r) / 32, 'string.includes string.indexOf string.lastIndexOf');",
+  "replace": "rows(() => 0, 'string.includes string.indexOf string.lastIndexOf');",
+  "note": "string searches (includes, indexOf, lastIndexOf) are free, so repeating one over a large receiver is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-sliced-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((r) => len(r) / 64, 'string.endsWith string.slice string.startsWith string.substring');",
+  "replace": "rows(() => 0, 'string.endsWith string.slice string.startsWith string.substring');",
+  "note": "slice, substring, startsWith and endsWith are free, so flattening a long concatenated receiver over and over is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
  },
  {
   "id": "expr/cost-sort-linear",
@@ -324,6 +334,16 @@
   "find": "rows((r) => len(r), 'array.every array.reduce array.some');\n",
   "replace": "",
   "note": "every/some/reduce have no row: on a sparse array they visit every hole without a callback, so no step is charged (review B1). Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
+  "id": "expr/cost-trim-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "rows((r) => len(r) / 16, 'string.trim string.trimEnd string.trimStart');",
+  "replace": "rows(() => 0, 'string.trim string.trimEnd string.trimStart');",
+  "note": "trim is free, so trimming a long whitespace run over and over is unbounded. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
  },
  {
   "id": "expr/data-args-charged",
@@ -406,12 +426,22 @@
   "note": "== and != against a primitive convert an object of any text weight through join, uncharged. Verified by: src/expr/__tests__/native-cost.test.ts > \"loose equality charges only an operand it converts\""
  },
  {
+  "id": "expr/lowercase-wide-as-latin1",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "return n / 32 > room || !has(WIDE, r) ? n / 32 : n / 2;",
+  "replace": "return n / 32;",
+  "note": "lowercasing text wider than Latin-1 is charged as Latin-1, a sixteenth of its measured worst case (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the widest character of its receiver\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\""
+ },
+ {
   "id": "expr/object-keys-of-object-free",
   "file": "src/expr/cost.ts",
   "tags": [
    "security"
   ],
-  "find": "      if (key && ++n > room) break;\n",
+  "find": "      if (++n > room) break;\n",
   "replace": "",
   "note": "Object.keys/values/entries of a plain object are charged nothing, whatever its key count. Verified by: src/expr/__tests__/native-cost.test.ts > \"a native that reads its argument as data is charged its element count, not its text\""
  },
@@ -456,6 +486,16 @@
   "note": "a $` or $' replacement inserting the receiver at every position is charged as its two characters, so replaceAll grows quadratically (review S4). Verified by: src/expr/__tests__/native-cost.test.ts > \"a $ in a replacement is charged only for what it can insert\""
  },
  {
+  "id": "expr/split-pieces-free",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "return n / 32 + (a[1] === undefined ? pieces : min(pieces, toNumber(a[1]) >>> 0));",
+  "replace": "return n / 32;",
+  "note": "split is charged its scan only, not a slot per piece, so splitting a long string into characters is nearly free. Verified by: src/expr/__tests__/native-cost.test.ts > \"every size-driven cost refuses a hostile size before the native runs\""
+ },
+ {
   "id": "expr/template-coercion-uncharged",
   "file": "src/expr/interp.ts",
   "tags": [
@@ -464,6 +504,16 @@
   "find": "        coerce(ctx, value, node.i);\n",
   "replace": "",
   "note": "a template literal converts an array of any text weight through join. Verified by: src/expr/__tests__/native-cost.test.ts > \"an operator does not convert a value heavier than the budget\""
+ },
+ {
+  "id": "expr/uppercase-tiers-flattened",
+  "file": "src/expr/cost.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "has(WIDE, r) ? n : has(NON_ASCII, r) ? n / 4 : n / 16",
+  "replace": "n / 16",
+  "note": "uppercasing Latin-1 or wider text is charged as ASCII, though it measured up to 64 ns a character (review R1). Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the widest character of its receiver\""
  },
  {
   "id": "expr/weigh-elements-skipped",

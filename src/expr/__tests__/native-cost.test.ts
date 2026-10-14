@@ -55,9 +55,9 @@ const SHORT = 'q'.repeat(1000);
 const SORTABLE = Array.from({ length: 30_000 }, (_, i) => (i * 7919) % 30_000);
 const INNER = Array.from({ length: 1000 }, (_, i) => i);
 const NESTED = Array.from({ length: 1000 }, () => INNER);
-/** Scans are charged a sixteenth per element, so these are over 16x the budget. */
+/** Scans are charged a sixty-fourth to a sixteenth per element, so these are over 64x the budget. */
 const HUGE_ARR = new Array<number>(7_000_000);
-const HUGE_STR = 's'.repeat(7_000_000);
+const HUGE_STR = 's'.repeat(17_000_000);
 const WIDE = Array.from({ length: 150_000 }, () => 0);
 /** 20,000 own keys: a data-argument native reads 16 units per key. */
 const BIG_OBJ = Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, i]));
@@ -276,8 +276,8 @@ describe('the cost preflight, native by native (DR-16)', () => {
     'string.split': "bigStr.split('')",
     'string.startsWith': "hugeStr.startsWith('s')",
     'string.substring': 'hugeStr.substring(0, 1)',
-    'string.toLowerCase': 'bigStr.toLowerCase()',
-    'string.toUpperCase': 'bigStr.toUpperCase()',
+    'string.toLowerCase': 'hugeStr.toLowerCase()',
+    'string.toUpperCase': 'hugeStr.toUpperCase()',
     'string.trim': 'hugeStr.trim()',
     'string.trimEnd': 'hugeStr.trimEnd()',
     'string.trimStart': 'hugeStr.trimStart()',
@@ -389,6 +389,63 @@ describe('the cost preflight, native by native (DR-16)', () => {
     expect(outcome('1 != data', st)).toBe('FORMA_E_BUDGET');
   });
 
+  it('a text search over records is answered as on main', () => {
+    // Review R1: lowercasing ASCII costs about 1 ns a character, not a slot,
+    // so a client-side search over 9,000 records of 260 characters is answered,
+    // as on main, where the step budget is what limits it (about 9,060).
+    const words = 'alpha beta gamma delta epsilon zeta theta iota kappa lambda mu nu xi omicron pi rho';
+    const rows = Array.from({ length: 14_000 }, (_, i) => ({
+      title: `Record ${i} ${words}`.slice(0, 60).padEnd(60, '.'),
+      body: (`${i % 10 === 0 ? 'Needle ' : ''}${words} `.repeat(4)).slice(0, 200),
+    }));
+    const st = { rows: rows.slice(0, 9000), q: 'needle' };
+    const expected = st.rows.filter((r) => (r.title + ' ' + r.body).toLowerCase().includes('needle')).length;
+    expect(expected).toBe(900);
+    expect(outcome("rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q)).length", st))
+      .toEqual({ value: 900 });
+    // A per-record field at the size main answers (about 14,257 records).
+    expect(outcome('rows.filter(r => r.title.toLowerCase().includes(q)).length', { rows, q: 'record 1' }))
+      .toEqual({ value: rows.filter((r) => r.title.toLowerCase().includes('record 1')).length });
+    // Latin-1 text lowercases as cheaply as ASCII.
+    const latin = st.rows.map((r) => ({ title: r.title.replace(/a/g, 'à'), body: r.body.replace(/e/g, 'é') }));
+    expect(outcome("rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q)).length", { rows: latin, q: 'néédlé' }))
+      .toEqual({ value: 900 });
+    // Two-sided: wider text costs 34 ns a character to lowercase at worst, so
+    // the same search over it is refused, as N3 requires.
+    const greek = st.rows.map((r) => ({ title: r.title, body: r.body.replace(/a/g, 'α') }));
+    expect(outcome("rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q)).length", { rows: greek, q: 'needle' }))
+      .toBe('FORMA_E_BUDGET');
+  });
+
+  it('case mapping is charged by the widest character of its receiver', () => {
+    // Each tier, either side of the budget. Lowercase: Latin-1 1/32 a
+    // character, wider 1/2. Uppercase: ASCII 1/16, Latin-1 1/4, wider 1. Past
+    // 1,048,576 characters the result cap refuses the call AFTER it runs, with
+    // the same code; only the allocation budget refuses it before, which is
+    // what the message tells apart.
+    const refusedBefore = (src: string, s: string): boolean => {
+      try {
+        evaluateExpression(compileExpression(src), scopeOf({ s }));
+        return false;
+      } catch (e) {
+        expect(isExprError(e), String(e)).toBe(true);
+        return /allocation budget/.test((e as Error).message);
+      }
+    };
+    const cases: Array<[string, string, number, boolean]> = [
+      ['toLowerCase', 'a', 7_900_000, false], ['toLowerCase', 'a', 8_100_000, true],
+      ['toLowerCase', 'é', 7_900_000, false], ['toLowerCase', 'é', 8_100_000, true],
+      ['toLowerCase', 'Σ', 490_000, false], ['toLowerCase', 'Σ', 510_000, true],
+      ['toUpperCase', 'a', 3_900_000, false], ['toUpperCase', 'a', 4_100_000, true],
+      ['toUpperCase', 'é', 990_000, false], ['toUpperCase', 'é', 1_010_000, true],
+      ['toUpperCase', 'Σ', 245_000, false], ['toUpperCase', 'Σ', 255_000, true],
+    ];
+    const wrong = cases
+      .filter(([method, ch, n, refused]) => refusedBefore(`s.${method}().length`, ch.repeat(n)) !== refused)
+      .map(([method, ch, n, refused]) => `${method} of ${n} × ${ch} should ${refused ? '' : 'not '}be refused before the call`);
+    expect(wrong).toEqual([]);
+  });
+
   it('a $ in a replacement is charged only for what it can insert', () => {
     // `$`, `$$` and `$&` insert at most the replacement or the match; only
     // `` $` `` and `$'` can insert up to the whole receiver.
@@ -443,11 +500,14 @@ describe('the allocation budget (DR-16)', () => {
     expect(outcome('items.flatMap(x => [x, x])', { items: [1, 2, 3] })).toEqual({ value: [1, 1, 2, 2, 3, 3] });
   });
 
-  it('a handler cannot write an array index past the array limit', () => {
+  it('a handler cannot grow an array past the allocation budget', () => {
     // `items[4294967294] = 1` gave the array a length of 4,294,967,295, and
     // every/some/reduce skip holes without a callback, so no step was charged:
-    // the scan ran for minutes. The write is refused, and the scans have rows.
-    const scope = scopeOf({ items: [1, 2, 3], n: 0 });
+    // the scan ran for minutes. `items[999999] = 1` still handed `data-list` a
+    // million-element array. A write may not grow an array past what one
+    // evaluation may build.
+    const B = LIMITS.ALLOC_BUDGET;
+    const scope = scopeOf({ items: [1, 2, 3], n: 0, long: new Array(B + 50_000).fill(0) });
     const run = (src: string): unknown => {
       try {
         runHandler(compileHandler(src), scope);
@@ -457,19 +517,24 @@ describe('the allocation budget (DR-16)', () => {
       }
     };
     expect(run('items[4294967294] = 1; n = items.every((x) => true)')).toBe('FORMA_E_BUDGET');
-    expect(run(`items[${LIMITS.MAX_ARRAY_LENGTH}] = 1`)).toBe('FORMA_E_BUDGET');
+    expect(run('items[999999] = 1')).toBe('FORMA_E_BUDGET');
+    expect(run(`items[${B}] = 1`)).toBe('FORMA_E_BUDGET');
     expect(scope.state['items']).toEqual([1, 2, 3]);
     expect(scope.state['n']).toBe(0);
-    // Two-sided: an index below the limit is written, holes and all.
+    // Two-sided: an index below the budget is written, holes and all.
     expect(run('items[3] = 4; items[5] = 6; n = items.length')).toBe('answered');
     expect(scope.state['n']).toBe(6);
     expect(run('items[99999] = 7; n = items.some((x) => x === 7)')).toBe('answered');
     expect(scope.state['n']).toBe(true);
-    // At the limit's edge the write is allowed, and a scan of the million holes
-    // is charged a unit per index, so it is refused, at once.
-    expect(run(`items[${LIMITS.MAX_ARRAY_LENGTH - 1}] = 8; n = items.length`)).toBe('answered');
-    expect(scope.state['n']).toBe(LIMITS.MAX_ARRAY_LENGTH);
+    expect(run(`items[${B - 1}] = 8; n = items.length`)).toBe('answered');
+    expect(scope.state['n']).toBe(B);
+    // A scan of those 250,000 indices costs the whole budget, so it is refused.
     expect(run('n = items.some((x) => x === 8)')).toBe('FORMA_E_BUDGET');
+    // An array that is already longer may be written within its length, not past it.
+    expect(run(`long[${B + 49_999}] = 9`)).toBe('answered');
+    expect((scope.state['long'] as number[])[B + 49_999]).toBe(9);
+    expect(run(`long[${B + 50_000}] = 9`)).toBe('FORMA_E_BUDGET');
+    expect((scope.state['long'] as number[]).length).toBe(B + 50_000);
   });
 
   it('a DOM host method does not receive an argument heavier than the budget', () => {

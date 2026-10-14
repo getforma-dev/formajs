@@ -7,37 +7,62 @@ All notable changes to this project will be documented in this file.
 ### Security
 
 - **A built-in call in an expression is charged before it runs** (FORMA-004,
-  DR-16). Every allowlisted native is charged, against one budget per
-  evaluation (`LIMITS.ALLOC_BUDGET`, 250,000 units: array slots and string
-  characters produced or converted, a sixteenth for those only scanned), the
-  weight of its arguments as text (or, for the natives that read arguments as
-  data, such as `Object.keys`, `Array.from` and `concat`, their element count)
-  and then its row in `src/expr/cost.ts`, and is refused with `FORMA_E_BUDGET`
-  before it runs once the evaluation would pass the budget. An operator that
-  converts an array or object to text (`'' + list`, `` `${list}` ``,
-  `list < 1`, `x += list`, a write to `$el`) is charged the same way; `x != null`
-  and object-to-object `==` convert nothing and are not. A handler can no longer
-  write an array index at or past 1,000,000, which made a sparse array whose
-  `every`/`some`/`reduce` visited four billion holes. `Array.from({length:
-  12000000})` used to build a 139 MB array in a 300 ms task and only then be
-  refused; it now costs nothing. The budget is sized from the tail of
-  measurements at 4x CPU throttling (the slowest run of the largest call any row
-  allows, plus a full step budget, under 50 ms).
-  The bound is **per evaluation** (one binding or one handler run), not per
-  task: a widget with many bindings can spend one budget in each. A per-task
-  (per-widget) budget is a design change, left to a follow-up ticket.
-  String `+`, template literals, and reads of a long concatenated string are not
-  charged yet (FORMA-028; see SECURITY.md, "Termination and budgets").
-  Behaviour change, as DR-16 accepts: the cap may refuse, with
-  `FORMA_E_BUDGET`, calls 2.0.1 answered, such as a default `sort()` of more
-  than about 6,500 numbers or strings (counting everything else the evaluation
-  does), `Object.keys`, `values` or `entries` of a string or object over about
-  15,600 characters or keys, `every`, `some` or `reduce` over more than 250,000
-  elements, or a built-in that produces a string or array longer than 250,000
-  (the 1 MiB and 1,000,000-element result caps still apply to `+` and template
-  literals). `padStart`/`padEnd` with a negative or non-numeric length now
-  return the string unpadded, as JavaScript does, instead of `FORMA_E_BUDGET`.
-  Rollback: pin 2.0.1.
+  DR-16). `Array.from({length: 12000000})` used to build a 139 MB array in a
+  300 ms task and only then be refused; it now costs nothing. Every allowlisted
+  native is charged, against one budget per evaluation (`LIMITS.ALLOC_BUDGET`,
+  250,000 units, one unit being about an `Array.from` slot), the weight of its
+  arguments as text (or, for the natives that read arguments as data, such as
+  `Object.keys`, `Array.from` and `concat`, their element count) and then its
+  row in `src/expr/cost.ts`, and is refused with `FORMA_E_BUDGET` before it runs
+  once the evaluation would pass the budget. Rows that copy or produce cost a
+  unit per element; string rows that amplify nothing are weighted by their
+  measured cost per character, by the widest character of the text: lowercasing
+  Latin-1 costs 1/32 of a unit a character and wider text 1/2, uppercasing
+  ASCII 1/16, Latin-1 1/4 and wider text 1, a string search 1/32, `slice` 1/64.
+  An operator that converts an array or object to text (`'' + list`,
+  `` `${list}` ``, `list < 1`, `x += list`, a write to `$el`) is charged the
+  same way; `x != null` and object-to-object `==` convert nothing and are not.
+  The budget is sized from the tail of measurements at 4x CPU throttling with
+  garbage collection counted (`scripts/measure-alloc-budget.mjs`): the slowest
+  of 41 runs of the largest call any row allows took 39.2 ms (a text search
+  over 9,000 records), and an evaluation that spends the budget and then
+  exhausts the step budget 28.7 ms. The bound is **per evaluation** (one
+  binding or one handler run), not per task: a widget with many bindings can
+  spend one budget in each; a per-task (per-widget) budget is a design change,
+  left to a follow-up ticket. Not yet bounded (FORMA-028; SECURITY.md,
+  "Termination and budgets"): string `+`, template literals, reads of a long
+  concatenated string, and a string search whose pattern's first characters
+  fill the text (`'ab'` in `'aaaa…'`, 39 ns a character where ordinary text
+  takes under 1).
+- **Behaviour change: what one binding or handler can no longer compute.** As
+  DR-16 accepts, the budget refuses, with `FORMA_E_BUDGET`, some evaluations
+  2.0.2 answered. Measured with this release's engine and 2.0.2's on the same
+  data:
+  - **String work per record in a callback counts toward the one budget.** A
+    text filter that lowercases about 260 characters per record,
+    `rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q))`,
+    is answered as in 2.0.2 for ASCII and Latin-1 text (up to about 9,000
+    records, where the step budget stops both releases). Over Greek, Cyrillic,
+    Turkish or other text wider than Latin-1, whose case mapping measured up to
+    0.6 of a slot a character, it is refused past about 1,700 records, where
+    2.0.2 answered about 9,000.
+  - A default `sort()` of more than about 6,400 strings or numbers, counting
+    everything else the evaluation does (2.0.2 had no limit).
+  - `rows.map(r => r.name).join(', ')` past about 18,000 rows (2.0.2: about
+    33,000, where the step budget stops it).
+  - `Object.keys`, `values` or `entries` of more than about 15,600 keys or
+    characters.
+  - `every`, `some` or `reduce` over more than 250,000 elements, even when the
+    callback would stop at the first.
+  - A built-in that produces a string or array longer than 250,000, such as
+    `Array.from({length: 300000})` (the 1 MiB and 1,000,000-element result caps
+    still apply to `+` and template literals).
+  - A handler write that would grow an array past 250,000 elements, such as
+    `items[999999] = x`.
+  - `padStart` / `padEnd` with a negative or non-numeric length now return the
+    string unpadded, as JavaScript does, instead of `FORMA_E_BUDGET`.
+
+  Rollback: pin 2.0.2.
 - **Island props are stripped of `__proto__`, `constructor` and `prototype` at
   every depth while they are parsed** (FORMA-004, DR-21), inline and shared,
   with no opt-out. 2.0.1 stripped the top level only, so a nested key reached
@@ -51,7 +76,7 @@ All notable changes to this project will be documented in this file.
   now with the coded message
   `FORMA_E_ISLAND_PROPS` logged in every build (2.0.1 threw an uncoded
   `TypeError`, logged in development builds only). An array reaches the island,
-  as before, stripped at every depth.
+  as before, stripped at every depth. Rollback: pin 2.0.2.
 
 ## [2.0.2] - 2026-10-14
 

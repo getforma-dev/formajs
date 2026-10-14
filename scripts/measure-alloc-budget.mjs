@@ -5,18 +5,28 @@
  * CPU throttling, so the budget can be re-derived on any machine.
  *
  * DR-16 sets the budget from N3, a 50 ms long task at 4x CPU slowdown. The
- * budget is sized from the TAIL, not the median: the slowest run of the
- * largest call any cost row allows, plus the slowest run of a full step budget
- * (the interpreter work one evaluation may add), must stay under 50 ms.
+ * budget is sized from the TAIL, not the median, with garbage collection
+ * counted: the slowest run of the largest call any cost row allows, and the
+ * slowest run of an evaluation that spends the budget and then exhausts the
+ * step budget (the interpreter work one evaluation may add), must each stay
+ * under 50 ms.
  *
  * - Part 1 times `Array.from({length: n})`, the native alone, at candidate sizes.
  * - Part 2 times, through the built runtime, the largest call each heavy cost
  *   row allows at a cap (`--cap`, default the budget in ast.ts). A case the
- *   budget refuses prints REFUSED: it is sized wrong.
+ *   budget refuses prints REFUSED: it is sized wrong. A RESIDUAL row is a
+ *   content-dependent worst case the per-character weights do not bound
+ *   (SECURITY.md, FORMA-028); it is printed, and left out of the sum.
  * - Part 3 times one evaluation that exhausts the 100,000-step budget.
+ * - `--chars` instead prints the per-character cost of the string rows, by
+ *   the widest character of the text, against one `Array.from` slot: the table
+ *   the weights in cost.ts come from.
+ *
+ * Garbage collection is counted: the heap is whatever earlier runs left, as on
+ * a page. `--gc` forces a collection before each timed run instead.
  *
  * Not a test and not run in CI: it reads wall-clock time. Usage:
- *   npm run build && node scripts/measure-alloc-budget.mjs [--rate=4] [--runs=41] [--cap=N]
+ *   npm run build && node scripts/measure-alloc-budget.mjs [--rate=4] [--runs=41] [--cap=N] [--gc] [--chars]
  */
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -27,10 +37,9 @@ const BUDGET = Number(/ALLOC_BUDGET: ([\d_e.]+)/.exec(readFileSync(resolve(proce
 const RATE = flag('rate', 4);
 const RUNS = flag('runs', 41);
 const CAP = flag('cap', BUDGET);
+const FORCE_GC = process.argv.includes('--gc');
 const runtime = readFileSync(resolve(process.cwd(), 'dist/formajs-runtime.global.js'), 'utf8');
 
-// gc() before each timed run, so garbage left by building the next run's data
-// is not counted against the call under test.
 const browser = await chromium.launch({ args: ['--js-flags=--expose-gc'] });
 const page = await browser.newPage();
 await page.setContent('<!DOCTYPE html><html><body></body></html>');
@@ -44,20 +53,63 @@ const stats = (t) => {
   return `${at(0.5).toFixed(1).padStart(6)} / ${at(0.95).toFixed(1).padStart(6)} / ${s[s.length - 1].toFixed(1).padStart(6)} ms`;
 };
 
-console.log(`${await browser.version()}, CPU throttling ${RATE}x, ${RUNS} runs: median / p95 / max; cap ${CAP} (engine budget ${BUDGET})\n`);
+console.log(`${await browser.version()}, CPU throttling ${RATE}x, ${RUNS} runs: median / p95 / max; cap ${CAP} (engine budget ${BUDGET}); ${FORCE_GC ? 'gc() before each run' : 'garbage collection counted'}\n`);
+
+// Text whose characters cost the most to case-map, per tier (measured).
+const TEXT = {
+  ascii: 'The quick brown fox jumps over the lazy dog 0123456789 ',
+  latinLower: 'ßßßß straße ',
+  latinUpper: 'ÿµÿµ ',
+  wideLower: 'İİİ ııı ',
+  wideUpper: 'ΐΰΐΰ ',
+};
+
+if (process.argv.includes('--chars')) {
+  const table = await page.evaluate(({ text, runs }) => {
+    const N = 2_000_000;
+    const max = (f) => {
+      let worst = 0;
+      for (let r = 0; r < runs; r++) {
+        const start = performance.now();
+        f();
+        worst = Math.max(worst, performance.now() - start);
+      }
+      return (worst * 1e6) / N;
+    };
+    const flat = (unit) => { const s = unit.repeat(Math.ceil(N / unit.length)).slice(0, N); s.charCodeAt(0); return s; };
+    const slot = (max(() => Array.from({ length: N / 8 })) * 8);
+    const rows = [];
+    for (const [tier, unit] of Object.entries(text)) {
+      const s = flat(unit);
+      rows.push([`toLowerCase, ${tier}`, max(() => s.toLowerCase())]);
+      rows.push([`toUpperCase, ${tier}`, max(() => s.toUpperCase())]);
+    }
+    const a = flat('a');
+    const ascii = flat(text.ascii);
+    rows.push(['includes, ordinary text', max(() => ascii.includes('needle'))]);
+    rows.push(["includes, 'ab' in 'aaaa…' (adversarial)", max(() => a.includes('ab'))]);
+    rows.push(['trim, all whitespace', max(() => flat(' ').trim())]);
+    rows.push(['slice, concatenated receiver', max(() => (ascii.slice(0, N / 2) + ascii.slice(N / 2)).slice(1, 5))]);
+    return { slot, rows };
+  }, { text: TEXT, runs: RUNS });
+  console.log(`Per-character cost, max of ${RUNS} runs over 2,000,000 characters; one Array.from slot = ${table.slot.toFixed(1)} ns`);
+  for (const [label, ns] of table.rows) console.log(`  ${label.padEnd(44)} ${ns.toFixed(1).padStart(6)} ns = ${(ns / table.slot).toFixed(3)} slot`);
+  await browser.close();
+  process.exit(0);
+}
 
 console.log('Part 1. Array.from({length: n}), the native alone');
 for (const n of [200_000, 250_000, 300_000, 350_000, 400_000]) {
-  const t = await page.evaluate(({ n, runs }) => {
+  const t = await page.evaluate(({ n, runs, forceGc }) => {
     const out = [];
     for (let r = 0; r < runs; r++) {
-      window.gc();
+      if (forceGc) window.gc();
       const start = performance.now();
       Array.from({ length: n });
       out.push(performance.now() - start);
     }
     return out;
-  }, { n, runs: RUNS });
+  }, { n, runs: RUNS, forceGc: FORCE_GC });
   console.log(`  n = ${String(n).padStart(7)}  ${stats(t)}`);
 }
 
@@ -80,16 +132,41 @@ const cases = [
   ['Object.entries (object)', 'Object.entries(v).length', 'keyed', Math.floor(CAP / 16) - 1],
   ['Object.keys (object)', 'Object.keys(v).length', 'keyed', Math.floor(CAP / 16) - 1],
   ['every (sparse array)', 'v.every(x => x)', 'holes', CAP - 2],
-  ["split(',')", "v.split(',').length", 'commas', Math.floor((CAP - 2) / 2) - 1],
+  ["split(',')", "v.split(',').length", 'commas', Math.floor((((CAP - 2) * 32) / 33 - 1) / 2)],
   ["replaceAll('c', 'yy')", "v.replaceAll('c', 'yy').length", 'chars', Math.floor((CAP - 4) / 2)],
   ['flat (pairs)', 'v.flat().length', 'pairs', Math.floor(CAP / 3) - 1],
   ['Array.from (string)', 'Array.from(v).length', 'chars', CAP - 1],
   ['concat (arrays)', 'v.concat(v).length', 'integers', Math.floor(CAP / 3) - 1],
+  ['toLowerCase (ASCII)', 'v.toLowerCase().length', 'ascii', 32 * (CAP - 1)],
+  ['toLowerCase (Latin-1, ß)', 'v.toLowerCase().length', 'latinLower', 32 * (CAP - 1)],
+  ['toLowerCase (wider, İ ı)', 'v.toLowerCase().length', 'wideLower', 2 * (CAP - 1)],
+  ['toUpperCase (ASCII)', 'v.toUpperCase().length', 'ascii', 16 * (CAP - 1)],
+  ['toUpperCase (Latin-1, ÿ µ)', 'v.toUpperCase().length', 'latinUpper', 4 * (CAP - 1)],
+  ['toUpperCase (wider, ΐ)', 'v.toUpperCase().length', 'wideUpper', CAP - 1],
+  ["includes('needle'), ordinary text", "v.includes('needle')", 'ascii', 32 * (CAP - 7)],
+  ['trim (all whitespace)', 'v.trim().length', 'spaces', 16 * (CAP - 1)],
+  ['slice (concatenated receiver)', 'v.slice(1, 5)', 'rope', 64 * (CAP - 7)],
+  ['text search, 9,000 records of 260', "v.filter(r => (r.title + ' ' + r.body).toLowerCase().includes('needle')).length", 'records', 9000],
+  ["RESIDUAL includes('ab') in 'aaaa…'", "v.includes('ab')", 'as', 32 * (CAP - 3)],
 ];
 
 async function timeBinding(expr, builder, n) {
-  return page.evaluate(({ expr, builder, n, runs }) => {
+  return page.evaluate(({ expr, builder, n, runs, samples, forceGc }) => {
+    const flat = (unit, k) => { const s = unit.repeat(Math.ceil(k / unit.length) || 1).slice(0, k); s.charCodeAt(0); return s; };
+    const words = 'alpha beta gamma delta epsilon zeta theta iota kappa lambda mu nu xi omicron pi rho ';
     const build = {
+      ascii: (k) => flat(samples.ascii, k),
+      latinLower: (k) => flat(samples.latinLower, k),
+      latinUpper: (k) => flat(samples.latinUpper, k),
+      wideLower: (k) => flat(samples.wideLower, k),
+      wideUpper: (k) => flat(samples.wideUpper, k),
+      spaces: (k) => flat(' ', k),
+      as: (k) => flat('a', k),
+      rope: (k) => flat(samples.ascii, k / 2) + flat(samples.ascii, k / 2),
+      records: (k) => Array.from({ length: k }, (_, i) => ({
+        title: `Record ${i} ${words}`.slice(0, 60),
+        body: `${i % 10 ? '' : 'Needle '}${words.repeat(3)}`.slice(0, 200),
+      })),
       none: () => 1,
       integers: (k) => Array.from({ length: k }, (_, i) => i),
       doubles: (k) => Array.from({ length: k }, () => Math.random()),
@@ -98,6 +175,7 @@ async function timeBinding(expr, builder, n) {
       keyed: (k) => Object.fromEntries(Array.from({ length: k }, (_, i) => [`k${i}`, i])),
       holes: (k) => new Array(k),
       pairs: (k) => Array.from({ length: k }, (_, i) => [i, i]),
+      pairsAndIntegers: (k) => Array.from({ length: k }, (_, i) => [i, i]),
     }[builder];
     const times = [];
     let text = '';
@@ -107,14 +185,17 @@ async function timeBinding(expr, builder, n) {
     for (let r = 0; r < runs; r++) {
       window.FormaRuntime.clearDiagnostics();
       const root = document.createElement('div');
-      root.setAttribute('data-forma-state', '{"v": null}');
+      root.setAttribute('data-forma-state', '{"v": null, "w": null}');
       const span = document.createElement('span');
       span.setAttribute('data-text', `{v === null ? '' : ${expr}}`);
       root.append(span);
       document.body.append(root);
       window.FormaRuntime.mount(root);
       const value = build(n);
-      window.gc();
+      if (builder === 'pairsAndIntegers') {
+        window.FormaRuntime.setScopeValue(root, 'w', Array.from({ length: 99_999 }, (_, i) => i));
+      }
+      if (forceGc) window.gc();
       const start = performance.now();
       window.FormaRuntime.setScopeValue(root, 'v', value);
       times.push(performance.now() - start);
@@ -124,7 +205,7 @@ async function timeBinding(expr, builder, n) {
     }
     window.removeEventListener('formajs:diagnostic', onDiagnostic);
     return { times, text, refused };
-  }, { expr, builder, n, runs: RUNS });
+  }, { expr, builder, n, runs: RUNS, samples: TEXT, forceGc: FORCE_GC });
 }
 
 console.log(`\nPart 2. The largest call each row allows at a cap of ${CAP}, through the runtime`);
@@ -134,7 +215,7 @@ for (const [label, expr, builder, n] of cases) {
   const result = await timeBinding(expr, builder, n);
   const tail = Math.max(...result.times);
   const byBudget = /allocation budget/.test(result.refused);
-  if (!byBudget && tail > worst) {
+  if (!byBudget && !label.startsWith('RESIDUAL') && tail > worst) {
     worst = tail;
     worstLabel = label;
   }
@@ -152,5 +233,15 @@ const steps = await timeBinding('v.some(x => x < 0)', 'integers', 99_999);
 const stepTail = Math.max(...steps.times);
 console.log(`  some() callbacks to the step budget  ${stats(steps.times)}  ${steps.refused || steps.text}`);
 
-console.log(`\nslowest row max (${worstLabel}) + slowest step-budget run = ${worst.toFixed(1)} + ${stepTail.toFixed(1)} = ${(worst + stepTail).toFixed(1)} ms; N3 asks for under 50`);
+// One evaluation that spends what the budget leaves after the callbacks'
+// own row (some() charges its 99,999 elements) on the costliest row per unit,
+// then exhausts the step budget: the two cannot both be at their maximum.
+const flatPairs = Math.floor((CAP - 99_999 - 1) / 3) - 1;
+const both = await timeBinding(
+  `v.flat().length + (w.some(x => x < 0) ? 1 : 0)`, 'pairsAndIntegers', flatPairs,
+);
+const bothTail = Math.max(...both.times);
+console.log(`  flat() of ${flatPairs} pairs, then some() to the step budget  ${stats(both.times)}  ${both.refused || both.text}`);
+
+console.log(`\nslowest row max (${worstLabel}) = ${worst.toFixed(1)} ms; slowest run at the budget with the step budget exhausted = ${bothTail.toFixed(1)} ms (a full step budget alone: ${stepTail.toFixed(1)} ms); N3 asks for under 50`);
 await browser.close();

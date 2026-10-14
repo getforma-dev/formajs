@@ -771,11 +771,15 @@ function writeMember(recv: unknown, key: string, value: unknown, at: number): vo
     if (kind === 'array' && key === 'length') {
       throw exprError('FORMA_E_ASSIGN_DENIED', 'array length is not writable', at);
     }
-    // An index at or past the array limit would give the array that length,
-    // sparse, and a scan of it would visit every hole.
-    // Verified by: src/expr/__tests__/native-cost.test.ts > "a handler cannot write an array index past the array limit"
-    if (kind === 'array' && /^\d+$/.test(key) && Number(key) >= LIMITS.MAX_ARRAY_LENGTH) {
-      throw exprError('FORMA_E_BUDGET', `array index ${key} is past the ${LIMITS.MAX_ARRAY_LENGTH}-element limit`, at);
+    // An index past the end gives the array that length, sparse, and whatever
+    // iterates it next (a scan, `data-list`) visits every hole. A write may
+    // not grow an array past what one evaluation may build.
+    // Verified by: src/expr/__tests__/native-cost.test.ts > "a handler cannot grow an array past the allocation budget"
+    if (
+      kind === 'array' && /^\d+$/.test(key) &&
+      Number(key) >= LIMITS.ALLOC_BUDGET && Number(key) >= (recv as unknown[]).length
+    ) {
+      throw exprError('FORMA_E_BUDGET', `array index ${key} would grow the array past ${LIMITS.ALLOC_BUDGET} elements`, at);
     }
     const desc = Object.getOwnPropertyDescriptor(recv as object, key);
     if (desc && !Object.hasOwn(desc, 'value')) {

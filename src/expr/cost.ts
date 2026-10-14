@@ -26,9 +26,16 @@ const keysOf = Object.keys;
 const valuesOf = Object.values;
 const log2 = Math.log2;
 const max = Math.max;
+const min = Math.min;
 const toNumber = Number;
 const toText = String;
+const exec = RegExp.prototype.exec;
 const NONE: unknown[] = [];
+
+/** A character outside Latin-1 (the string is two bytes per character), or outside ASCII. */
+const WIDE = /[^\x00-\xff]/;
+const NON_ASCII = /[^\x00-\x7f]/;
+const has = (pattern: RegExp, v: unknown): boolean => typeof v === 'string' && Reflect.apply(exec, pattern, [v]) !== null;
 
 type Cost = (recv: unknown, args: unknown[], room: number) => number;
 
@@ -40,15 +47,16 @@ const count = (v: unknown): number => max(0, toNumber(v) || 0);
 
 /**
  * An argument read as data, not text: a string's or array's length, an
- * object's enumerable keys (counted without listing them, and only up to
- * `room`), or 1.
+ * object's enumerable keys, or 1. `for...in` has the engine list the keys
+ * before the first iteration, so this saves the counting past `room`, not the
+ * listing; the object already exists, so the listing is bounded by its size.
  */
 const size = (v: unknown, room: number): number => {
   if (typeof v === 'string' || isArray(v)) return v.length;
   let n = 0;
   if (typeof v === 'object' && v) {
     for (const key in v) {
-      if (key && ++n > room) break;
+      if (++n > room) break;
     }
   }
   return n || 1;
@@ -153,6 +161,19 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  * - `Object.keys` / `values` / `entries` charge 16 per element or key: listing
  *   an object's keys, or a string's index keys, measured several array slots
  *   per key.
+ * - The string rows that amplify nothing (their output is at most a small
+ *   constant times the receiver) are weighted by their measured cost per
+ *   character against an `Array.from` slot (about 105 ns at 4x CPU
+ *   throttling), worst case per tier, by `node scripts/measure-alloc-budget.mjs
+ *   --chars`. Case mapping depends on the widest character: lowercasing Latin-1
+ *   measured at most 2.2 ns a character and anything wider 34 ns (Turkish
+ *   `İ`); uppercasing ASCII 1.3 ns, Latin-1 19 ns (`ÿ` widens), and wider
+ *   64 ns (`ΐ` becomes three characters). The tier test is itself a scan, so
+ *   it is skipped when even the cheapest tier is past `room`.
+ * - `includes`, `indexOf` and `lastIndexOf` on a string are weighted for
+ *   ordinary text, under 1 ns a character. A pattern whose first characters
+ *   fill the receiver (`'ab'` in `'aaaa…'`) measured 39 ns: SECURITY.md lists
+ *   it with the other content-dependent costs (FORMA-028).
  */
 export const COSTS: Readonly<Record<string, Cost>> = Object.create(null) as Record<string, Cost>;
 
@@ -161,16 +182,22 @@ function rows(cost: Cost, names: string): void {
 }
 
 // The result is a copy of the receiver, or no longer than it.
-rows(
-  (r) => len(r),
-  'array.filter array.flatMap array.map array.reverse array.slice string.concat string.toLowerCase string.toUpperCase',
-);
-// The receiver is scanned or shared, not copied: a sixteenth per element.
-rows(
-  (r) => len(r) / 16,
-  'string.endsWith string.includes string.indexOf ' +
-    'string.lastIndexOf string.slice string.startsWith string.substring string.trim string.trimEnd string.trimStart',
-);
+rows((r) => len(r), 'array.filter array.flatMap array.map array.reverse array.slice string.concat');
+// Shared or sliced, or read only as far as the argument: flattening a
+// concatenated receiver measured about 1 ns a character.
+rows((r) => len(r) / 64, 'string.endsWith string.slice string.startsWith string.substring');
+// Searched: ordinary text measured under 1 ns a character.
+rows((r) => len(r) / 32, 'string.includes string.indexOf string.lastIndexOf');
+// Whitespace runs measured 3.5 ns a character.
+rows((r) => len(r) / 16, 'string.trim string.trimEnd string.trimStart');
+rows((r, _, room) => {
+  const n = len(r);
+  return n / 32 > room || !has(WIDE, r) ? n / 32 : n / 2;
+}, 'string.toLowerCase');
+rows((r, _, room) => {
+  const n = len(r);
+  return n / 16 > room ? n / 16 : has(WIDE, r) ? n : has(NON_ASCII, r) ? n / 4 : n / 16;
+}, 'string.toUpperCase');
 rows((r, a, room) => len(r) / 16 + weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');
 // Every index is visited, holes included.
 rows((r) => len(r), 'array.every array.reduce array.some');
@@ -196,7 +223,13 @@ rows((r, a, room) => {
 rows((r, a) => len(r) * count(a[0]), 'string.repeat');
 rows((r, a) => len(r) + grow(r, a), 'string.replace');
 rows((r, a) => len(r) + (len(r) + 1) * grow(r, a), 'string.replaceAll');
-rows((r) => len(r) + 1, 'string.split');
+// Scanned for the separator, then one slot per piece, at most `limit` pieces.
+rows((r, a) => {
+  const n = len(r);
+  const by = a[0] === undefined ? n : toText(a[0]).length;
+  const pieces = (by ? n / by : n) + 1;
+  return n / 32 + (a[1] === undefined ? pieces : min(pieces, toNumber(a[1]) >>> 0));
+}, 'string.split');
 rows((_, a, room) => {
   const x = a[0];
   if (typeof x === 'string' || isArray(x)) return len(x);

@@ -48,14 +48,16 @@ export type Stmt =
  * `ALLOC_BUDGET` is the units (array slots and string characters, see cost.ts)
  * that the native calls of ONE evaluation may cost, checked before each call
  * (DR-16). It is sized to N3's 50 ms long task from the TAIL of the
- * measurements: in Chromium 151 at 4x CPU throttling on 2026-10-14, the
- * slowest of 41 runs of the largest call any row allows at 250,000 took
- * 32.6 ms (`flat`), and an evaluation that exhausts the step budget 12.5 ms:
- * 45.1 ms together. At 300,000 the same sum was 52.1 ms.
- * `node scripts/measure-alloc-budget.mjs --cap=N` re-measures it. The budget
- * is per evaluation (one binding or one handler run), not per task. Comments
- * inside this object literal would ship in the runtime bundles, so they live
- * here.
+ * measurements, with garbage collection counted: in Chromium 151 at 4x CPU
+ * throttling on 2026-10-14, the slowest of 41 runs of the largest call any row
+ * allows at 250,000 took 39.2 ms (a text search over 9,000 records), and of an
+ * evaluation that spends the budget and then exhausts the step budget 28.7 ms
+ * (34.8 and 19.9 ms with a collection forced before each run). In the first
+ * sizing, at 300,000, the slowest row plus a full step budget came to 52.1 ms.
+ * `node scripts/measure-alloc-budget.mjs [--cap=N] [--gc] [--chars]`
+ * re-measures it. The budget is per evaluation (one binding or one handler
+ * run), not per task. Comments inside this object literal would ship in the
+ * runtime bundles, so they live here.
  */
 export const LIMITS = Object.freeze({
   MAX_SOURCE_LENGTH: 4096,
