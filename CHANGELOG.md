@@ -805,7 +805,12 @@ All notable changes to this project will be documented in this file.
   and the heap not grown are its deterministic checks; `e2e/sr33.spec.ts`
   keeps the 50 ms in three browsers), and string-growth's 200 ms ceiling
   becomes a count: a refused loop stops before a tenth of the interpreter
-  steps it takes over short strings. The published package is unchanged.
+  steps it takes over short strings. `e2e/expr-cost.spec.ts` mounts each
+  widget on a fresh task, as `e2e/sr33.spec.ts` does: in WebKit two evaluates
+  could run before the runtime's task timer, so the second widget counted on
+  from the first one's spending and its refusal waited for a retry instead of
+  being reported (three WebKit failures of "each round-2 rope case is refused
+  before the long task"). The published package is unchanged.
 
 ## [2.0.3] - 2026-10-14
 

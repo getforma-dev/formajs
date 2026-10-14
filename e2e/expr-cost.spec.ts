@@ -58,6 +58,13 @@ function timeTasks(): void {
 interface Mounted { mountMs: number; texts: string[]; codes: string[] }
 
 async function mountWidget(page: import('@playwright/test').Page, html: string, state = '{}'): Promise<Mounted> {
+  // A fresh task for the mount, as sr33.spec.ts starts one for each case. The
+  // runtime zeroes its task meter on a timer the previous mount armed; two
+  // evaluates in a row can run before it (WebKit did, in CI: FORMA-179), and
+  // the second widget then counts on from the first one's spending, so its
+  // refusal waits for a retry instead of being reported. Timers of equal delay
+  // run in order, so after this one the runtime's has run.
+  await page.evaluate(() => new Promise((r) => setTimeout(r, 0)));
   return page.evaluate(({ html, state }) => {
     const w = window as unknown as { FormaRuntime: any; __root?: Element };
     w.__root?.remove();
