@@ -82,6 +82,7 @@
  *   $refetch registry                         imperative data-fetch triggers
  *   Debug logger                              dbg(), window.__FORMA_DEBUG
  *   Configuration & diagnostics               RuntimeConfig, RuntimeDiagnostic
+ *   Mount boundaries                          tiers, grants, ownerOf, fetchVerdict
  *   Performance utilities                     yieldToMain, applyContainmentHints
  *   Pre-compiled regexes                      hot-path RegExp literals
  *   Per-scope evaluator cache                 compiled expression/handler reuse
@@ -99,7 +100,8 @@
  *   MutationObserver                          auto-discovery of new scopes
  *   Main init                                 initRuntime/destroyRuntime, mount/unmount
  *   DevTools API — State Inspector            getScopes, setScopeValue, resetScope
- *   Reconciler                                createReconciler bridge, exports
+ *   Reconciler                                createReconciler bridge (tierless, deprecated)
+ *   Tiered mount                              mountMarkup: roots handed in, grants, exports
  *
  * Verified by: src/__tests__/docs-truth.test.ts > "the runtime file map names every section marker, in order"
  *
@@ -158,11 +160,12 @@
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
-import { trustedHtml, warnRuntimeSrcdoc, type TrustedHtml } from './dom/trusted-html';
+import { isTrustedHtml, trustedHtml, warnRuntimeSrcdoc, type TrustedHtml } from './dom/trusted-html';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 import {
   clearExpressionCache,
   compileExpression,
+  exprError,
   compileHandler,
   evaluateExpression,
   GROW,
@@ -170,14 +173,30 @@ import {
   hostObject,
   isExprError,
   isHost,
+  LIMITS,
   runHandler,
   running,
   setStepBudget,
   weigh,
+  type Bound,
+  type ExprGrant,
   type FormaExprError,
   type Meter,
   type TextCost,
 } from './expr';
+import { sourceIsDev, warnDeprecated } from './deprecated';
+
+/**
+ * The build flag (FORMA-169). What only a development build does here (the
+ * report of the grants a mount used, `reconcile()`'s deprecation) is guarded
+ * by the condition `(typeof __FORMA_DEV_BUILD__ === 'boolean' &&
+ * __FORMA_DEV_BUILD__) || (typeof __FORMA_DEV_BUILD__ !== 'boolean' &&
+ * sourceIsDev())`, written out at each site: every build folds it there to a
+ * literal, chunked or not, where a `const` holding it is not inlined into the
+ * IIFE. Run from source, it follows NODE_ENV, as `__DEV__` does.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a production build carries neither the grant report nor reconcile's warning"
+ */
+declare const __FORMA_DEV_BUILD__: boolean | undefined;
 
 // ── Attribute safety & scope ──
 
@@ -206,6 +225,10 @@ type Setter = (v: unknown) => void;
 interface Scope {
   getters: Record<string, Getter>;
   setters: Record<string, Setter>;
+  /** The tiered mount this scope was bound under; absent for a tierless one. */
+  mount?: MountCtx;
+  /** The mount's step budget, read by the interpreter (`ScopeLike.budget`). */
+  budget?: number;
 }
 
 // ── $refetch registry ──
@@ -215,13 +238,19 @@ const _refetchRegistry = new Map<string, () => void>();
 
 /**
  * How long a `data-fetch` request may take, in ms, before it is aborted into
- * its `error:` target: `createFetch`'s default (decision brief L-46). A grant
- * that shortens it comes with the tiered mount (FORMA-128).
+ * its `error:` target: `createFetch`'s default (decision brief L-46). A tiered
+ * mount's `fetch` grant may shorten it, never lengthen it (FORMA-128).
  */
 const FETCH_TIMEOUT_MS = 30_000;
 
-function $refetch(id: string): void {
-  const fn = _refetchRegistry.get(id);
+/**
+ * Run the `data-fetch` registered as `id`: the page's registry for a tierless
+ * scope, the mount's own for a tiered one, so a widget reaches only its own
+ * fetches and nothing else reaches them.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "$refetch reaches only the fetches of its own mount"
+ */
+function $refetch(id: string, registry: Map<string, () => void> = _refetchRegistry): void {
+  const fn = registry.get(id);
   if (fn) {
     fn();
   } else if (_debug) {
@@ -235,7 +264,7 @@ function createChildScope(parent: Scope, locals: Record<string, unknown>): Scope
     localGetters[key] = () => locals[key];
   }
 
-  return {
+  const child: Scope = {
     getters: new Proxy(parent.getters, {
       get(target, prop: string) {
         if (prop in localGetters) return localGetters[prop];
@@ -247,6 +276,11 @@ function createChildScope(parent: Scope, locals: Record<string, unknown>): Scope
     }),
     setters: parent.setters,
   };
+  if (parent.mount) {
+    child.mount = parent.mount;
+    child.budget = parent.budget;
+  }
+  return child;
 }
 
 // ── Debug logger — enable via FormaRuntime.debug = true or window.__FORMA_DEBUG = true ──
@@ -269,7 +303,7 @@ interface RuntimeConfig {
 }
 
 interface RuntimeDiagnostic {
-  kind: 'handler-unsupported' | 'expression-unsupported';
+  kind: 'handler-unsupported' | 'expression-unsupported' | 'grant-denied';
   expr: string;
   reason: string;
   /** Stable machine-readable cause, e.g. `FORMA_E_METHOD_DENIED`. */
@@ -277,6 +311,11 @@ interface RuntimeDiagnostic {
   count: number;
   firstSeenAt: number;
   lastSeenAt: number;
+  /** Under a tiered mount (FORMA-128): the mount's name and tier. */
+  mount?: string;
+  tier?: MountTier;
+  /** For `grant-denied`: the grant the mount did not give. */
+  grant?: 'fetch' | ExprGrant;
 }
 
 const diagnostics = new Map<string, RuntimeDiagnostic>();
@@ -354,15 +393,28 @@ function readRuntimeConfig(): RuntimeConfig {
   return config;
 }
 
+/**
+ * Record a diagnostic, and the first time it is seen log it and dispatch it as
+ * `formajs:diagnostic` on `window`.
+ *
+ * Under a tiered mount the mount's own `diagnostics` setting decides, never the
+ * page's (its configuration comes only from its call), and a denied grant is
+ * reported whatever either says (SR37's runtime half): its detail carries the
+ * code, the grant, and the mount's name and tier, and it is counted per mount,
+ * so two mounts denied the same thing are two diagnostics.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a seeded denial raises one coded diagnostic, whatever the page's diagnostics switch says"
+ */
 function reportDiagnostic(
   kind: RuntimeDiagnostic['kind'],
   expr: string,
   reason: string,
   code = 'FORMA_E_UNSUPPORTED',
+  mount?: MountCtx | null,
+  grant?: RuntimeDiagnostic['grant'],
 ): void {
-  if (!_diagnosticsEnabled) return;
+  if (kind !== 'grant-denied' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;
 
-  const key = `${kind}|${reason}|${expr}`;
+  const key = mount ? `${kind}|${mount.id}|${reason}|${expr}` : `${kind}|${reason}|${expr}`;
   const now = Date.now();
   const existing = diagnostics.get(key);
 
@@ -376,21 +428,18 @@ function reportDiagnostic(
     return;
   }
 
-  diagnostics.set(key, {
-    kind,
-    expr,
-    reason,
-    code,
-    count: 1,
-    firstSeenAt: now,
-    lastSeenAt: now,
-  });
+  const detail: Omit<RuntimeDiagnostic, 'firstSeenAt' | 'lastSeenAt'> = { kind, expr, reason, code, count: 1 };
+  if (mount) {
+    detail.mount = mount.name;
+    detail.tier = mount.tier;
+  }
+  if (grant) detail.grant = grant;
+  diagnostics.set(key, { ...detail, firstSeenAt: now, lastSeenAt: now });
   console.warn(`[FormaJS] ${reason}: ${expr}`);
 
   try {
     if (typeof window !== 'undefined') {
-      const detail = { kind, expr, reason, code, count: 1 };
-      window.dispatchEvent(new CustomEvent('formajs:diagnostic', { detail }));
+      window.dispatchEvent(new CustomEvent('formajs:diagnostic', { detail: { ...detail } }));
     }
   } catch {
     // Ignore event dispatch failures
@@ -405,6 +454,340 @@ if (typeof runtimeConfig.diagnostics === 'boolean') {
   _diagnosticsEnabled = runtimeConfig.diagnostics;
 }
 const _autoContainment = runtimeConfig.autoContainment === true;
+
+/**
+ * The page's mount switch (FORMA-128): `data-forma-mount="manual"` on a
+ * `<script>` element turns every tierless binding path off, so only
+ * `mountMarkup()` binds: no auto-mount on load, no `body` observer, and
+ * `mount()`, `initRuntime()` and `reconcile()` throw `FORMA_E_MOUNT_MANUAL`.
+ * Without it the runtime auto-mounts as at 2.0.x.
+ *
+ * It is read once, here, when the runtime first runs, before any bind, and
+ * never again: removing or changing the attribute later changes nothing. It
+ * comes from the runtime's own `<script>` element where there is one (the
+ * CDN builds, `document.currentScript`), else from any `<script>` that
+ * carries it (an ESM build has no element of its own; the switch goes on the
+ * module script that loads the application). Only `manual` counts, and any
+ * one element saying so is enough, so the switch only ever removes binding
+ * paths: markup cannot use it to turn one back on. It needs no inline script.
+ *
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "the mount switch is read once, from the runtime's own script element"
+ */
+function readMountSwitch(): boolean {
+  if (typeof document === 'undefined') return false;
+  const own = document.currentScript as HTMLScriptElement | null;
+  if (own?.getAttribute('data-forma-mount') === 'manual') return true;
+  return document.querySelector('script[data-forma-mount="manual"]') !== null;
+}
+const _manualMount = readMountSwitch();
+
+/** Refuse a tierless binding call on a page whose mount switch is `manual`. */
+function assertTierless(what: string): void {
+  if (_manualMount) {
+    throw mountError(
+      'FORMA_E_MOUNT_MANUAL',
+      `${what} binds with every power, and this page mounts only through mountMarkup() (data-forma-mount="manual")`,
+    );
+  }
+}
+
+// ── Mount boundaries ──
+//
+// What a tiered mount (FORMA-128; decision brief DR-14, DR-15, L-36, L-47)
+// carries to every binding under its root: its tier, its grants, the
+// configuration its call gave, its own `$refetch` registry and, in a
+// development build, the grants it has used. The call itself is the last
+// section of this file, "Tiered mount".
+
+/**
+ * DR-14's three tiers. `compiled`: markup the application's own build made.
+ * `reviewed`: a directive widget the application reviewed and admitted, on its
+ * origin, with the grants its reviewer wrote. `unreviewed`: content nobody
+ * reviewed, which mounts only in an opaque-origin document (the preview frame)
+ * and with no grants. Which tier a mount uses is the application's decision.
+ */
+export type MountTier = 'compiled' | 'reviewed' | 'unreviewed';
+
+/** The methods `data-fetch` sends. */
+export type FetchMethod = 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE';
+const FETCH_METHODS: ReadonlySet<string> = new Set(['GET', 'POST', 'PUT', 'PATCH', 'DELETE']);
+
+/** What a mount's `data-fetch` may send. */
+export interface FetchGrant {
+  /** Methods it may send. Default: `['GET']`. */
+  readonly methods?: readonly FetchMethod[];
+  /**
+   * Where it may send them: path prefixes on the page's own origin
+   * (`'/api/widgets/'`), or absolute `http(s):` prefixes on another
+   * (`'https://api.example.com/v1/'`). A prefix without a trailing slash
+   * matches that path and the paths below it, never a sibling that merely
+   * starts with the same characters.
+   */
+  readonly paths: readonly string[];
+  /** Whether the user's cookies go with a same-origin request. Default: false. */
+  readonly cookies?: boolean;
+  /** Abort a request after this many milliseconds: at most, and by default, 30,000. */
+  readonly timeoutMs?: number;
+}
+
+/**
+ * A mount's grants (DR-15). A grant absent from the object is not given;
+ * the whole object absent gives every grant, A2's bridge default, which
+ * 3.0.0 turns to none (FORMA-108).
+ */
+export interface MountGrants {
+  /** `data-fetch`. */
+  readonly fetch?: FetchGrant;
+  /** The page beyond the mount root: elements outside it, and selectors that ask about them. */
+  readonly dom?: boolean;
+  /** `click()`, which can follow a link or submit a form in the user's session. */
+  readonly navigate?: boolean;
+}
+
+/** A mount's configuration. It comes only from its call: no script tag or global reaches it. */
+export interface MountConfig {
+  /** How diagnostics and the grant report name the mount. Default: `#<root id>`, else `mount-<n>`. */
+  readonly name?: string;
+  /** The interpreter's step budget per task for this mount. Default: 100,000. */
+  readonly exprBudget?: number;
+  /** Expression diagnostics; a denied grant is reported regardless. Default: true. */
+  readonly diagnostics?: boolean;
+  /** CSS containment hints on `[data-forma-contain]` elements under the root. Default: false. */
+  readonly autoContainment?: boolean;
+}
+
+/** The third argument of `mountMarkup()`. */
+export interface MountOptions {
+  readonly tier: MountTier;
+  readonly grants?: MountGrants;
+  readonly config?: MountConfig;
+}
+
+/**
+ * The grants a mount has used, written as grants, so a reviewer can approve
+ * one as the widget's grant set (DR-15, L-36). Only the grants used appear; a
+ * `fetch` lists the methods and exact paths it sent and whether the user's
+ * cookies went with a request.
+ */
+export interface GrantReport {
+  fetch?: { methods: FetchMethod[]; paths: string[]; cookies: boolean };
+  dom?: true;
+  navigate?: true;
+}
+
+/** What `mountMarkup()` returns. */
+export interface MountHandle {
+  readonly root: Element;
+  readonly tier: MountTier;
+  readonly name: string;
+  /** Render new markup into the root: reconciled, so scopes whose shape is unchanged keep their state. */
+  update(markup: string | TrustedHtml): void;
+  /** Dispose every binding of the mount and empty its root. */
+  unmount(): void;
+  /** Development builds: the grants used so far. Production builds: `null`. */
+  grantsUsed(): GrantReport | null;
+}
+
+/** One `fetch` grant prefix: on the page's own origin (`origin` null) or on another. */
+interface FetchPrefix {
+  origin: string | null;
+  path: string;
+}
+
+/** A mount's `fetch` grant, resolved. */
+interface FetchRule {
+  /** The A2 default: any request, sent as a tierless mount sends it. */
+  any: boolean;
+  methods: ReadonlySet<string>;
+  prefixes: readonly FetchPrefix[];
+  cookies: boolean;
+  timeoutMs: number;
+}
+
+/** The grants a mount used, kept in development builds only. */
+interface UsedGrants {
+  methods: Set<string>;
+  paths: Set<string>;
+  cookies: boolean;
+  dom: boolean;
+  navigate: boolean;
+}
+
+interface MountCtx {
+  /** Unique per mount, for counting diagnostics per mount. */
+  id: number;
+  root: Element;
+  tier: MountTier;
+  name: string;
+  /** Null: no `fetch` grant. */
+  fetch: FetchRule | null;
+  budget: number;
+  diagnostics: boolean;
+  containment: boolean;
+  /** What the interpreter checks on every element hop and grant-needing call. */
+  bound: Bound;
+  refetch: Map<string, () => void>;
+  /** Development builds only. */
+  used: UsedGrants | null;
+}
+
+/** A mount call's misuse: thrown at the call, with a stable code. */
+function mountError(code: string, message: string): Error {
+  const err = new TypeError(`[forma] ${code}: ${message}`) as TypeError & { code: string };
+  err.code = code;
+  return err;
+}
+
+/**
+ * Every live tiered mount, by its root. A tierless path (the auto-mount, the
+ * `body` observer, `mount()`, `unmount()`, `destroyRuntime()`, `reconcile()`)
+ * neither binds nor disposes a scope a tiered mount owns, and a tiered mount
+ * binds nothing that another mount owns: its handle alone does.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "no tierless path binds markup under a tiered root"
+ */
+const tieredRoots = new WeakMap<Node, MountCtx>();
+let tieredCount = 0;
+let mountSeq = 0;
+
+/** The tiered mount whose root is `node` or its nearest such ancestor, across shadow roots; null for none. */
+function ownerOf(node: Node | null): MountCtx | null {
+  if (tieredCount === 0) return null;
+  for (let n = node; n; n = n.parentNode ?? (n.nodeType === 11 ? (n as ShadowRoot).host ?? null : null)) {
+    const ctx = tieredRoots.get(n);
+    if (ctx) return ctx;
+  }
+  return null;
+}
+
+/** Whether a tiered root lies between `el` (inclusive) and `top` (exclusive): `el` belongs to a mount nested inside. */
+function ownedBelow(el: Element, top: Element): boolean {
+  if (tieredCount === 0) return false;
+  for (let n: Node | null = el; n && n !== top; n = n.parentNode) {
+    if (tieredRoots.has(n)) return true;
+  }
+  return false;
+}
+
+/** A path prefix or absolute URL prefix from a `fetch` grant, or a mount error. */
+function parsePrefix(raw: unknown): FetchPrefix {
+  if (typeof raw === 'string' && raw.startsWith('/') && !raw.startsWith('//')) {
+    return { origin: null, path: raw };
+  }
+  if (typeof raw === 'string' && /^https?:\/\//i.test(raw)) {
+    try {
+      const u = new URL(raw);
+      return { origin: u.origin, path: u.pathname };
+    } catch { /* reported below */ }
+  }
+  throw mountError('FORMA_E_MOUNT_ARGS', `fetch.paths: ${String(raw)}`);
+}
+
+/** Resolve the grants a mount call names, after checking their shape. */
+function resolveGrants(tier: MountTier, grants: MountGrants | undefined): { fetch: FetchRule | null; dom: boolean; navigate: boolean } {
+  if (tier === 'unreviewed') {
+    if (grants !== undefined) {
+      throw mountError('FORMA_E_MOUNT_ARGS', 'an unreviewed mount takes no grants');
+    }
+    return { fetch: null, dom: false, navigate: false };
+  }
+  if (grants === undefined) {
+    // A2's bridge (DR-15): every grant, so a host moves to the mount call
+    // without changing what its widgets can do, and the development report
+    // shows what each one used. 3.0.0 makes this none (FORMA-108).
+    return {
+      fetch: { any: true, methods: FETCH_METHODS, prefixes: [], cookies: true, timeoutMs: FETCH_TIMEOUT_MS },
+      dom: true,
+      navigate: true,
+    };
+  }
+  if (typeof grants !== 'object' || grants === null) {
+    throw mountError('FORMA_E_MOUNT_ARGS', 'grants must be an object');
+  }
+  let fetchRule: FetchRule | null = null;
+  const f = grants.fetch;
+  if (f !== undefined) {
+    if (typeof f !== 'object' || f === null || !Array.isArray(f.paths)) {
+      throw mountError('FORMA_E_MOUNT_ARGS', 'a fetch grant needs paths');
+    }
+    const methods = f.methods ?? ['GET'];
+    for (const m of methods) {
+      if (!FETCH_METHODS.has(m)) throw mountError('FORMA_E_MOUNT_ARGS', `fetch.methods: ${String(m)}`);
+    }
+    const timeoutMs = f.timeoutMs ?? FETCH_TIMEOUT_MS;
+    if (!(typeof timeoutMs === 'number' && timeoutMs > 0 && timeoutMs <= FETCH_TIMEOUT_MS)) {
+      throw mountError('FORMA_E_MOUNT_ARGS', `fetch.timeoutMs: 1 to ${FETCH_TIMEOUT_MS}`);
+    }
+    fetchRule = {
+      any: false,
+      methods: new Set(methods),
+      prefixes: f.paths.map(parsePrefix),
+      cookies: f.cookies === true,
+      timeoutMs,
+    };
+  }
+  return { fetch: fetchRule, dom: grants.dom === true, navigate: grants.navigate === true };
+}
+
+/** Whether `path` is `prefix` or lies below it. */
+function underPrefix(path: string, prefix: string): boolean {
+  if (prefix.endsWith('/')) return path.startsWith(prefix);
+  return path === prefix || path.startsWith(prefix + '/');
+}
+
+/** How one `data-fetch` of a tiered mount may be sent, or why it may not. */
+type FetchVerdict =
+  | { ok: true; credentials: RequestCredentials; timeoutMs: number; path: string; cookies: boolean }
+  | { ok: false; reason: string };
+
+/**
+ * Check one `data-fetch` against its mount's `fetch` grant (DR-15). The URL is
+ * resolved against the document and normalised by the URL parser first, so
+ * `/api/widgets/../admin` is checked as `/admin`; a path that hides a slash or
+ * a backslash in an escape (`%2F`, `%5C`) is refused, since a server may
+ * decode it into a segment the prefix did not grant.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a fetch grant admits only its methods and path prefixes: %j %s"
+ */
+function fetchVerdict(rule: FetchRule | null, method: string, raw: string): FetchVerdict {
+  if (!rule) return { ok: false, reason: 'the mount grants no fetch' };
+  let url: URL | null = null;
+  try {
+    url = new URL(raw, document.baseURI);
+  } catch {
+    url = null;
+  }
+  const sameOrigin = url !== null && url.origin === location.origin;
+  const path = url === null ? raw : sameOrigin ? url.pathname : url.origin + url.pathname;
+  if (rule.any) return { ok: true, credentials: 'same-origin', timeoutMs: rule.timeoutMs, path, cookies: sameOrigin };
+  if (!rule.methods.has(method)) return { ok: false, reason: `the fetch grant does not allow ${method}` };
+  if (url === null || (url.protocol !== 'https:' && url.protocol !== 'http:')) {
+    return { ok: false, reason: `the fetch grant does not cover ${raw}` };
+  }
+  if (/%2f|%5c|\\/i.test(url.pathname)) {
+    return { ok: false, reason: `the path of ${raw} hides a separator in an escape` };
+  }
+  const covered = rule.prefixes.some((p) => (p.origin === null ? sameOrigin : url!.origin === p.origin) && underPrefix(url!.pathname, p.path));
+  if (!covered) return { ok: false, reason: `the fetch grant does not cover ${path}` };
+  const cookies = rule.cookies && sameOrigin;
+  return { ok: true, credentials: rule.cookies ? 'same-origin' : 'omit', timeoutMs: rule.timeoutMs, path, cookies };
+}
+
+/** The development report, written as grants. */
+function grantReport(used: UsedGrants): GrantReport {
+  const report: GrantReport = {};
+  if (used.methods.size > 0) {
+    report.fetch = {
+      methods: [...used.methods].sort() as FetchMethod[],
+      paths: [...used.paths].sort(),
+      cookies: used.cookies,
+    };
+  }
+  if (used.dom) report.dom = true;
+  if (used.navigate) report.navigate = true;
+  return report;
+}
+
+const noUse = (): void => {};
 
 // ── Performance utilities ──
 
@@ -1304,7 +1687,7 @@ function converts(el: Element, scope: Scope, what: string, value: unknown): bool
   } catch (err) {
     if (!isExprError(err)) throw err;
     if (err.defer) later();
-    else reportExprFailure(el, what, err);
+    else reportExprFailure(el, what, err, scope.mount);
     return false;
   }
 }
@@ -1338,16 +1721,25 @@ function logExprFailure(el: Element | null, expr: string, err: FormaExprError, w
  * on the element — and in both cases the binding writes NOTHING.
  * Verified by: src/__tests__/failure-semantics.test.ts > "reports one diagnostic per distinct expression, however many elements share it"
  */
-function reportExprFailure(el: Element | null, expr: string, err: FormaExprError): void {
+function reportExprFailure(el: Element | null, expr: string, err: FormaExprError, mount?: MountCtx): void {
   logExprFailure(el, expr, err, 'expression');
-  reportDiagnostic('expression-unsupported', expr, err.message, err.code);
+  reportFailure('expression-unsupported', expr, err, mount);
   el?.setAttribute('data-forma-expr-error', 'unsupported');
 }
 
-function reportHandlerFailure(el: Element | null, expr: string, err: FormaExprError): void {
+function reportHandlerFailure(el: Element | null, expr: string, err: FormaExprError, mount?: MountCtx): void {
   logExprFailure(el, expr, err, 'handler');
-  reportDiagnostic('handler-unsupported', expr, err.message, err.code);
+  reportFailure('handler-unsupported', expr, err, mount);
   el?.setAttribute('data-forma-handler-error', 'unsupported');
+}
+
+/** The diagnostic for a failure: a denied grant is `grant-denied`, with its grant, whatever directive met it. */
+function reportFailure(kind: RuntimeDiagnostic['kind'], expr: string, err: FormaExprError, mount?: MountCtx): void {
+  if (err.code === 'FORMA_E_GRANT_DOM' || err.code === 'FORMA_E_GRANT_NAVIGATE') {
+    reportDiagnostic('grant-denied', expr, err.message, err.code, mount, err.code === 'FORMA_E_GRANT_DOM' ? 'dom' : 'navigate');
+  } else {
+    reportDiagnostic(kind, expr, err.message, err.code, mount);
+  }
 }
 
 /**
@@ -1369,7 +1761,7 @@ function buildEvaluator(expr: string, scope: Scope, el: Element | null): Evaluat
     compiled = compileExpression(cleaned);
   } catch (err) {
     if (!isExprError(err)) throw err;
-    reportExprFailure(el, cleaned, err);
+    reportExprFailure(el, cleaned, err, scope.mount);
     return null;
   }
   const run: Evaluate = (text) => {
@@ -1403,7 +1795,7 @@ function buildHandler(expr: string, scope: Scope, el: Element | null): HandlerBu
     program = compileHandler(cleaned);
   } catch (err) {
     if (!isExprError(err)) throw err;
-    reportHandlerFailure(el, cleaned, err);
+    reportHandlerFailure(el, cleaned, err, scope.mount);
     const failed: HandlerBuildResult = { handler: () => {}, supported: false };
     cache.set(cleaned, failed);
     return failed;
@@ -1414,7 +1806,9 @@ function buildHandler(expr: string, scope: Scope, el: Element | null): HandlerBu
 
   const handler = (e: Event) => {
     const outer = eventLocals.$event;
-    const wrapped = hostObject('event', e, '$event');
+    // Under a tiered mount the event carries the mount's bound, so
+    // `$event.target` cannot hand back an element outside the root.
+    const wrapped = hostObject('event', e, '$event', scope.mount?.bound);
     eventLocals.$event = wrapped;
     eventLocals.event = wrapped;
     // A handler cannot be retried later, so an event it has not seen starts a
@@ -1428,7 +1822,7 @@ function buildHandler(expr: string, scope: Scope, el: Element | null): HandlerBu
       batch(() => runHandler(program, eventScope, meter));
     } catch (err) {
       if (!isExprError(err)) throw err;
-      reportHandlerFailure((e.currentTarget as Element | null) ?? el, cleaned, err);
+      reportHandlerFailure((e.currentTarget as Element | null) ?? el, cleaned, err, scope.mount);
     } finally {
       eventLocals.$event = outer;
       eventLocals.event = outer;
@@ -1487,7 +1881,7 @@ function parseState(raw: string): Record<string, unknown> {
 
 // ── DOM scanner ──
 
-function initScope(stateEl: Element): Scope {
+function initScope(stateEl: Element, mount: MountCtx | null): Scope {
   const raw = stateEl.getAttribute('data-forma-state') ?? '{}';
   const state = parseState(raw);
   const keys = Object.keys(state);
@@ -1514,24 +1908,53 @@ function initScope(stateEl: Element): Scope {
     setters[key] = set as Setter;
   }
 
-  // $refetch is a captured callable, not a bare function in scope.
-  const refetchHost = hostFn('$refetch', (id: unknown) => $refetch(String(id)), 1);
+  // $refetch is a captured callable, not a bare function in scope. A tiered
+  // mount's reaches its own registry only.
+  const registry = mount ? mount.refetch : _refetchRegistry;
+  const refetchHost = hostFn('$refetch', (id: unknown) => $refetch(String(id), registry), 1);
   getters['$refetch'] = () => refetchHost;
 
-  return { getters, setters };
+  const scope: Scope = { getters, setters };
+  if (mount) {
+    scope.mount = mount;
+    scope.budget = mount.budget;
+  }
+  return scope;
 }
 
 // ── Element binding ──
+
+/**
+ * Event types an engine treats as activation when an untrusted event of that
+ * type is dispatched on an element, so dispatching one can follow a link,
+ * submit or reset a form, or toggle a label's control or a `<details>`. Measured
+ * with `new CustomEvent(type)`: WebKit runs activation for `click`, `auxclick`
+ * and `DOMActivate`; Firefox submits on `submit` and resets on `reset`;
+ * Chromium runs none. Under a tiered mount `$dispatch` of one needs `navigate`,
+ * as `click()` does (formajs#30, review S1); the comparison ignores case.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "$dispatch of an activation event needs navigate: %s"
+ */
+const ACTIVATION_EVENTS: ReadonlySet<string> = new Set(['click', 'auxclick', 'domactivate', 'submit', 'reset']);
 
 function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void {
   // Per-element magics. Both are HOST values (src/expr/host.ts): the element is
   // reachable only through the element property allowlist, and $dispatch is a
   // captured callable rather than a function sitting in scope — a function held
   // in state is never invocable, so only magics like this one can be called.
+  // Under a tiered mount `$el` carries the mount's bound (L-36): no hop from
+  // it reaches past the mount root without the `dom` grant.
   const elMagics: Record<string, unknown> = {
-    $el: hostObject('element', el, '$el'),
+    $el: hostObject('element', el, '$el', scope.mount?.bound),
     $dispatch: hostFn('$dispatch', (name: unknown, detail?: unknown) => {
-      el.dispatchEvent(new CustomEvent(String(name), {
+      const type = String(name);
+      const mount = scope.mount;
+      if (mount && ACTIVATION_EVENTS.has(type.toLowerCase())) {
+        if (!mount.bound.navigate) {
+          throw exprError('FORMA_E_GRANT_NAVIGATE', `$dispatch('${type}') (no navigate grant)`);
+        }
+        mount.bound.use('navigate');
+      }
+      el.dispatchEvent(new CustomEvent(type, {
         bubbles: true,
         composed: true, // crosses Shadow DOM boundaries (important for <forma-stage>)
         detail,
@@ -1573,7 +1996,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       } catch (err) {
         if (!isExprError(err)) throw err;
         if (err.defer) later();
-        else reportExprFailure(el, stripBraces(expression), err);
+        else reportExprFailure(el, stripBraces(expression), err, scope.mount);
         return EXPR_FAILED;
       }
     };
@@ -1582,7 +2005,9 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // When the server provides a directive map, we know exactly which directives
   // this element has. Skip getAttribute calls for directives it doesn't have.
   // `known` is null when no map is available (fallback: check everything).
-  const known = getDirectives(el);
+  // A tiered mount never reads the page's map: its configuration comes only
+  // from its call, and the map is the page's.
+  const known = scope.mount ? null : getDirectives(el);
 
   // data-computed="name = expr" or "a = expr1; b = expr2"
   const computedAttr = (!known || known.has('data-computed')) ? el.getAttribute('data-computed') : null;
@@ -2132,58 +2557,93 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         scope.setters[errorTarget] = se as Setter;
       }
 
-      // A request the server never answers is aborted after FETCH_TIMEOUT_MS,
-      // its own timer per request, and the abort lands in the error: target.
-      // The timer is the only thing that aborts a live request, and the message
-      // is written here: an engine rejects with its own AbortError (WebKit
-      // ignores a reason). Tearing the scope down stops every request in
-      // flight: its timer is cleared and the request aborted. (Rationale: a
-      // request checks it is still in flight before writing, so a stopped one
-      // does not write into the disposed scope's signals.)
-      // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch to a stalled endpoint aborts at 30 s into its error: target"
-      // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch answered before 30 s lands in its target and is never aborted"
-      // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "unmount() stops every in-flight request of a polling data-fetch, and removing the element does too"
-      const inflight = new Set<() => void>();
-      const doFetch = () => {
-        if (loadingTarget) scope.setters[loadingTarget]!(true);
-        const ctrl = new AbortController();
-        const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
-        const stop = () => { clearTimeout(timer); ctrl.abort(); };
-        inflight.add(stop);
-        fetch(url, { method, signal: ctrl.signal })
-          .then(r => r.json())
-          .then(data => {
-            if (!inflight.has(stop)) return;
-            setTarget(data);
-            if (loadingTarget) scope.setters[loadingTarget]!(false);
-          })
-          .catch(err => {
-            if (!inflight.has(stop)) return;
-            if (errorTarget) {
-              scope.setters[errorTarget]!(
-                ctrl.signal.aborted ? `data-fetch timed out after ${FETCH_TIMEOUT_MS} ms` : err.message,
-              );
+      // Under a tiered mount the request must be one its `fetch` grant
+      // covers (DR-15). One it does not is never sent, polled or registered
+      // for `$refetch`: it is reported as a coded denial and its `error:`
+      // target says so. A tierless mount sends every request, as at 2.0.x.
+      // Verified by: src/__tests__/runtime-tiered-mount.test.ts > "with explicit empty grants a generated tree binds neither data-fetch nor $el.click()"
+      const mount = scope.mount;
+      const verdict = mount ? fetchVerdict(mount.fetch, method, url) : null;
+      if (verdict && !verdict.ok) {
+        reportDiagnostic('grant-denied', fetchExpr, verdict.reason, 'FORMA_E_GRANT_FETCH', mount, 'fetch');
+        el.setAttribute('data-forma-expr-error', 'unsupported');
+        if (errorTarget) scope.setters[errorTarget]!(`data-fetch denied: ${verdict.reason}`);
+      } else {
+        const timeoutMs = verdict ? verdict.timeoutMs : FETCH_TIMEOUT_MS;
+
+        // A request the server never answers is aborted after FETCH_TIMEOUT_MS
+        // (or a tiered mount's shorter grant), its own timer per request, and the
+        // abort lands in the error: target.
+        // The timer is the only thing that aborts a live request, and the message
+        // is written here: an engine rejects with its own AbortError (WebKit
+        // ignores a reason). Tearing the scope down stops every request in
+        // flight: its timer is cleared and the request aborted. (Rationale: a
+        // request checks it is still in flight before writing, so a stopped one
+        // does not write into the disposed scope's signals.)
+        // Under a tiered mount, a response with a status outside 200-299 is an
+        // error, written to the error: target and never to the data target; a
+        // tierless mount parses every response as data, as at 2.0.x.
+        // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch to a stalled endpoint aborts at 30 s into its error: target"
+        // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch answered before 30 s lands in its target and is never aborted"
+        // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "unmount() stops every in-flight request of a polling data-fetch, and removing the element does too"
+        // Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a 404 with a JSON body lands in the error: target, not the data target"
+        // Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a fetch grant's timeout shortens the abort"
+        const inflight = new Set<() => void>();
+        const doFetch = () => {
+          if (loadingTarget) scope.setters[loadingTarget]!(true);
+          const ctrl = new AbortController();
+          const timer = setTimeout(() => ctrl.abort(), timeoutMs);
+          const stop = () => { clearTimeout(timer); ctrl.abort(); };
+          inflight.add(stop);
+          const init: RequestInit = { method, signal: ctrl.signal };
+          if (verdict) {
+            init.credentials = verdict.credentials;
+            if (mount!.used) {
+              mount!.used.methods.add(method);
+              mount!.used.paths.add(verdict.path);
+              if (verdict.cookies) mount!.used.cookies = true;
             }
-            if (loadingTarget) scope.setters[loadingTarget]!(false);
-          })
-          .finally(() => { clearTimeout(timer); inflight.delete(stop); });
-      };
-      disposers.push(() => {
-        for (const stop of inflight) stop();
-        inflight.clear();
-      });
+          }
+          fetch(url, init)
+            .then(r => {
+              if (verdict && !r.ok) throw new Error(`data-fetch answered HTTP ${r.status}`);
+              return r.json();
+            })
+            .then(data => {
+              if (!inflight.has(stop)) return;
+              setTarget(data);
+              if (loadingTarget) scope.setters[loadingTarget]!(false);
+            })
+            .catch(err => {
+              if (!inflight.has(stop)) return;
+              if (errorTarget) {
+                scope.setters[errorTarget]!(
+                  ctrl.signal.aborted ? `data-fetch timed out after ${timeoutMs} ms` : err.message,
+                );
+              }
+              if (loadingTarget) scope.setters[loadingTarget]!(false);
+            })
+            .finally(() => { clearTimeout(timer); inflight.delete(stop); });
+        };
+        disposers.push(() => {
+          for (const stop of inflight) stop();
+          inflight.clear();
+        });
 
-      // Register in $refetch registry if data-fetch-id is present
-      const fetchId = el.getAttribute('data-fetch-id');
-      if (fetchId) {
-        _refetchRegistry.set(fetchId, doFetch);
-        disposers.push(() => _refetchRegistry.delete(fetchId));
-      }
+        // Register in $refetch registry if data-fetch-id is present: the
+        // page's, or the tiered mount's own.
+        const fetchId = el.getAttribute('data-fetch-id');
+        if (fetchId) {
+          const registry = mount ? mount.refetch : _refetchRegistry;
+          registry.set(fetchId, doFetch);
+          disposers.push(() => registry.delete(fetchId));
+        }
 
-      doFetch();
-      if (interval && interval > 0) {
-        const id = setInterval(doFetch, interval);
-        disposers.push(() => clearInterval(id));
+        doFetch();
+        if (interval && interval > 0) {
+          const id = setInterval(doFetch, interval);
+          disposers.push(() => clearInterval(id));
+        }
       }
     }
   }
@@ -2282,14 +2742,26 @@ function hasAnyPrefix(set: Set<string>, ...prefixes: string[]): boolean {
   return false;
 }
 
-function mountScope(root: Element): void {
+/**
+ * Bind one `data-forma-state` element and the directive-bearing elements under
+ * it. `mount` is the tiered mount doing so, or null for a tierless path; a
+ * scope whose owner is another (a tierless path reaching under a tiered root,
+ * or a mount reaching into one nested in it) is left alone, and so is every
+ * element under it that belongs to a mount nested inside.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "no tierless path binds markup under a tiered root"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a mount nested in another binds with its own grants, and the outer one never binds its markup"
+ */
+function mountScope(root: Element, mount: MountCtx | null = null): void {
+  // On a page whose mount switch is `manual`, no tierless path binds anything.
+  if (mount === null && _manualMount) return;
+  if (ownerOf(root) !== mount) return;
   // Idempotency guard — never double-bind
   if ((root as any).__formaDisposers) {
     if (_debug) dbg('mountScope: SKIPPED (already mounted)');
     return;
   }
 
-  const scope = initScope(root);
+  const scope = initScope(root, mount);
   const disposers: (() => void)[] = [];
 
   // Build $refs — a lazy proxy that resolves data-ref="name" to elements.
@@ -2298,6 +2770,7 @@ function mountScope(root: Element): void {
   const refEls = root.querySelectorAll('[data-ref]');
   for (let i = 0; i < refEls.length; i++) {
     const el = refEls[i]!;
+    if (ownedBelow(el, root)) continue;
     const name = el.getAttribute('data-ref');
     if (name) refsMap.set(name, el);
   }
@@ -2309,7 +2782,7 @@ function mountScope(root: Element): void {
   // element came out unwrapped and `$refs.r.ownerDocument.location.href` read
   // the real page URL from inside a "CSP-safe" expression, with no diagnostic.
   // Verified by: src/expr/__tests__/adversarial.test.ts > "$refs.r.ownerDocument.location.href is denied"
-  const refsHost = hostObject('refs', refsMap, '$refs');
+  const refsHost = hostObject('refs', refsMap, '$refs', mount?.bound);
   scope.getters['$refs'] = () => refsHost;
 
   // Bind the root itself
@@ -2328,7 +2801,7 @@ function mountScope(root: Element): void {
   // has no parent, which is the O(1) test for "an earlier bind removed this".
   // Verified by: src/__tests__/failure-semantics.test.ts > "a data-list row template is not bound against the parent scope"
   let boundCount = 0;
-  const selector = buildDirectiveSelector();
+  const selector = mount ? null : buildDirectiveSelector();
   // Without a server-supplied map the query is `*`, so every element on the
   // page is visited and the attribute scan is the filter. Hoisted out of the
   // loop because that is the hot path.
@@ -2338,6 +2811,7 @@ function mountScope(root: Element): void {
     const el = targets[i]!;
     if (el.parentNode === null) continue;
     if (scanAll && !hasDirective(el)) continue;
+    if (ownedBelow(el, root)) continue;
     bindElement(el, scope, disposers);
     boundCount++;
   }
@@ -2353,8 +2827,11 @@ function mountScope(root: Element): void {
 /**
  * Unmount a single `data-forma-state` element — disposes all effects,
  * intervals, and event listeners. Safe to call on already-unmounted elements.
+ * Like `mountScope`, it leaves alone a scope another mount owns: a tiered
+ * mount's scopes are disposed through its handle only.
  */
-function unmountScope(root: Element): void {
+function unmountScope(root: Element, mount: MountCtx | null = null): void {
+  if (ownerOf(root) !== mount) return;
   const disposers = (root as any).__formaDisposers as (() => void)[] | undefined;
   if (disposers) {
     for (const d of disposers) {
@@ -2379,6 +2856,10 @@ let _pendingMutations: MutationRecord[] = [];
 let _drainingMutations = false;
 
 function processMutation(mutation: MutationRecord): void {
+  // Under a tiered root nothing added or changed is the observer's to bind:
+  // `mountScope` and `unmountScope` refuse a scope a tiered mount owns
+  // (FORMA-128). A scope removed from inside a mount is detached, so it is
+  // disposed here as any other; a whole mount moved elsewhere stays bound.
   // ── Removed nodes: clean up disposers to prevent memory leaks ──
   for (let i = 0; i < mutation.removedNodes.length; i++) {
     const node = mutation.removedNodes[i]!;
@@ -2480,6 +2961,7 @@ function stopObserver(): void {
 // ── Main init ──
 
 function initRuntime(): void {
+  assertTierless('initRuntime()');
   if (_autoContainment) {
     applyContainmentHints(document, { skipIfAlreadySet: true });
   }
@@ -2525,6 +3007,7 @@ function destroyRuntime(): void {
  * @param el - The root element to scan (checks itself and all descendants).
  */
 function mount(el: Element): void {
+  assertTierless('mount()');
   if (el.hasAttribute('data-forma-state')) {
     mountScope(el);
   }
@@ -2550,8 +3033,10 @@ function unmount(el: Element): void {
   }
 }
 
-// Auto-init in browser contexts on DOMContentLoaded (or immediately if already loaded).
-if (typeof document !== 'undefined') {
+// Auto-init in browser contexts on DOMContentLoaded (or immediately if already
+// loaded): the tierless auto-mount, unless the page's mount switch is `manual`.
+// Verified by: src/__tests__/runtime-tiered-mount.test.ts > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
+if (typeof document !== 'undefined' && !_manualMount) {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initRuntime);
   } else {
@@ -2643,29 +3128,34 @@ function resetScope(element: Element): void {
 
 let _reconciler: ((container: Element, html: string | TrustedHtml) => void) | null = null;
 
+/** The `body` observer pauses while a reconciler patches, so it does not see the patch. */
+function disconnectObserver(): void {
+  if (_observer) {
+    _observer.disconnect();
+  }
+}
+
+function reconnectObserver(): void {
+  if (_observer) {
+    const target = document.body || document.documentElement;
+    if (target) {
+      _observer.observe(target, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['data-forma-state'],
+      });
+    }
+  }
+}
+
 function getReconciler() {
   if (!_reconciler) {
     _reconciler = createReconciler({
-      mountScope,
-      unmountScope,
-      disconnectObserver() {
-        if (_observer) {
-          _observer.disconnect();
-        }
-      },
-      reconnectObserver() {
-        if (_observer) {
-          const target = document.body || document.documentElement;
-          if (target) {
-            _observer.observe(target, {
-              childList: true,
-              subtree: true,
-              attributes: true,
-              attributeFilter: ['data-forma-state'],
-            });
-          }
-        }
-      },
+      mountScope: (el) => mountScope(el),
+      unmountScope: (el) => unmountScope(el),
+      disconnectObserver,
+      reconnectObserver,
       batch,
     });
   }
@@ -2676,9 +3166,169 @@ function getReconciler() {
  * Reconcile a container's DOM against new markup. A raw sink: pass
  * `trustedHtml(markup)` (DR-19); a plain string still works in 2.x and warns
  * once in development.
+ *
+ * The tierless path: it binds the markup with every power the runtime has,
+ * wherever the container is. It behaves as at 2.0.x; in a development build
+ * its first call logs `FORMA_W_DEPRECATED_RECONCILE`, and 3.0.0 removes it
+ * (FORMA-108). Mount through `mountMarkup()` with a tier and grants instead.
+ *
+ * @deprecated Removed in 3.0.0. Use `mountMarkup(root, markup, { tier, grants })`.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "reconcile behaves as at 2.0.x and warns once in development"
  */
 function reconcile(container: Element, html: string | TrustedHtml): void {
+  assertTierless('reconcile()');
+  if ((typeof __FORMA_DEV_BUILD__ === 'boolean' && __FORMA_DEV_BUILD__)
+    || (typeof __FORMA_DEV_BUILD__ !== 'boolean' && sourceIsDev())) {
+    warnDeprecated('FORMA_W_DEPRECATED_RECONCILE');
+  }
   getReconciler()(container, html);
+}
+
+// ── Tiered mount ──
+
+/**
+ * Mount `markup` under `root` in a tier, with grants (FORMA-128; decision
+ * brief DR-14, DR-15, L-36, L-47). The runtime binds only under the root it is
+ * handed, never by watching `body`, and the mount takes its configuration
+ * only from this call.
+ *
+ * - **Tier.** `compiled`, `reviewed` or `unreviewed` (DR-14). An
+ *   `unreviewed` mount takes no grants and refuses to mount on any origin but
+ *   an opaque one: content nobody reviewed renders only in the preview frame.
+ * - **Grants** (DR-15): `fetch` (methods, path prefixes, cookies or not, a
+ *   timeout up to 30 s), `dom` (the page beyond the root) and `navigate`
+ *   (`click()`). A grant the object leaves out is not given; leaving out the
+ *   whole object gives every grant, A2's bridge (3.0.0 gives none). Every
+ *   denial is a coded `formajs:diagnostic` (`kind: 'grant-denied'`).
+ * - **`$el`, `$event`, `$refs`** reach only the root's descendants: a hop
+ *   to any other element, or a selector asking about one, needs `dom` (L-36).
+ * - **`data-fetch`** answered with a status outside 200-299 writes an error
+ *   to its `error:` target, never data.
+ * - **Development builds** keep a report of the grants the mount used
+ *   (`grantsUsed()`), so a reviewer writes grants from observed use.
+ *
+ * The shared responsibility (v2 10.1): the application chooses the tier and
+ * passes grants only for content whose hash matches what its reviewer
+ * approved (L-47); Forma enforces what the mount grants. In 2.x the tierless
+ * paths (the auto-mount, the `body` observer, `mount()`, `reconcile()`) still
+ * run where the page loads them, unless it sets `data-forma-mount="manual"`
+ * (see `readMountSwitch`); none of them binds or disposes anything under a
+ * tiered root.
+ *
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "binds only under the root it is handed: markup injected outside it stays unbound"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount refuses any origin but an opaque one, and any grant"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "the development report lists exactly the grants a fixture widget used"
+ */
+function mountMarkup(root: Element, markup: string | TrustedHtml, options: MountOptions): MountHandle {
+  if (!root || typeof root !== 'object' || root.nodeType !== 1) {
+    throw mountError('FORMA_E_MOUNT_ARGS', 'the root must be an element');
+  }
+  if (typeof markup !== 'string' && !isTrustedHtml(markup)) {
+    throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string or trustedHtml()');
+  }
+  const tier = options?.tier;
+  if (tier !== 'compiled' && tier !== 'reviewed' && tier !== 'unreviewed') {
+    throw mountError('FORMA_E_MOUNT_ARGS', "options.tier must be 'compiled', 'reviewed' or 'unreviewed'");
+  }
+  if (tier === 'unreviewed' && (globalThis as { origin?: unknown }).origin !== 'null') {
+    throw mountError('FORMA_E_MOUNT_ORIGIN', 'an unreviewed mount renders only in an opaque-origin frame');
+  }
+  if (tieredRoots.has(root)) throw mountError('FORMA_E_MOUNT_TWICE', 'this root is already mounted; update() its handle');
+  const granted = resolveGrants(tier, options.grants);
+  const config = options.config ?? {};
+  let budget: number = LIMITS.STEP_BUDGET;
+  if (config.exprBudget !== undefined) {
+    if (!(typeof config.exprBudget === 'number' && Number.isFinite(config.exprBudget) && config.exprBudget > 0)) {
+      throw mountError('FORMA_E_MOUNT_ARGS', 'config.exprBudget');
+    }
+    budget = Math.min(config.exprBudget, 10_000_000);
+  }
+
+  const id = ++mountSeq;
+  // The development report: kept only in a development build (the build flag).
+  const used: UsedGrants | null = (typeof __FORMA_DEV_BUILD__ === 'boolean' && __FORMA_DEV_BUILD__)
+    || (typeof __FORMA_DEV_BUILD__ !== 'boolean' && sourceIsDev())
+    ? { methods: new Set(), paths: new Set(), cookies: false, dom: false, navigate: false }
+    : null;
+  const ctx: MountCtx = {
+    id,
+    root,
+    tier,
+    name: config.name ?? (root.id ? `#${root.id}` : `mount-${id}`),
+    fetch: granted.fetch,
+    budget,
+    diagnostics: config.diagnostics !== false,
+    containment: config.autoContainment === true,
+    bound: {
+      root,
+      dom: granted.dom,
+      navigate: granted.navigate,
+      use: used ? (grant: ExprGrant) => { used[grant] = true; } : noUse,
+    },
+    refetch: new Map(),
+    used,
+  };
+
+  // Bindings a tierless path made under the root before it was handed over
+  // go first, with what they rendered: the mount renders what it is given.
+  for (const scope of Array.from(root.querySelectorAll('[data-forma-state]'))) unmountScope(scope);
+  tieredRoots.set(root, ctx);
+  tieredCount++;
+  root.replaceChildren();
+
+  const reconcileInto = createReconciler({
+    mountScope: (el) => mountScope(el, ctx),
+    unmountScope: (el) => unmountScope(el, ctx),
+    disconnectObserver,
+    reconnectObserver,
+    batch,
+  });
+  const disposeAll = (): void => {
+    for (const scope of Array.from(root.querySelectorAll('[data-forma-state]'))) unmountScope(scope, ctx);
+  };
+  const render = (html: string | TrustedHtml): void => {
+    if (!String(html).trim()) {
+      disposeAll();
+      root.replaceChildren();
+      return;
+    }
+    reconcileInto(root, html);
+    if (ctx.containment) applyContainmentHints(root, { skipIfAlreadySet: true });
+  };
+  let live = true;
+  const alive = (): void => {
+    if (!live) throw mountError('FORMA_E_MOUNT_GONE', `${ctx.name} was unmounted`);
+  };
+
+  render(markup);
+
+  return {
+    root,
+    tier,
+    name: ctx.name,
+    update(next: string | TrustedHtml): void {
+      alive();
+      if (typeof next !== 'string' && !isTrustedHtml(next)) {
+        throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string or trustedHtml()');
+      }
+      render(next);
+    },
+    unmount(): void {
+      if (!live) return;
+      live = false;
+      disposeAll();
+      root.replaceChildren();
+      ctx.refetch.clear();
+      tieredRoots.delete(root);
+      tieredCount--;
+    },
+    grantsUsed(): GrantReport | null {
+      return (typeof __FORMA_DEV_BUILD__ === 'boolean' && __FORMA_DEV_BUILD__)
+        || (typeof __FORMA_DEV_BUILD__ !== 'boolean' && sourceIsDev())
+        ? grantReport(used!)
+        : null;
+    },
+  };
 }
 
 export type { TrustedHtml };
@@ -2689,6 +3339,7 @@ export {
   mount,
   unmount,
   reconcile,
+  mountMarkup,
   trustedHtml,
   setDebug,
   yieldToMain,

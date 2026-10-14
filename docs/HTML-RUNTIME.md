@@ -240,6 +240,172 @@ Verified by `src/__tests__/runtime-fetch-timeout.test.ts` > "unmount() stops eve
 
 ---
 
+## Mounting markup you did not write: tiers and grants
+
+The script-tag runtime binds every `data-forma-state` on the page and, through
+a `MutationObserver` on `body`, every one inserted later, with every power the
+grammar has. That is right for a page you wrote. For markup a generator wrote,
+such as a widget a model produced and an application admitted, `mountMarkup()`
+(2.1.0) mounts it under a root you hand it, in a **tier**, with **grants**:
+
+```ts
+import { mountMarkup } from '@getforma/core/runtime';
+
+const widget = mountMarkup(document.getElementById('widget-slot')!, html, {
+  tier: 'reviewed',
+  grants: { fetch: { methods: ['GET'], paths: ['/api/widgets/42/'], cookies: false } },
+  config: { name: 'widget-42' },
+});
+widget.update(nextHtml); // reconciled: scopes whose shape is unchanged keep their state
+widget.unmount(); // every binding disposed, the root emptied
+```
+
+- **Only under the root.** The mount binds the markup it is handed (and what
+  `update()` hands it later) under its root, never by watching `body`. The root
+  itself is the application's element, not the mount's. The markup is a raw
+  sink, as `reconcile()`'s is: pass `trustedHtml(markup)` for the content your
+  review admitted, which a page enforcing Trusted Types requires; a plain
+  string still works in 2.x and logs `FORMA_W_RAW_RECONCILE` once in a
+  development build.
+- **Configuration only from the call.** The step budget (`config.exprBudget`,
+  default 100,000), the expression diagnostics switch (`config.diagnostics`)
+  and containment hints (`config.autoContainment`) come from the call; a
+  script tag's `data-forma-*`, `window.__FORMA_RUNTIME_CONFIG`,
+  `setDiagnostics()` and the server's directive map do not reach a mount.
+- **Tiers** (decision brief DR-14). `'compiled'`: markup the application's own
+  build made. `'reviewed'`: a widget the application reviewed and admitted, on
+  its own origin. `'unreviewed'`: content nobody reviewed, which mounts only in a
+  document with an opaque origin (an `iframe` sandboxed without
+  `allow-same-origin`, where `self.origin` is `"null"`) and takes no grants; on
+  any other origin the call throws `FORMA_E_MOUNT_ORIGIN`.
+
+| Grant | What it allows | Without it |
+|---|---|---|
+| `fetch: { methods?, paths, cookies?, timeoutMs? }` | `data-fetch` with those `methods` (default `['GET']`), to URLs under those `paths` (`'/api/x/'` on the page's origin, or an absolute `https://…/` prefix on another; a prefix without a trailing slash covers that path and the paths below it, never `/api/x-admin`), with the user's cookies only if `cookies: true`, aborted after `timeoutMs` (at most and by default 30,000) | the request is never sent; its `error:` target reads `data-fetch denied: …` |
+| `dom: true` | an element outside the mount root through `$el`, `$event` or `$refs`, and a selector that asks about one | `FORMA_E_GRANT_DOM`; the binding writes nothing |
+| `navigate: true` | `click()`, which follows a link or submits a form in the user's session, and `$dispatch` of an activation event (`click`, `auxclick`, `DOMActivate`, `submit`, `reset`, in any case), which WebKit or Firefox run as activation | `FORMA_E_GRANT_NAVIGATE`; the click is not made, the event not dispatched |
+
+A grant left out of `grants` is not given; leaving out `grants` altogether
+gives every grant. That default is 2.1.0's bridge, so a host can move its
+call sites to `mountMarkup()` first and write grants second, and 3.0.0 turns
+it to none (FORMA-108). Malformed grants throw `FORMA_E_MOUNT_ARGS` at the
+call; mounting a root twice throws `FORMA_E_MOUNT_TWICE`, and `update()` after
+`unmount()` throws `FORMA_E_MOUNT_GONE`.
+
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "binds only under the root it is handed: markup injected outside it stays unbound"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a tiered mount takes its step budget from its call, never from a script tag"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a tiered mount ignores the page directive map"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount refuses any origin but an opaque one, and any grant"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "with explicit empty grants a generated tree binds neither data-fetch nor $el.click()"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant admits only its methods and path prefixes: %j %s"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant's cookies decide the request's credentials"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant's timeout shortens the abort"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$el.click() is denied without navigate and runs with it"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$dispatch of an activation event needs navigate: %s"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a mount call names a known tier, an element and markup, and mounts a root once"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "takes trustedHtml() markup beside a string, and nothing else"
+
+**`$el` stops at the mount root** (L-36). Every hop that yields an element
+(`closest()`, `querySelector()`, `querySelectorAll()`, `children`, the first,
+last, next and previous element, `$event.target`, `$event.currentTarget`,
+`$refs`) hands back an element under the root, or is refused without `dom`.
+`closest()` without `dom` walks only up to the root: it never tests an element
+outside it, and past it answers `null`, as no match does, so
+`$el.closest('body')` reaches nothing and no answer tells an outside ancestor's
+attributes apart. A selector is a read of what it names, so without `dom` it
+must be local: compound selectors (`li.row:not(.done)`, `[data-key]`,
+`:nth-child(2n+1)`), with no combinator, which would ask about an ancestor or
+a sibling (`body .row`, `[data-email^="a"] *`), and no `:has()`, `:scope` or
+`:host`; `:is()`, `:where()` and `:not()` only over local selectors. What the allowlist
+never offers stays unreachable whatever the grants: `parentElement`,
+`parentNode`, `ownerDocument`, `getRootNode()`, `offsetParent`, `shadowRoot`,
+`assignedSlot`, `form`, `labels`, `list`, `ownerSVGElement`, the node
+siblings, `$event.relatedTarget`, `$event.composedPath()`, `$event.view`.
+
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$el.closest('body') reaches nothing without dom"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "closest() without dom never tests an element outside the root: an outside ancestor's attribute cannot be read a character at a time"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "matches() and querySelector(All)() cannot read past the element through %s"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "no hop from $el reaches past the mount root: %s"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a selector that reads past the element needs dom: %s"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "no property or method outside the allowlist reaches another element, granted dom or not: $el.%s"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "no event field outside the allowlist reaches another element, granted dom or not: $event.%s"
+
+**`data-fetch` under a mount** treats a status outside 200-299 as an error:
+`data-fetch answered HTTP 404` lands in the `error:` target and the data
+target keeps what it had. `$refetch` reaches only the fetches of its own mount.
+
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a 404 with a JSON body lands in the error: target, not the data target"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$refetch reaches only the fetches of its own mount"
+
+**Every denial is a coded diagnostic**, whatever `config.diagnostics` or the
+page's switch says: a `formajs:diagnostic` event, once per mount and expression,
+whose `detail` is `{ kind: 'grant-denied', code, grant, mount, tier, expr,
+reason, count }`, with `code` one of `FORMA_E_GRANT_FETCH`, `FORMA_E_GRANT_DOM`
+and `FORMA_E_GRANT_NAVIGATE`. An application counts denials per tier from it.
+
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a seeded denial raises one coded diagnostic, whatever the page's diagnostics switch says"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a mount takes its diagnostics switch from its call, not the page"
+
+**Writing grants from observed use.** In a [development
+build](STABILITY.md#development-builds), `handle.grantsUsed()` returns the
+grants the mount has used so far, written as grants: the methods and exact
+paths its `data-fetch` sent and whether the user's cookies went with them,
+`dom: true` if it reached past its root, `navigate: true` if it clicked. Mount
+a widget under the default, exercise it, and the report is the grant set to
+review (L-36: a set derived this way takes effect once the founder approves
+it, after the hostile corpus has run). A production build returns `null`.
+
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "the development report lists exactly the grants a fixture widget used"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a production build carries neither the grant report nor reconcile's warning"
+
+**The shared responsibility** (v2 10.1). The application chooses each mount's
+tier and passes grants only for content whose hash matches what its reviewer
+approved, keeping the hash, the grants and the approver together (L-47);
+markup whose hash differs mounts only in tier `'unreviewed'`. Forma enforces
+what the mount grants. It cannot check which tier content deserves.
+
+**In 2.x the tierless paths still run, unless the page turns them off.** By
+default `@getforma/core/runtime` binds the page's `data-forma-state` on load and
+watches `body`, and `mount()`, `initRuntime()` and `reconcile()` bind what they
+are given with every power, as in 2.0.x; markup injected outside a tiered root
+is bound by those paths. None of them binds or disposes anything under a
+tiered root, and a tierless scope around one never binds the mount's elements
+or hands out `$refs` to them.
+
+A page that hosts tiered mounts turns every tierless path off with
+`data-forma-mount="manual"` on a `<script>` element:
+
+```html
+<!-- CDN build: on the runtime's own script element -->
+<script src="/vendor/formajs-runtime.global.js" data-forma-mount="manual"></script>
+<!-- ESM build: on the module script that loads the application -->
+<script type="module" src="/app.js" data-forma-mount="manual"></script>
+```
+
+Then nothing binds but `mountMarkup()`: no auto-mount on load, no `body`
+observer, and `mount()`, `initRuntime()` and `reconcile()` throw
+`FORMA_E_MOUNT_MANUAL` before touching the page, so markup injected outside a
+tiered root stays unbound (SR16, in 2.x). The switch is read once, when the
+runtime first runs, before it binds anything: from its own `<script>` element in
+a CDN build, else from any `<script>` that carries it, since an ESM build has
+no element of its own. Only `manual` counts, and one element saying it is
+enough, so the switch can only take binding paths away; removing or changing
+the attribute later changes nothing. It is an attribute, so it needs no inline
+script. Without it, 3.0.0 makes this the only behaviour (FORMA-108).
+
+`reconcile()` is deprecated: a development build logs
+`FORMA_W_DEPRECATED_RECONCILE` on its first call, and 3.0.0 removes it with
+the auto-mount and the observer. A mount's own `update()` re-renders its whole
+root, including the root of a mount nested in it: unmount nested mounts first.
+
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "no tierless path binds markup under a tiered root"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "the mount switch is read once, from the runtime's own script element"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "reconcile behaves as at 2.0.x and warns once in development"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "bindings a tierless path made under the root go first, with what they rendered"
+
+---
+
 ## Where to go next
 
 - [`../CSP.md`](../CSP.md) — the full CSP story: what a strict policy blocks,

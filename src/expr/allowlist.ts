@@ -16,7 +16,7 @@
  * the deny list has to name the keys it denies, and the method tables have to
  * capture intrinsics off `Array.prototype` and friends.
  */
-import { hostFn, hostNamespace, type Host } from './host';
+import { hostFn, hostNamespace, type ExprGrant, type Host } from './host';
 
 /**
  * Keys no receiver ever exposes, whatever the syntax that produced them —
@@ -194,6 +194,27 @@ export const ELEMENT_METHOD_RESULT: Readonly<Record<string, 'element' | 'element
 /** Plain-data view of a DOMRect — the real one is not a plain object. */
 export const RECT_KEYS: readonly string[] = ['x', 'y', 'width', 'height', 'top', 'right', 'bottom', 'left'];
 
+/**
+ * Element methods that need a grant under a tiered mount (FORMA-128, DR-15).
+ * `click()` runs the element's activation behaviour, which follows a link or
+ * submits a form in the user's session, so it needs `navigate`. A legacy
+ * (tierless) mount has every grant.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "$el.click() is denied without navigate and runs with it"
+ */
+export const ELEMENT_METHOD_GRANT: Readonly<Record<string, ExprGrant>> = table({
+  click: 'navigate',
+}) as Readonly<Record<string, ExprGrant>>;
+
+/**
+ * Element methods whose first argument is a selector. A selector is a read of
+ * what it names, so under a tiered mount without `dom` it must be local
+ * (`isLocalSelector`): it may not ask about an ancestor or a sibling.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a selector that reads past the element needs dom: %s"
+ */
+export const ELEMENT_SELECTOR_METHODS: ReadonlySet<string> = new Set([
+  'closest', 'matches', 'querySelector', 'querySelectorAll',
+]);
+
 /** Event properties an expression may read. */
 export const EVENT_READ_PROPS: ReadonlySet<string> = new Set([
   'altKey', 'button', 'clientX', 'clientY', 'code', 'ctrlKey', 'deltaX',
@@ -280,6 +301,8 @@ export function allowlistSnapshot(): string[] {
   push('element:write', ELEMENT_WRITE_PROPS);
   push('element:method', ELEMENT_METHODS);
   push('element:host', Object.keys(ELEMENT_HOST_PROPS));
+  for (const [method, grant] of Object.entries(ELEMENT_METHOD_GRANT)) names.push(`element:needs-${grant}.${method}`);
+  push('element:selector', ELEMENT_SELECTOR_METHODS);
   push('event:read', EVENT_READ_PROPS);
   push('event:method', EVENT_METHODS);
   push('event:host', EVENT_HOST_PROPS);

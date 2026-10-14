@@ -103,7 +103,12 @@ jobs:
     # 60, was a round number nobody had measured — and it was this fleet's ONLY
     # timeout-minutes anywhere, sitting on the one job that never runs per-PR,
     # so effective per-PR timeout coverage was exactly zero.
-    timeout-minutes: 35
+    # MEASURED on a hosted runner (FORMA-128, workflow_dispatch run
+    # 38584952503): 325 of 338 probes in 35.4 min, about 6.5 s a probe, when
+    # the 35-minute limit cancelled it; 274 had taken 25.5 min. The corpus is
+    # 328 with FORMA-128's tiered-mount probes, so a run is about 36 min; 75 is
+    # ~2x that, as above.
+    timeout-minutes: 75
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5

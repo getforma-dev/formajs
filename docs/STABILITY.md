@@ -29,6 +29,8 @@ package shows it as `@deprecated` in its types. See
 | `createPortal`, `svg()`, `template()` | **Stable** | |
 | `trustedHtml()`, the raw-HTML entry every raw sink takes | **Stable** | A plain string at a raw sink, and `h('script')`, are deprecated forms: see [Deprecated forms](#deprecated-forms). |
 | `data-fetch`, `data-transition:*`, `data-ref` | **Stable** | |
+| Tiered mount (`mountMarkup(root, markup, { tier, grants, config })`) | **Beta** | New in 2.1.0: binds only under the root it is handed, with `fetch`, `dom` and `navigate` grants and a coded diagnostic per denial; see [HTML-RUNTIME.md](HTML-RUNTIME.md#mounting-markup-you-did-not-write-tiers-and-grants). Leaving out `grants` gives every grant until 3.0.0, which gives none and pins the signature (FORMA-108). |
+| `reconcile()` from `@getforma/core/runtime`, and the runtime's auto-mount of `data-forma-state` on load and through a `body` observer | **Deprecated** | Removed in 3.0.0: they bind with every power, wherever markup lands. Mount with `mountMarkup()` and a tier. `reconcile()` logs `FORMA_W_DEPRECATED_RECONCILE`; the auto-mount logs nothing in 2.x. A page turns all of them off now with `data-forma-mount="manual"` on a `<script>` element. |
 | Server functions (`@getforma/core/server`: `"use server"` RPC, `createAction`, the revalidation helpers) | **Deprecated** | Removed in 3.0.0. Serve the call from a route in the application's Rust server. Logs `FORMA_W_DEPRECATED_SERVER`. |
 | SSR (`@getforma/core/ssr`: `renderToString`, `renderToStream`) | **Deprecated** | Removed in 3.0.0. Render on the server with the Rust walker (forma-server); its form controls differ from the walker's, see [SSR form controls](#ssr-form-controls). Logs `FORMA_W_DEPRECATED_SSR`. |
 | Streaming SSR under strict CSP | **Known gap** | Suspense swap scripts carry no `nonce`, so a strict `script-src 'nonce-…'` blocks them and out-of-order content never swaps in. Use non-streaming SSR under strict CSP; do not add `'unsafe-inline'`. See [`../CSP.md`](../CSP.md). |
@@ -50,17 +52,18 @@ output and no `exports` key in any release from 0.7.1 through 1.5.0, so
 
 ## Deprecated entry points
 
-`@getforma/core/server`, `@getforma/core/ssr` and `@getforma/core/wasm` keep
-working through 2.x and are removed in 3.0.0.
+`@getforma/core/server`, `@getforma/core/ssr`, `@getforma/core/wasm` and the
+runtime's `reconcile()` keep working through 2.x and are removed in 3.0.0.
 
 | Entry | Code | Instead |
 |---|---|---|
 | `@getforma/core/server` | `FORMA_W_DEPRECATED_SERVER` | A route in the application's Rust server, called with `fetch` |
 | `@getforma/core/ssr` | `FORMA_W_DEPRECATED_SSR` | The Rust walker: forma-server renders the page |
 | `@getforma/core/wasm` | `FORMA_W_DEPRECATED_WASM` | Core's `h()`, which islands already re-render with |
+| `reconcile()` from `@getforma/core/runtime` | `FORMA_W_DEPRECATED_RECONCILE` | `mountMarkup(root, markup, { tier, grants })` |
 
-The first time one of them is loaded in a [development build](#development-builds),
-it logs its code once, as `[forma] FORMA_W_DEPRECATED_SSR: …`, with what
+The first time one of them is loaded in a [development build](#development-builds)
+(for `reconcile()`, the first time it is called), it logs its code once, as `[forma] FORMA_W_DEPRECATED_SSR: …`, with what
 replaces it. A production build logs nothing: its JavaScript is byte for byte
 what it was before the deprecation, and `scripts/verify-dist.mjs` fails a build
 that leaks a code into one. An installed package also shows the deprecation in
@@ -70,6 +73,8 @@ codes are listed here and nowhere else.
 
 Verified by `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its deprecation once in development, with its code"
 Verified by `src/__tests__/deprecated-entries.test.ts` > "a production build of each deprecated entry carries no warning"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "reconcile behaves as at 2.0.x and warns once in development"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a production build carries neither the grant report nor reconcile's warning"
 
 ## Development builds
 

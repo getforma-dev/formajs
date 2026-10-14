@@ -80,6 +80,7 @@ const EXPECTED: readonly string[] = [
   "element:method.scrollIntoView",
   "element:method.setAttribute",
   "element:method.toggleAttribute",
+  "element:needs-navigate.click",
   "element:read.checked",
   "element:read.childElementCount",
   "element:read.className",
@@ -111,6 +112,10 @@ const EXPECTED: readonly string[] = [
   "element:read.textContent",
   "element:read.type",
   "element:read.value",
+  "element:selector.closest",
+  "element:selector.matches",
+  "element:selector.querySelector",
+  "element:selector.querySelectorAll",
   "element:write.checked",
   "element:write.className",
   "element:write.disabled",
@@ -235,7 +240,8 @@ const EXPECTED: readonly string[] = [
   "style:deny.cssText",
   "style:method.getPropertyValue",
   "style:method.removeProperty",
-  "style:method.setProperty",];
+  "style:method.setProperty",
+];
 
 describe('the expression allowlist', () => {
   it('the allowlist is exactly this set of names', () => {

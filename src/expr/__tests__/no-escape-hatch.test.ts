@@ -37,7 +37,7 @@ describe('src/expr has no escape hatch', () => {
     // A gate that silently stops finding files passes forever.
     expect(modules()).toEqual([
       'allowlist.ts', 'ast.ts', 'cost.ts', 'errors.ts', 'host.ts', 'index.ts',
-      'interp.ts', 'lexer.ts', 'parser.ts', 'validate.ts',
+      'interp.ts', 'lexer.ts', 'parser.ts', 'selector.ts', 'validate.ts',
     ]);
   });
 
@@ -98,7 +98,8 @@ describe('src/expr has no escape hatch', () => {
    * is the same mistake as widening dispatch, one file further out.
    */
   const OWNED_TABLES = new Set([
-    'COSTS', 'ELEMENT_HOST_PROPS', 'ELEMENT_METHOD_RESULT', 'HOF_CALLBACK_PARAMS', 'NAMES', 'SAFE_GLOBALS',
+    'COSTS', 'ELEMENT_HOST_PROPS', 'ELEMENT_METHOD_GRANT', 'ELEMENT_METHOD_RESULT', 'HOF_CALLBACK_PARAMS', 'NAMES',
+    'SAFE_GLOBALS',
     'names',
     'tbl', 'members', 'ctx.scope.getters', 'ctx.scope.setters',
     'f.values', 'node.exprs', 'node.quasis', 'node.values',

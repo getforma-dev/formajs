@@ -1,12 +1,14 @@
 /**
- * The three entry points 2.x deprecates and 3.0.0 removes (FORMA-131; v2's
- * DR-22 to DR-24): the code each logs, once, the first time it is loaded in a
- * development build, and the line that goes with it.
+ * What 2.x deprecates and 3.0.0 removes: three entry points (FORMA-131; v2's
+ * DR-22 to DR-24), each logging its code once, the first time it is loaded in
+ * a development build, and the runtime's tierless `reconcile()` (FORMA-128;
+ * DR-14), logging its code the first time it is called in one. Each code comes
+ * with the line that goes with it.
  *
- * Only `src/server/index.ts`, `src/wasm/forma-wasm.ts` and `src/ssr/index.ts`
- * import this module, each behind a condition the build folds to `false`.
- * The module has no side effects, so the build then drops the import as well,
- * and no published artifact contains any of it.
+ * Only `src/server/index.ts`, `src/wasm/forma-wasm.ts`, `src/ssr/index.ts` and
+ * `src/runtime.ts` import this module, each behind a condition the build folds
+ * to `false`. The module has no side effects, so the build then drops the
+ * import as well, and no published artifact contains any of it.
  *
  * Verified by: src/__tests__/deprecated-entries.test.ts > "a production build of each deprecated entry carries no warning"
  */
@@ -22,6 +24,10 @@ export const DEPRECATIONS = {
     '@getforma/core/ssr (renderToString, renderToStream) is deprecated and will be removed in 3.0.0. ' +
     'Render on the server with the Rust walker (forma-server). Unlike the walker, renderToString ' +
     "writes a textarea's and a select's value as a value attribute, which the HTML parser ignores.",
+  FORMA_W_DEPRECATED_RECONCILE:
+    'reconcile() from @getforma/core/runtime binds markup with every power the runtime has (the tierless ' +
+    'path) and will be removed in 3.0.0. Mount through mountMarkup(root, markup, { tier, grants }), ' +
+    'which binds only under the root it is handed, with the grants it names.',
 } as const;
 
 /** The code a deprecated entry logs. */

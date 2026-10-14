@@ -22,8 +22,9 @@ import { validateExpression, validateProgram } from './validate';
 import { charge, enter, evalExpr, leave, makeCtx, room, runProgram, type Meter, type ScopeLike } from './interp';
 
 export { LIMITS } from './ast';
-export { isExprError, type FormaExprError, type ExprErrorCode } from './errors';
-export { hostFn, hostObject, isHost, type Host } from './host';
+export { exprError, isExprError, type FormaExprError, type ExprErrorCode } from './errors';
+export { hostFn, hostObject, isHost, type Bound, type ExprGrant, type Host } from './host';
+export { isLocalSelector } from './selector';
 export { allowlistSnapshot, SAFE_GLOBALS } from './allowlist';
 export { GROW, weigh } from './cost';
 export { running, safeKey, safeRead, setStepBudget, getStepBudget, type Meter, type ScopeLike } from './interp';

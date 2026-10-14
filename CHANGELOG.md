@@ -6,6 +6,82 @@ All notable changes to this project will be documented in this file.
 
 ### Security
 
+- **The tiered mount: markup a generator wrote mounts under a root it is
+  handed, with grants** (FORMA-128; decision brief DR-14, DR-15, L-36, L-47;
+  v2 TH11, SR16, SR31, SR37's runtime half). The script-tag runtime binds
+  every `data-forma-state` that reaches the document, and an expression can
+  reach any element `closest()` and `querySelector()` reach and send
+  `data-fetch` with the user's cookies. `mountMarkup(root, markup, { tier,
+  grants, config })` (under *Added*) is the path for markup the build did not
+  compile:
+  - it binds only under its root, never by watching `body`, and none of the
+    tierless paths (the auto-mount, the observer, `mount()`, `unmount()`,
+    `destroyRuntime()`, `reconcile()`) binds or disposes anything under it, nor
+    binds the mount's elements from a scope around it;
+  - its configuration comes only from its call: a script tag's
+    `data-forma-expr-budget` (up to 100 times the step budget), the page's
+    diagnostics switch and the server's directive map do not reach it;
+  - every hop from `$el`, `$event` or `$refs` that yields an element is
+    checked against the root, and one past it is refused with
+    `FORMA_E_GRANT_DOM` unless the mount grants `dom`; without `dom`,
+    `closest()` walks only up to the root and answers `null` past it, never
+    testing an element outside it (so `$el.closest('body')` reaches nothing,
+    and no answer can read an outside ancestor's attribute a character at a
+    time: formajs#30's review, B1), and a selector given to `matches()`,
+    `closest()` or `querySelector(All)()` must be local (no combinator, which
+    would ask about an ancestor or a sibling, and no `:has()`, `:scope` or
+    `:host`);
+  - `data-fetch` sends only what the `fetch` grant names (methods, path
+    prefixes checked on the normalised path, cookies or not, a timeout up to
+    30 s), and `click()` needs `navigate`, as does `$dispatch` of an
+    activation event (`click`, `auxclick`, `DOMActivate`, `submit`,
+    `reset`), which WebKit or Firefox run as activation (review S1); a status
+    outside 200-299 is an error in the `error:` target, never data;
+    `$refetch` reaches only its own mount's fetches;
+  - every denial is a coded `formajs:diagnostic` (`kind: 'grant-denied'`,
+    `FORMA_E_GRANT_FETCH`, `_DOM` or `_NAVIGATE`, with the grant, the mount's
+    name and its tier), whatever any diagnostics switch says, counted per
+    mount;
+  - an `unreviewed` mount refuses every origin but an opaque one, and takes no
+    grants;
+  - a page turns every tierless path off with `data-forma-mount="manual"` on
+    the runtime's own `<script>` (a CDN build) or on the module script that
+    loads the application (an ESM build): no auto-mount, no `body` observer,
+    and `mount()`, `initRuntime()` and `reconcile()` throw
+    `FORMA_E_MOUNT_MANUAL`, so only `mountMarkup()` binds and markup injected
+    outside a tiered root stays unbound (SR16, in 2.x). The switch is read
+    once, before the first bind; only `manual` counts and one element is
+    enough, so it can only take binding paths away; it needs no inline script.
+    The default stays 2.0.x's auto-mount.
+
+  Leaving out `grants` gives every grant, the bridge to 3.0.0's none
+  (FORMA-108); a development build reports what each mount used. Without the
+  switch, the tierless paths still bind markup injected outside a tiered root
+  wherever a page loads the runtime, until 3.0.0 removes them. SECURITY.md lists what a mount does not bound
+  (`$dispatch`, focus and scroll, `data-persist`'s shared keys, inherited
+  pseudo-class bits, redirects). Tests: `src/__tests__/runtime-tiered-mount.test.ts`
+  (SR16: "binds only under the root it is handed: markup injected outside it
+  stays unbound", "no tierless path binds markup under a tiered root";
+  L-36: "$el.closest('body') reaches nothing without dom", "no hop from $el
+  reaches past the mount root: %s" with its completeness check over the
+  allowlist, "a selector that reads past the element needs dom: %s"; SR31:
+  "with explicit empty grants a generated tree binds neither data-fetch nor
+  $el.click()", "a 404 with a JSON body lands in the error: target, not the
+  data target"; SR37: "a seeded denial raises one coded diagnostic, whatever
+  the page's diagnostics switch says"), `src/expr/__tests__/selector.test.ts`,
+  and 44 new mutation probes (`probes/corpus.json`, `tiered/*`, `selector/*`,
+  `runtime/reconcile-no-deprecation`), all caught. The allowlist snapshot
+  gains `element:needs-navigate.click` and the four `element:selector.*`
+  methods: a restriction recorded where the capabilities are, not a new one.
+- **Size** (L-51): measured on `main` with FORMA-126/127 and FORMA-173, the CDN
+  runtime grows by 3,753 B gzipped (36,576 to 40,329 B) and the hardened
+  runtime by 3,745 B (35,599 to 39,344 B); their gates rise from 37,000 to
+  40,500 B and from 36,000 to 39,500 B. The bytes are the
+  mount, its grant checks, the selector check (about 450 B), the page's
+  mount switch (about 215 B), and the review's confined `closest()` and gated
+  `$dispatch` (about 225 B). The core entry and the browser ESM bundle are
+  unchanged.
+
 - **Operators that build or read strings are charged before they run**
   (FORMA-028, DR-16). Core 2.0.3 charged every built-in call but no operator,
   and the engine keeps a joined string as a rope that its first read copies
@@ -258,6 +334,32 @@ All notable changes to this project will be documented in this file.
 
 ### Added
 
+- **`mountMarkup(root, markup, { tier, grants, config })`, the tiered mount,
+  from `@getforma/core/runtime`** (FORMA-128; DR-14, DR-15). The markup is a
+  string or `trustedHtml(markup)`, as `reconcile()` takes. Tiers
+  `'compiled'`, `'reviewed'` and `'unreviewed'`; grants `fetch` (`methods`,
+  default `['GET']`; `paths`, prefixes on the page's origin or absolute
+  `http(s)` ones; `cookies`, default false; `timeoutMs`, at most and by
+  default 30,000), `dom` and `navigate`; configuration `name`, `exprBudget`,
+  `diagnostics` and `autoContainment`. It returns a handle: `update(markup)`
+  reconciles, `unmount()` disposes and empties the root, and
+  `grantsUsed()` returns, in a development build, the grants the mount has
+  used, written as grants (`null` in production), so a reviewer writes grants
+  from observed use. Misuse throws a `FORMA_E_MOUNT_*` code at the call.
+  `docs/HTML-RUNTIME.md` has the reference and the shared responsibility: the
+  application chooses the tier and passes grants only for content whose hash
+  was reviewed (L-47). Tests: `src/__tests__/runtime-tiered-mount.test.ts`
+  ("the development report lists exactly the grants a fixture widget used",
+  "a request sent without cookies is reported without them", "a fetch grant
+  admits only its methods and path prefixes: %j %s", "a fetch grant's cookies
+  decide the request's credentials", "a fetch grant's timeout shortens the
+  abort", "$el.click() is denied without navigate and runs with it", "a tiered
+  mount takes its step budget from its call, never from a script tag", "a
+  mount call names a known tier, an element and markup, and mounts a root
+  once", "unmount() disposes every binding and empties the root; update()
+  after it throws", "bindings a tierless path made under the root go first,
+  with what they rendered").
+
 - **`browserOnly(component)`, the browser-only marker** (DR-1, L-1, FORMA-119).
   Wraps a component that renders in the browser alone; one name, so a search
   finds every use. `@getforma/compiler` 0.3.7 and later emit
@@ -434,6 +536,18 @@ All notable changes to this project will be documented in this file.
   size table).
 
 ### Deprecated
+
+- **`reconcile()` from `@getforma/core/runtime`, and the runtime's auto-mount,
+  are deprecated, and are removed in 3.0.0** (FORMA-128, FORMA-108; DR-14).
+  Both bind with every power wherever markup lands; mount with `mountMarkup()`
+  and a tier instead. `reconcile()` behaves as at 2.0.x (a 404's body is still
+  its data) and, in a development build, logs `FORMA_W_DEPRECATED_RECONCILE`
+  once on its first call; production files carry neither the line nor the
+  grant report. `docs/STABILITY.md` lists the code. Tests:
+  `src/__tests__/runtime-tiered-mount.test.ts` > "reconcile behaves as at
+  2.0.x and warns once in development", "a production build carries neither
+  the grant report nor reconcile's warning" (the real tsup config) and its
+  control.
 
 - **A value that is not `trustedHtml()` given to a raw sink, the HTML
   runtime's `srcdoc` bindings, and `h('script')`** (DR-19, L-18, FORMA-126).
