@@ -170,6 +170,7 @@ import {
   isExprError,
   isHost,
   runHandler,
+  running,
   setStepBudget,
   weigh,
   type FormaExprError,
@@ -1183,7 +1184,7 @@ const EXPR_FAILED = Symbol('forma-expression-failed');
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "ten bindings at the cap spend one budget per task and all of them render"
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding over the budget on its own is reported, not retried"
  */
-const meter: Meter = { steps: 0, cost: 0 };
+const meter: Required<Meter> = { steps: 0, cost: 0, cap: Infinity, lost: 0 };
 let meterEvent: Event | null = null;
 let armed = false;
 let deferred = false;
@@ -1194,12 +1195,15 @@ const staleCells = new Set<() => unknown>();
 /**
  * An event the runtime has not seen starts a task: the meter is zeroed, as the
  * timer would have, in case the event ran first (input is scheduled ahead of
- * timers). Handlers, and `data-model` writes, run under it.
+ * timers). Handlers, and `data-model` writes, run under it. An event
+ * dispatched from inside an evaluation (`$dispatch`, `$el.click()`) is part
+ * of that evaluation's task: the meter, and the cap a wait set, are kept.
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding a keystroke updates starts on a fresh budget"
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "a $dispatch from inside a binding keeps the task's cap"
  */
 function begin(e: Event): void {
-  if (e !== meterEvent) {
-    meter.steps = meter.cost = 0;
+  if (e !== meterEvent && !running()) {
+    meter.steps = meter.cost = meter.lost = 0;
     meter.cap = Infinity;
     meterEvent = e;
   }
@@ -1216,7 +1220,7 @@ function spend(): void {
 
 function nextTask(): void {
   armed = false;
-  meter.steps = meter.cost = 0;
+  meter.steps = meter.cost = meter.lost = 0;
   meter.cap = Infinity;
   meterEvent = null;
   if (!deferred) return;
@@ -1247,14 +1251,28 @@ function nextTask(): void {
 const WAITING_CAP = 10_000;
 
 /**
+ * What the charges refused while capped may count in all in one task. The cap
+ * bounds what each binding after a wait counts; this bounds them together:
+ * once they pass it the cap drops to 0, and every later charge in the task is
+ * refused at once (a list on its length alone), so a light binding that
+ * charges anything waits a tick too. The refusals after a wait then count at
+ * most this and one cap, however many bindings wait: without it, 400 bindings
+ * each a little over the cap counted 10,000 units apiece, a 71 ms task at 4x
+ * (FORMA-173 review, H1).
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "the cap drops to 0 once the task's refusals have counted the allowance"
+ */
+const WAITING_ALLOWANCE = 50_000;
+
+/**
  * Re-run the binding (or computed) being evaluated in the next task, and cap
- * each charge the rest of this task counts (`WAITING_CAP`).
+ * each charge the rest of this task counts (`WAITING_CAP`, or 0 once the
+ * refusals have counted `WAITING_ALLOWANCE`).
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "bindings that each weigh most of the budget are refused cheaply while they wait"
  */
 function later(): void {
   retries();
   deferred = true;
-  meter.cap = WAITING_CAP;
+  meter.cap = meter.lost > WAITING_ALLOWANCE ? 0 : WAITING_CAP;
   spend();
 }
 
@@ -2484,7 +2502,7 @@ function destroyRuntime(): void {
   clearExpressionCache();
   // Nothing mounted is left to retry, and the next init starts a fresh task.
   staleCells.clear();
-  meter.steps = meter.cost = 0;
+  meter.steps = meter.cost = meter.lost = 0;
   meter.cap = Infinity;
 }
 

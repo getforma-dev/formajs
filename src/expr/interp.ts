@@ -82,6 +82,12 @@ export interface Meter {
    * one is refused after counting the cap, and waits too (FORMA-173).
    */
   cap?: number;
+  /**
+   * Units counted by charges refused while a cap was set: weighed, then
+   * thrown away. The runtime drops the cap to 0 once they pass its allowance,
+   * so that work is bounded per task, not per binding (FORMA-173 review, H1).
+   */
+  lost?: number;
 }
 
 export interface EvalCtx {
@@ -96,8 +102,13 @@ export interface EvalCtx {
   stepsBefore: boolean;
   /** Whether it had spent allocation units: steps spent do not change whether a charge fits. */
   unitsBefore: boolean;
-  /** The task's cap on one charge (`Meter.cap`), or Infinity. */
-  cap: number;
+  /**
+   * The task's meter, if any. Its cap is read at each charge, not copied when
+   * the evaluation starts: a binding the reactive flush runs inside another
+   * evaluation (after a handler that evaluation dispatched) sees a cap a wait
+   * set while the outer one ran.
+   */
+  meter: Meter | null;
 }
 
 /** Prototype of a plain object literal, captured once. */
@@ -128,8 +139,15 @@ export function makeCtx(scope: ScopeLike, meter?: Meter | null): EvalCtx {
   const base = cur ?? meter;
   const steps = base ? base.steps : 0;
   const cost = base ? base.cost : 0;
-  const cap = base?.cap ?? Infinity;
-  return { scope, frame: null, steps, budget: stepBudget, cost, stepsBefore: steps > 0, unitsBefore: cost > 0, cap };
+  return { scope, frame: null, steps, budget: stepBudget, cost, stepsBefore: steps > 0, unitsBefore: cost > 0, meter: meter ?? cur?.meter ?? null };
+}
+
+/**
+ * Whether an evaluation is running: an event dispatched from inside one
+ * (`$dispatch`, `$el.click()`) is part of its task, not a new one.
+ */
+export function running(): boolean {
+  return cur !== null;
 }
 
 /** Make `ctx` the running evaluation; returns the one it was nested in. */
@@ -183,7 +201,7 @@ const NAMES: Record<string, Record<string, string>> = Object.create(null) as Rec
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "bindings that each weigh most of the budget are refused cheaply while they wait"
  */
 export function room(ctx: EvalCtx): number {
-  return Math.min(LIMITS.ALLOC_BUDGET - ctx.cost, ctx.cap);
+  return Math.min(LIMITS.ALLOC_BUDGET - ctx.cost, ctx.meter?.cap ?? Infinity);
 }
 
 /**
@@ -198,15 +216,20 @@ export function room(ctx: EvalCtx): number {
  * A charge is sized that exactly only when a cost-table row sizes it directly
  * (`Array.from`'s length); a value weighed late in a busy task is counted only
  * to the room left, so it waits once and is weighed in full when it runs first.
+ * While a cap is set, what a refused charge counted (at most the cap) is
+ * added to the meter's `lost`, the work the runtime's allowance bounds.
  * Verified by: src/expr/__tests__/native-cost.test.ts > "the budget is per evaluation and cumulative across its calls"
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding too heavy for any task is priced once and reported once"
  */
 export function charge(ctx: EvalCtx, units: number, what: string, at: number): void {
   const spent = ctx.cost;
-  if (!(units >= 0 && units <= ctx.cap && (ctx.cost += units) <= LIMITS.ALLOC_BUDGET)) {
+  const m = ctx.meter;
+  const cap = m?.cap ?? Infinity;
+  if (!(units >= 0 && units <= cap && (ctx.cost += units) <= LIMITS.ALLOC_BUDGET)) {
     ctx.cost = spent;
+    if (units > 0 && cap < Infinity) m!.lost = (m!.lost ?? 0) + Math.min(units, cap);
     const err = exprError('FORMA_E_BUDGET', `${what} would exceed the ${LIMITS.ALLOC_BUDGET}-unit allocation budget`, at);
-    throw over(err, units <= LIMITS.ALLOC_BUDGET && (units > ctx.cap || ctx.unitsBefore));
+    throw over(err, units <= LIMITS.ALLOC_BUDGET && (units > cap || ctx.unitsBefore));
   }
 }
 

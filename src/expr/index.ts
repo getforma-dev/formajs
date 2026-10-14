@@ -26,7 +26,7 @@ export { isExprError, type FormaExprError, type ExprErrorCode } from './errors';
 export { hostFn, hostObject, isHost, type Host } from './host';
 export { allowlistSnapshot, SAFE_GLOBALS } from './allowlist';
 export { GROW, weigh } from './cost';
-export { safeKey, safeRead, setStepBudget, getStepBudget, type Meter, type ScopeLike } from './interp';
+export { running, safeKey, safeRead, setStepBudget, getStepBudget, type Meter, type ScopeLike } from './interp';
 
 const CACHE_MAX = 2048;
 

@@ -2100,8 +2100,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "  if (e !== meterEvent) {\n    meter.steps = meter.cost = 0;",
-  "replace": "  if (e !== meterEvent) {\n    meter.steps += 0;",
+  "find": "  if (e !== meterEvent && !running()) {\n    meter.steps = meter.cost = meter.lost = 0;",
+  "replace": "  if (e !== meterEvent && !running()) {\n    meter.steps += 0;",
   "note": "a handler for a new event inherits what an earlier task spent, so a click can be refused for work it did not do (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"the handlers one event reaches share one budget\""
  },
  {
@@ -2160,8 +2160,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    throw over(err, units <= LIMITS.ALLOC_BUDGET && (units > ctx.cap || ctx.unitsBefore));",
-  "replace": "    throw over(err, units > ctx.cap || ctx.unitsBefore);",
+  "find": "    throw over(err, units <= LIMITS.ALLOC_BUDGET && (units > cap || ctx.unitsBefore));",
+  "replace": "    throw over(err, units > cap || ctx.unitsBefore);",
   "note": "a charge larger than the whole budget is deferred when the task had spent anything, so it is priced again in every retry tick before it is reported (FORMA-028 review, S2). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a binding too heavy for any task is priced once and reported once\""
  },
  {
@@ -2170,7 +2170,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "  return Math.min(LIMITS.ALLOC_BUDGET - ctx.cost, ctx.cap);",
+  "find": "  return Math.min(LIMITS.ALLOC_BUDGET - ctx.cost, ctx.meter?.cap ?? Infinity);",
   "replace": "  return LIMITS.ALLOC_BUDGET;",
   "note": "a cost is counted to the whole budget, so every binding waiting for the next task weighs its value in full again in every retry tick: twenty such bindings made a 53 ms task at 4x (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"bindings that each weigh most of the budget are refused cheaply while they wait\""
  },
@@ -2180,8 +2180,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "unitsBefore: cost > 0, cap };",
-  "replace": "unitsBefore: steps + cost > 0, cap };",
+  "find": "unitsBefore: cost > 0,",
+  "replace": "unitsBefore: steps + cost > 0,",
   "note": "an allocation refusal is deferred because the task spent steps, though steps do not change whether a charge fits, so a binding over the budget on its own is priced again in the next task before it is reported (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"an allocation refusal after a task spent only steps is reported at once\""
  },
  {
@@ -2190,7 +2190,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "  meter.cap = WAITING_CAP;\n  spend();",
+  "find": "  meter.cap = meter.lost > WAITING_ALLOWANCE ? 0 : WAITING_CAP;\n  spend();",
   "replace": "  spend();",
   "note": "after a binding waits, the bindings after it count each charge to the room left, so each a little heavier than that room weighs its value that far before it is refused: twenty made a 57 ms task at 4x (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"bindings that each weigh most of the budget are refused cheaply while they wait\""
  },
@@ -2210,8 +2210,38 @@
   "tags": [
    "security"
   ],
-  "find": "units >= 0 && units <= ctx.cap && (ctx.cost += units)",
+  "find": "units >= 0 && units <= cap && (ctx.cost += units)",
   "replace": "units >= 0 && (ctx.cost += units)",
   "note": "a charge counted only to the cap is a lower bound, and is admitted against the room left: a value heavier than the cap is converted in full in a task that had no room for it (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a light binding after one that waits renders in the same task\""
+ },
+ {
+  "id": "runtime/waiting-allowance-unbounded",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  meter.cap = meter.lost > WAITING_ALLOWANCE ? 0 : WAITING_CAP;",
+  "replace": "  meter.cap = WAITING_CAP;",
+  "note": "the cap bounds what each binding after a wait counts but not what they count together: 400 bindings each a little over the cap counted 10,000 units apiece, a 71 ms task at 4x (FORMA-173 review, H1). Verified by: src/__tests__/runtime-task-budget.test.ts > \"the cap drops to 0 once the task's refusals have counted the allowance\""
+ },
+ {
+  "id": "expr/refusals-not-counted",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (units > 0 && cap < Infinity) m!.lost = (m!.lost ?? 0) + Math.min(units, cap);\n",
+  "replace": "",
+  "note": "what a charge refused while capped counted is not added to the meter's lost units, so the allowance is never reached and the cap never drops (FORMA-173 review, H1). Verified by: src/__tests__/runtime-task-budget.test.ts > \"the cap drops to 0 once the task's refusals have counted the allowance\""
+ },
+ {
+  "id": "runtime/dispatch-resets-cap",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (e !== meterEvent && !running()) {",
+  "replace": "  if (e !== meterEvent) {",
+  "note": "a handler a binding's $dispatch reaches starts a task of its own and resets the cap a wait set, so a later binding is counted to the room left again (FORMA-173 review, nit). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a $dispatch from inside a binding keeps the task's cap\""
  }
 ]

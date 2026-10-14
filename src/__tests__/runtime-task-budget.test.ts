@@ -14,6 +14,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import * as runtime from '../runtime';
+import { batch } from '../reactive';
 
 const tick = (): Promise<void> => new Promise((r) => setTimeout(r, 0));
 
@@ -46,6 +47,15 @@ describe('the task budget (FORMA-028)', () => {
 
   const texts = (): string[] => [...container.querySelectorAll('[data-out]')].map((e) => e.textContent ?? '');
   const codes = (): string[] => runtime.getDiagnostics().map((d) => d.code ?? '');
+
+  /** A list of `n` numbers read through a proxy that counts its element reads in `reads.n`. */
+  const reads = { n: 0 };
+  const counted = (n: number): number[] => new Proxy(Array.from({ length: n }, (_, i) => i), {
+    get(target, key, receiver) {
+      if (typeof key === 'string' && /^\d+$/.test(key)) reads.n++;
+      return Reflect.get(target, key, receiver);
+    },
+  });
 
   it('ten bindings at the cap spend one budget per task and all of them render', async () => {
     // Each binding spends 200,000 units; one task holds one of them.
@@ -128,13 +138,6 @@ describe('the task budget (FORMA-028)', () => {
     // list here is read through a proxy that counts its element reads. A
     // binding that renders reads its list twice, once to weigh it and once
     // for String(); one that waits should read none of it.
-    const reads = { n: 0 };
-    const counted = (n: number): number[] => new Proxy(Array.from({ length: n }, (_, i) => i), {
-      get(target, key, receiver) {
-        if (typeof key === 'string' && /^\d+$/.test(key)) reads.n++;
-        return Reflect.get(target, key, receiver);
-      },
-    });
     const widget = async (state: Record<string, unknown>, html: string): Promise<string[]> => {
       container.innerHTML = `<div data-forma-state='${JSON.stringify(Object.fromEntries(Object.keys(state).map((k) => [k, null])))}'>${html}</div>`;
       runtime.mount(container);
@@ -155,10 +158,11 @@ describe('the task budget (FORMA-028)', () => {
     }
     // 5,000 units spent first, then twenty bindings of 248,000 each: every
     // one a little heavier than the room left (245,000). Only the first
-    // refusal in a task reads its list (weighing queues every element); the
-    // task's allocation then counts as spent, and the other nineteen read
-    // nothing. In later tasks one binding renders first, and the room left
-    // (2,000) is shorter than a list, which is then not walked at all.
+    // refusal in a task reads its list (weighing queues every element); each
+    // later charge is then counted only to the 10,000-unit cap, shorter than a
+    // list, so the other nineteen read nothing. In later tasks one binding
+    // renders first, and the room left (2,000) is shorter than a list, which
+    // is then not walked at all.
     reads.n = 0;
     const out = await widget({ a: Array.from({ length: 1250 }, (_, i) => i), b: counted(62_000) }, p('a') + p('b').repeat(20));
     expect(out.slice(1).every((t) => t.length === 360_889)).toBe(true);
@@ -196,6 +200,83 @@ describe('the task budget (FORMA-028)', () => {
     expect(texts()[1]).toBe('199990');
     expect(texts()[452]).toHaveLength(Array.from({ length: 5000 }, (_, i) => i).join(',').length);
     expect(codes()).toEqual([]);
+  });
+
+  it("the cap drops to 0 once the task's refusals have counted the allowance", async () => {
+    // FORMA-173's review (H1): the cap bounds what each binding after a wait
+    // counts, not what they count together. Its pages: 5,000 units, a binding
+    // of 248,000 that waits, then 400 bindings each a little over the cap (a
+    // list of 2,600 numbers, 10,400 units) or a little under it (2,400
+    // numbers, 9,600 units), all handed their values in one update. Once the
+    // refusals after the wait have counted 50,000 units, the cap drops to 0
+    // and each later binding is refused on its list's length, reading none of
+    // it; without the allowance every one of the 400 lists was read.
+    // Two-sided: after the drop, a light binding that charges anything (a
+    // case mapping) waits a tick; one that charges nothing renders at once.
+    for (const [k, rendered, refusedReading] of [[2600, 0, 6], [2400, 25, 10]] as const) {
+      const p = (expr: string): string => `<p data-out data-text="{c === null ? '' : ${expr}}">server</p>`;
+      container.innerHTML = `<div data-forma-state='{"a":null,"b":null,"c":null,"label":"item"}'>${p('a') + p('b') + p('c').repeat(400) + p('label.toUpperCase()') + p('label')}</div>`;
+      runtime.mount(container);
+      const root = container.firstElementChild!;
+      const c = counted(k);
+      reads.n = 0;
+      batch(() => {
+        runtime.setScopeValue(root, 'a', Array.from({ length: 1250 }, (_, i) => i));
+        runtime.setScopeValue(root, 'b', Array.from({ length: 62_000 }, (_, i) => i));
+        runtime.setScopeValue(root, 'c', c);
+      });
+      // A binding that renders reads its list twice (to weigh it, and for
+      // String()); a refusal before the drop reads it once, queueing it to be
+      // weighed; a refusal after the drop reads none of it.
+      expect(reads.n, `${k}: element reads in the update`).toBe(rendered * 2 * k + refusedReading * k);
+      const list = c.join(',');
+      let out = texts();
+      expect(out.slice(2, 402).filter((t) => t === list), `${k}: rendered in the update`).toHaveLength(rendered);
+      expect(out.slice(402), `${k}: after the drop`).toEqual(['', 'item']);
+      await settle(100);
+      out = texts();
+      expect(out[1]).toHaveLength(Array.from({ length: 62_000 }, (_, i) => i).join(',').length);
+      expect(out.slice(2, 402).every((t) => t === list), `${k}: every binding renders`).toBe(true);
+      expect(out.slice(402)).toEqual(['ITEM', 'item']);
+      expect(codes()).toEqual([]);
+      runtime.unmount(container);
+    }
+  });
+
+  it("a $dispatch from inside a binding keeps the task's cap", async () => {
+    // FORMA-173's review, its nit. A binding dispatches an event; the handler
+    // it reaches writes state, and the batch that write closes flushes the
+    // bindings still queued, inside the dispatching binding's evaluation. Ten
+    // bindings of a 60,000-number list follow a binding that waits, and should
+    // be refused reading none of their lists. Two placements:
+    // - the dispatching binding reads `a`, so it runs before `b` waits: the
+    //   bindings flushed inside it must see the cap the wait sets meanwhile
+    //   (the cap is read from the meter at each charge, not copied);
+    // - it reads `b`, so it runs after the wait: the handler starts no task
+    //   of its own, so it must not reset the cap (`begin`).
+    // Either way, before the fix one list was counted to the room left,
+    // fitted and rendered, read twice: 120,000 reads.
+    for (const on of ['a', 'b']) {
+      const p = (k: string): string => `<p data-out data-text="{${k} === null ? '' : ${k}}">server</p>`;
+      const ping = `<p data-out data-text="{${on} === null ? '' : [$dispatch('ping'), 1][1]}">server</p>`;
+      container.innerHTML = `<div data-forma-state='{"a":null,"b":null,"c":null,"n":0}' data-on:ping="{n = n + 1}">${p('a') + p('b') + ping + p('c').repeat(10)}</div>`;
+      runtime.mount(container);
+      const root = container.firstElementChild!;
+      const c = counted(60_000);
+      reads.n = 0;
+      batch(() => {
+        runtime.setScopeValue(root, 'a', Array.from({ length: 1250 }, (_, i) => i));
+        runtime.setScopeValue(root, 'b', Array.from({ length: 62_000 }, (_, i) => i));
+        runtime.setScopeValue(root, 'c', c);
+      });
+      expect(runtime.getScopes()[0]!.values.n!.value, `${on}: the handler ran`).toBe(1);
+      expect(texts()[2]).toBe('1');
+      expect(reads.n, `${on}: element reads of the ten lists after the wait`).toBe(0);
+      await settle(60);
+      expect(texts().slice(3).every((t) => t === c.join(',')), `${on}: every binding renders`).toBe(true);
+      expect(codes()).toEqual([]);
+      runtime.unmount(container);
+    }
   });
 
   it('an allocation refusal after a task spent only steps is reported at once', async () => {

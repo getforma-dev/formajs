@@ -45,22 +45,29 @@ All notable changes to this project will be documented in this file.
   is reported as before. A computed refused inside a heavy reader is evaluated
   alone at the start of the next task, so its refusal is not cached as its
   answer. A handler cannot be re-run, so an event the runtime has not seen
-  (and a `data-model` input) starts a fresh meter, and the handlers one event
-  reaches as it bubbles share it. A binding refused for allocation waits for
-  the next task if the task had spent allocation units before it (steps do not
-  change whether a charge fits); otherwise it is reported at once. A charge
-  that a cost-table row sizes directly (such as `Array.from`'s length) and
-  that is larger than the whole budget is reported at once, whatever the task
-  had spent; a weighed value too heavy for any task that arrives late in a
-  busy task is counted only to the room left, so it waits once, is weighed in
-  full when it runs first, and is then reported once. Once a binding waits,
-  each later charge in that task is counted only to 10,000 units: a light
-  binding (a case mapping, a formatted number, fifty names joined) still fits
-  and renders now, and a heavier value is refused after counting that far and
-  waits too, so a waiting binding costs little however heavy its value
-  (FORMA-173: ten or twenty bindings each weighing most of the budget made
-  tasks of up to 53 to 65 ms p99 at 4x when every waiting binding weighed its
-  value in full in every retry; now at most 24 ms).
+  (and a `data-model` input) starts a fresh meter, unless an evaluation
+  dispatched it, and the handlers one event reaches as it bubbles share it. A
+  binding refused for allocation waits for the next task if the task had spent
+  allocation units before it (steps do not change whether a charge fits);
+  otherwise it is reported at once. A charge that a cost-table row sizes
+  directly (such as `Array.from`'s length) and that is larger than the whole
+  budget is reported at once, whatever the task had spent; a weighed value too
+  heavy for any task that arrives late in a busy task is counted only to the
+  room left, so it waits once, is weighed in full when it runs first, and is
+  then reported once. Once a binding waits, each later charge in that task is
+  counted only to 10,000 units: a light binding (a case mapping, a formatted
+  number, fifty names joined) still fits and renders now, and a heavier value
+  is refused after counting that far and waits too, so a waiting binding costs
+  little however heavy its value (FORMA-173: ten or twenty bindings each
+  weighing most of the budget, or twenty each a little heavier than the room
+  left after 5,000 units, made tasks of 53 to 65 ms p99 at 4x when every
+  waiting binding weighed its value in full in every retry; those three now at
+  most 24 ms). Together, the refusals after a wait count at most 50,000 units
+  in a task, and one cap more: past that every later charge in the task is
+  refused at once, so a light binding that charges anything waits a tick too
+  (FORMA-173 review: 400 bindings after a wait, each a little over or under
+  the cap, made tasks of 66 and 69 ms p99 at 4x with the cap alone; now 24 and
+  15 ms).
 - **The runtime's own conversions of a result to text are charged before
   they run** (FORMA-025). `data-text`, `data-bind:*`, `data-model`,
   `data-persist`, and a `data-list` row's `{item.x}` placeholders and
@@ -141,7 +148,8 @@ All notable changes to this project will be documented in this file.
     tasks: until its turn, a binding shows what it showed before, so a frame
     or two may show a binding's previous text. Once one waits, a later binding
     in that task whose charge is past 10,000 units waits too; a lighter one
-    renders at once.
+    renders at once, until the refusals after the wait have counted 50,000
+    units, when any binding that charges anything waits too.
   - `data-forma-expr-budget` now sets the step budget of a task (of an event,
     for a handler and the bindings it updates), not of each evaluation. A page
     that set it low renders its bindings over more tasks than before, where
