@@ -215,6 +215,22 @@ for (const { mode, header, disposition } of MODES) {
         unmount();
         out.unmounted = app.childNodes.length;
 
+        // An adopted island's reactive dangerouslySetInnerHTML (FORMA-176):
+        // content through the raw sink, A → null → A, never an attribute.
+        const island = document.createElement('div');
+        island.setAttribute('data-forma-ssr', '');
+        island.append(document.createElement('article'));
+        document.body.append(island);
+        const [adoptedHtml, setAdoptedHtml] = createSignal({ __html: trustedHtml('<b>A</b>') });
+        mount(() => h('article', { dangerouslySetInnerHTML: () => adoptedHtml() }), island);
+        const article = island.querySelector('article')!;
+        const adopted = [article.innerHTML];
+        setAdoptedHtml(null);
+        adopted.push(article.innerHTML);
+        setAdoptedHtml({ __html: trustedHtml('<b>A</b>') });
+        adopted.push(article.innerHTML, String(article.hasAttribute('dangerouslysetinnerhtml')));
+        out.adopted = adopted;
+
         // The runtime's parser, on its three paths: an empty container, a diff
         // of keyed children, a full replacement. The runtime's own copy of
         // trustedHtml() shares the page's `forma` policy with core's.
@@ -245,6 +261,7 @@ for (const { mode, header, disposition } of MODES) {
         again: ['<i>two</i>', '<p>c</p>'],
         others: ['<u>u</u>', 't', 2],
         unmounted: 0,
+        adopted: ['<b>A</b>', '', '<b>A</b>', 'false'],
         empty: '1',
         diff: '1b',
         replaced: '<p data-forma-id="c">c</p>',

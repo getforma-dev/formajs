@@ -19,7 +19,7 @@ import {
   isUnsafeAttrWrite,
   isUrlAttr,
 } from '../security/url-safety.js';
-import { htmlOf, isTrustedHtml, rawHtml, warnRawAttr, warnScriptElement } from './trusted-html.js';
+import { htmlOf, isTrustedHtml, rawHtml, warnInnerHtmlChildren, warnRawAttr, warnScriptElement } from './trusted-html.js';
 
 /**
  * Symbol used as JSX Fragment factory. h(Fragment, null, ...children) returns DocumentFragment.
@@ -466,19 +466,7 @@ function handleEvent(el: Element, key: string, value: unknown): void {
  */
 function handleInnerHTML(el: Element, _key: string, value: unknown): void {
   if (typeof value === 'function') {
-    internalEffect(() => {
-      const resolved = (value as () => unknown)();
-      if (resolved == null) {
-        el.replaceChildren();
-        return;
-      }
-      const html = innerHtmlOf(resolved);
-      const markup = String(html);
-      const cache = getCache(el);
-      if (cache['innerHTML'] === markup) return;
-      cache['innerHTML'] = markup;
-      el.innerHTML = rawHtml(html, 'innerHTML');
-    });
+    bindInnerHTML(el, value, false);
   } else {
     if (value == null) {
       el.replaceChildren();
@@ -486,6 +474,79 @@ function handleInnerHTML(el: Element, _key: string, value: unknown): void {
     }
     el.innerHTML = rawHtml(innerHtmlOf(value), 'innerHTML');
   }
+}
+
+/**
+ * Bind `value`, a `dangerouslySetInnerHTML` prop (static or a function), to
+ * `el`'s content: h()'s reactive path and adoption's (FORMA-176), one writer so
+ * the two cannot drift.
+ *
+ * - Markup reaches the content through the raw sink: a `trustedHtml()` value
+ *   typed, anything else as before, with its development warning. It is
+ *   recorded as current only once written, so a write the page refused (a
+ *   string under enforced Trusted Types) is tried again for the same markup.
+ * - `null` empties the element and forgets the markup, so the same markup
+ *   after a `null` is written again (A → null → A).
+ * - `adopt` makes the first run an adoption (DR-5): markup the server's
+ *   element already holds is not written again ({@link holdsMarkup}), and a
+ *   first `null` keeps the server's content, the children adoption bound, as
+ *   h() shows its children until markup arrives.
+ *
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "an adopted reactive dangerouslySetInnerHTML shows its content, follows its signal through null and back, and matches client rendering ($name)"
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "A → null → A shows A again, client-rendered and adopted"
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "adoption writes nothing where the server already holds the markup"
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "a reactive prop whose first value is null keeps the server's fallback child, bound, until markup arrives"
+ * Verified by: src/dom/__tests__/trusted-html.test.ts > "a refused string does not block the same markup sent later as trustedHtml(), client-rendered and adopted"
+ */
+export function bindInnerHTML(el: Element, value: unknown, adopt: boolean): void {
+  let first = adopt;
+  const write = (resolved: unknown): void => {
+    const adopting = first;
+    first = false;
+    const cache = getCache(el);
+    if (resolved == null) {
+      cache['innerHTML'] = null;
+      if (!adopting && el.firstChild) el.replaceChildren();
+      return;
+    }
+    const html = innerHtmlOf(resolved);
+    const markup = String(html);
+    if (cache['innerHTML'] === markup) return;
+    const sink = rawHtml(html, 'innerHTML');
+    if (!adopting || !holdsMarkup(el, markup, sink)) el.innerHTML = sink;
+    cache['innerHTML'] = markup;
+  };
+  if (typeof value === 'function') {
+    internalEffect(() => { write((value as () => unknown)()); });
+  } else {
+    write(value);
+  }
+}
+
+/**
+ * True when `el`'s content already is what `sink` (whose text is `markup`)
+ * parses to: byte-equal to the browser's serialisation, or equal to it once
+ * `sink` is parsed through a `<template>` and serialised the same way. A
+ * server writes markup as it was given, and `<br/>`, single quotes, `&#39;`,
+ * an unclosed `<p>` or a `<table>` without `<tbody>` all serialise
+ * differently, so byte equality alone would rewrite the server's nodes (an
+ * iframe reloads, typed text is lost: DR-5). The parse writes `sink` itself,
+ * so `trustedHtml()` stays typed; a string is parsed as a string, which a page
+ * requiring Trusted Types reports or refuses, as it would the write.
+ *
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "markup the server wrote in a form the browser serialises differently is not rewritten: %j"
+ */
+function holdsMarkup(el: Element, markup: string, sink: string): boolean {
+  const current = el.innerHTML;
+  if (current === markup) return true;
+  // An empty element (the walker's) holds no markup to compare: write, with
+  // no parse first, so a string raises one Trusted Types report, as client
+  // rendering does, not two.
+  // Verified by: src/dom/__tests__/trusted-html.test.ts > "adopting a string onto the walker's empty element raises one Trusted Types report, as client rendering does"
+  if (current === '') return false;
+  const tpl = document.createElement('template');
+  tpl.innerHTML = sink;
+  return tpl.innerHTML === current;
 }
 
 /**
@@ -993,6 +1054,10 @@ export function fillElement<E extends Element>(
   props: Record<string, unknown> | null | undefined,
   children: unknown[],
 ): E {
+  // Children beside dangerouslySetInnerHTML: h() renders the markup, then
+  // them, until the markup next changes; ./ssr and adoption keep the markup.
+  // Said once, in development (FORMA-176).
+  warnInnerHtmlChildren(props, children);
   // Props are split into a static and a dynamic path. Static props
   // (string/number/boolean literals) are written once and never re-read, so
   // they skip the attribute cache entirely; only function-valued props need it,

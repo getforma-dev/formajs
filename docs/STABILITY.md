@@ -132,10 +132,18 @@ policy names (its `trusted-types` directive does not list it, or another script
 created it first) makes core write markup as strings, which it then refuses; a
 development build logs `FORMA_W_TT_POLICY_REFUSED` once for each name.
 
+Children given beside `dangerouslySetInnerHTML` (a function, or a value that is
+not `null`, `undefined` or `false`) log `FORMA_W_INNER_HTML_CHILDREN` once in a
+development build, from h() or from adoption: h() renders the markup and then
+the children until the markup next changes, `./ssr` renders only the markup,
+the compiler's walker only the children, and adoption keeps the markup and
+binds none of the children. Give the element one or the other.
+
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "a string to each raw sink still renders, and warns once with the sink's code in development"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "h('script') warns once in development and still builds the element"
 Verified by `src/dom/__tests__/trusted-html-build.test.ts` > "a production build carries none of the raw-HTML warnings, in any artifact"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "a refused policy name warns once in development, and the sinks then write strings the page refuses"
+Verified by `src/dom/__tests__/adopt-inner-html.test.ts` > "children beside the prop warn once in development, in h() and in adoption, and a falsy prop does not"
 Verified by `src/__tests__/runtime-srcdoc.test.ts` > "a list row's srcdoc writes its string and warns once with the runtime code"
 
 ## SSR form controls
