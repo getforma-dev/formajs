@@ -16,7 +16,7 @@
  * test wraps `Array.from` (a call-through spy, nothing is faked) and then loads
  * a fresh copy of the expression engine, which captures the wrapper.
  */
-import { afterEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 const HOSTILE_LENGTH = 12_000_000;
 const HOSTILE = `Array.from({length: ${HOSTILE_LENGTH}})`;
@@ -42,8 +42,11 @@ afterEach(() => {
 
 describe('native-call cost preflight (DR-16)', () => {
   it('the wrapped intrinsic is the one the interpreter calls (control)', async () => {
-    // Without this control, the expected-fail case below could "fail" because
-    // the spy never reached the allowlist, not because of the defect.
+    // The "not reached" case below counts calls on the wrapper. If the fresh
+    // engine ever captured the real Array.from instead, it would count zero
+    // whatever the engine does: on main that turns the it.fails red, but once
+    // FORMA-004 removes the marker it would pass vacuously. This control keeps
+    // "zero calls" meaning "the native did not run".
     const from = vi.spyOn(Array, 'from');
     const { compileExpression, evaluateExpression } = await freshEngine();
     const scope = { getters: Object.create(null), setters: Object.create(null) };
@@ -54,32 +57,43 @@ describe('native-call cost preflight (DR-16)', () => {
     expect(from.mock.calls.some(([source]) => (source as { length?: unknown })?.length === 3)).toBe(true);
   });
 
-  // Expected to fail until FORMA-004 (DR-16: a cost function per allowlisted
-  // native, checked before the call) lands. When it passes, remove `.fails`.
-  // On main the engine does report FORMA_E_BUDGET, but only after the native
-  // has built the twelve-million-element array, so the second assertion fails.
-  it.fails('Array.from({length: 12000000}) is refused before the native allocates', async () => {
-    const from = vi.spyOn(Array, 'from');
-    const { compileExpression, evaluateExpression, isExprError } = await freshEngine();
-    const scope = { getters: Object.create(null), setters: Object.create(null) };
+  describe(HOSTILE, () => {
+    // Evaluated once for both tests below, so the twelve-million-element array
+    // (built on main) is allocated once per run, not twice.
+    let outcome: { result: unknown; code: unknown; reached: number };
 
-    let error: unknown;
-    let result: unknown;
-    try {
-      result = evaluateExpression(compileExpression(HOSTILE), scope);
-    } catch (e) {
-      error = e;
-    }
-    // Drop the recorded results before asserting, so a failure does not keep
-    // the allocated array alive for the rest of the run.
-    const reached = hostileCalls(from).length;
-    from.mockClear();
+    beforeAll(async () => {
+      const from = vi.spyOn(Array, 'from');
+      try {
+        const { compileExpression, evaluateExpression, isExprError } = await freshEngine();
+        const scope = { getters: Object.create(null), setters: Object.create(null) };
+        let result: unknown;
+        let code: unknown;
+        try {
+          result = evaluateExpression(compileExpression(HOSTILE), scope);
+        } catch (e) {
+          code = isExprError(e) ? (e as { code: string }).code : e;
+        }
+        outcome = { result, code, reached: hostileCalls(from).length };
+      } finally {
+        // Drop the recorded results, so the allocated array is not kept alive
+        // for the rest of the run.
+        from.mockRestore();
+      }
+    });
 
-    // The refusal is reported with the budget code, not as a silent value.
-    expect(result).toBeUndefined();
-    expect(isExprError(error) ? (error as { code: string }).code : error).toBe('FORMA_E_BUDGET');
-    // And it is made before the native runs: Array.from never saw the
-    // hostile array-like, so no twelve-million-element array was built.
-    expect(reached, 'Array.from was invoked with {length: 12000000} before the refusal').toBe(0);
+    it('is refused with FORMA_E_BUDGET, not answered', () => {
+      // Passes on main (checkResultSize refuses after the call) and must keep
+      // passing when FORMA-004 moves the refusal before the call.
+      expect(outcome.result).toBeUndefined();
+      expect(outcome.code).toBe('FORMA_E_BUDGET');
+    });
+
+    // Expected to fail until FORMA-004 (DR-16: a cost function per allowlisted
+    // native, checked before the call) lands; then remove `.fails`. On main
+    // the native builds the array and only then is the result refused.
+    it.fails('is refused before the native allocates', () => {
+      expect(outcome.reached, 'Array.from was invoked with {length: 12000000} before the refusal').toBe(0);
+    });
   });
 });
