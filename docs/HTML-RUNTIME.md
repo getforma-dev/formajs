@@ -374,14 +374,23 @@ listening on its window. On the port it accepts only `{ type: 'module', html }`
 updates it; it mints the module with `trustedHtml()`, so the frame's policy can
 require Trusted Types) and sends only `{ type: 'ready' }`, `{ type: 'resize', height }`
 and `{ type: 'error', code, message }`: a refused message (`FRAME_E_MESSAGE`),
-a module it could not render (`FRAME_E_RENDER`), and each of the module's
-diagnostics with its own code. The host's half (the `iframe`'s
+a module it could not render (`FRAME_E_RENDER`), and each diagnostic the
+runtime raised for the module, with its own code. A module's own
+`$dispatch('formajs:diagnostic', …)` is not forwarded, but a real
+diagnostic's message quotes the module's expression, so the host treats every
+`error`'s text as the module's, untrusted. The host's half (the `iframe`'s
 `sandbox="allow-scripts"`, checking each message's schema, tearing the frame
 down on a second load) is the application's.
+
+A module styles itself with `style` attributes only. The frame's policy
+allows styles by nonce (`style-src 'nonce-…'`, with `style-src-attr
+'unsafe-inline'`), and the runtime, allowed by its hash, has no nonce to give
+a `<style>` element, so a module's `<style>` blocks do not apply.
 
 Verified by `src/__tests__/runtime-frame.test.ts` > "takes one port from its parent, renders each module in tier (c) and answers only ready, resize and error"
 Verified by `src/__tests__/runtime-frame.test.ts` > "ignores a port from any window but its parent, and every port after the first"
 Verified by `src/__tests__/runtime-frame.test.ts` > "refuses every message but the module, and changes nothing"
+Verified by `src/__tests__/runtime-frame.test.ts` > "forwards the runtime's diagnostics, never a module's own formajs:diagnostic"
 Verified by `src/__tests__/runtime-frame.test.ts` > "the frame runtime is one classic script a server can inline as it is"
 Verified by `src/__tests__/runtime-frame.test.ts` > "two builds of the frame runtime are byte-identical"
 

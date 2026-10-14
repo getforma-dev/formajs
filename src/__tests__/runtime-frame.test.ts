@@ -31,14 +31,22 @@ const until = (check: () => void): Promise<void> => vi.waitFor(check, { timeout:
 /** The frame's window, as the frame sees it: the document, its parent, its events. */
 function frameWindow(): { win: EventTarget & { document: Document; parent: object }; parent: object; other: object } {
   const parent = {};
-  const win = Object.assign(new EventTarget(), { document, parent });
+  const target = new EventTarget();
+  const add = target.addEventListener.bind(target);
+  const remove = target.removeEventListener.bind(target);
   // The runtime dispatches its diagnostics on the global window, which in the
-  // frame is this window.
-  const forward = (e: Event): void => {
-    win.dispatchEvent(new CustomEvent(e.type, { detail: (e as CustomEvent).detail }));
+  // frame is this window: their listener goes there, the rest on the stand-in.
+  const on = (type: string, fn: EventListener): void => {
+    if (type === 'formajs:diagnostic') window.addEventListener(type, fn);
+    else add(type, fn);
+    if (type === 'formajs:diagnostic') cleanups.push(() => window.removeEventListener(type, fn));
   };
-  window.addEventListener('formajs:diagnostic', forward);
-  cleanups.push(() => window.removeEventListener('formajs:diagnostic', forward));
+  const win = Object.assign(target, {
+    document,
+    parent,
+    addEventListener: on,
+    removeEventListener: (type: string, fn: EventListener) => remove(type, fn),
+  });
   return { win, parent, other: {} };
 }
 
@@ -94,7 +102,8 @@ describe('the frame protocol', () => {
       html:
         `<div data-forma-state='{"n":1}'><p id="v" data-text="{n}">-</p>` +
         `<div data-fetch="GET /api/me → me |error:failed"></div><p id="failed" data-text="{failed}">-</p>` +
-        `<p id="reach" data-text="{$el.closest('body') ? 'reached' : 'confined'}">initial</p></div>`,
+        `<p id="reach" data-text="{$el.closest('body') ? 'reached' : 'confined'}">initial</p>` +
+        `<p id="asks" data-text="{$el.matches('body *') ? 'read' : 'not read'}">initial</p></div>`,
     });
     const errors = (): Array<{ code: string }> => received.filter((m) => m.type === 'error') as Array<{ code: string }>;
     await until(() => expect(errors().map((e) => e.code).sort()).toEqual(['FORMA_E_GRANT_DOM', 'FORMA_E_GRANT_FETCH']));
@@ -102,13 +111,34 @@ describe('the frame protocol', () => {
     // Tier (c), no grants: nothing sent, nothing outside the root reached.
     expect(requests).toBe(0);
     expect(document.getElementById('failed')!.textContent).toBe('data-fetch denied: the mount grants no fetch');
-    expect(document.getElementById('reach')!.textContent).toBe('initial');
+    expect(document.getElementById('reach')!.textContent).toBe('confined');
+    expect(document.getElementById('asks')!.textContent).toBe('initial');
 
     // A later module updates the same mount.
     channel.port1.postMessage({ type: 'module', html: `<div data-forma-state='{"m":2}'><p id="v" data-text="{m}">-</p></div>` });
     await until(() => expect(document.getElementById('v')!.textContent).toBe('2'));
     expect(new Set(received.map((m) => m.type))).toEqual(new Set(['ready', 'resize', 'error']));
     expect(received.filter((m) => m.type === 'ready')).toHaveLength(1);
+  });
+
+  it("forwards the runtime's diagnostics, never a module's own formajs:diagnostic", async () => {
+    const { win, parent } = frameWindow();
+    connectFrame(win as never);
+    const { channel, received } = hostPort();
+    handOver(win, parent, [channel.port2]);
+    await until(() => expect(received[0]).toEqual({ type: 'ready' }));
+    channel.port1.postMessage({
+      type: 'module',
+      html:
+        `<div data-forma-state='{}'><button id="spoof" data-on:mouseover="{$dispatch('formajs:diagnostic', ` +
+        `{code: 'HOST_PLEASE_RELOAD', reason: 'spoofed', expr: 'x'})}">s</button>` +
+        `<p data-text="{nope.x}">-</p></div>`,
+    });
+    const errors = (): Array<{ code: string }> => received.filter((m) => m.type === 'error') as Array<{ code: string }>;
+    await until(() => expect(errors().map((e) => e.code)).toEqual(['FORMA_E_UNRESOLVED']));
+    document.getElementById('spoof')!.dispatchEvent(new Event('mouseover'));
+    await quiet();
+    expect(errors().map((e) => e.code)).toEqual(['FORMA_E_UNRESOLVED']);
   });
 
   it('ignores a port from any window but its parent, and every port after the first', async () => {

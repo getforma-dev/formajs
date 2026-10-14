@@ -101,11 +101,13 @@ test("a module's data-fetch to the application's API sends no request, and $el s
     type: 'module',
     html: `<div data-forma-state='{}'><div data-fetch="GET /api/me → me |error:failed"></div>` +
       `<p id="failed" data-text="{failed}">-</p>` +
-      `<p id="reach" data-text="{$el.closest('body') ? 'reached' : 'confined'}">initial</p></div>`,
+      `<p id="reach" data-text="{$el.closest('body') ? 'reached' : 'confined'}">initial</p>` +
+      `<p id="asks" data-text="{$el.matches('body *') ? 'read' : 'not read'}">initial</p></div>`,
   });
   const preview = page.frameLocator('#preview');
   await expect(preview.locator('#failed')).toHaveText('data-fetch denied: the mount grants no fetch');
-  await expect(preview.locator('#reach')).toHaveText('initial');
+  await expect(preview.locator('#reach')).toHaveText('confined');
+  await expect(preview.locator('#asks')).toHaveText('initial');
   await expect.poll(async () => (await received(page)).filter((m) => m.type === 'error').map((m) => m.code).sort())
     .toEqual(['FORMA_E_GRANT_DOM', 'FORMA_E_GRANT_FETCH']);
   expect(requests).toBe(0);

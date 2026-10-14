@@ -343,7 +343,11 @@ All notable changes to this project will be documented in this file.
   only `{ type: 'module', html }` (mounted with `tier: 'unreviewed'`, no
   grants; later ones update it), and sends only `ready`, `resize` (the
   document's height) and `error` (`FRAME_E_MESSAGE`, `FRAME_E_RENDER`, and the
-  module's own diagnostics by code). `scripts/verify-dist.mjs` checks the
+  diagnostics the runtime raised for the module, by code; never a module's own
+  `$dispatch('formajs:diagnostic', …)`, though a diagnostic quotes the
+  module's expression, so a host treats `error` text as untrusted). A module
+  styles itself with `style` attributes only: under the frame's nonce-only
+  `style-src` its `<style>` blocks do not apply. `scripts/verify-dist.mjs` checks the
   published file can be inlined as it is. Copying it into an application's
   assets as `forma-runtime.js` is the build's half (FORMA-175). It mints the
   module with `trustedHtml()`, so the frame's policy may require Trusted Types.

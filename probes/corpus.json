@@ -3122,7 +3122,7 @@
   ],
   "find": "      cache['innerHTML'] = null;\n",
   "replace": "",
-  "note": "a reactive dangerouslySetInnerHTML going A \u2192 null \u2192 A stays empty: the null branch keeps A's markup cached (FORMA-176). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"A \u2192 null \u2192 A shows A again, client-rendered and adopted\""
+  "note": "a reactive dangerouslySetInnerHTML going A → null → A stays empty: the null branch keeps A's markup cached (FORMA-176). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"A → null → A shows A again, client-rendered and adopted\""
  },
  {
   "id": "adopt/inner-html-rewritten",
@@ -3233,5 +3233,15 @@
   "find": "  if (current === '') return false;\n",
   "replace": "",
   "note": "adoption parses a string through a template before writing it onto the walker's empty element: two Trusted Types reports for one write, where client rendering raises one (formajs#32 second review). Verified by: src/dom/__tests__/trusted-html.test.ts > \"adopting a string onto the walker's empty element raises one Trusted Types report, as client rendering does\""
+ },
+ {
+  "id": "frame/spoofed-diagnostic-forwarded",
+  "file": "src/runtime-frame.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (event.target !== event.currentTarget) return;\n",
+  "replace": "",
+  "note": "a module's own $dispatch('formajs:diagnostic', {code, reason, expr}) reaches the host as an error the runtime never raised, with a code and text the module chose (formajs#31 review). Verified by: src/__tests__/runtime-frame.test.ts > \"forwards the runtime's diagnostics, never a module's own formajs:diagnostic\""
  }
 ]

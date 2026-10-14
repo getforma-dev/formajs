@@ -38,10 +38,13 @@
  *    the document's height in whole CSS pixels, when it changes; and
  *    `{ type: 'error', code, message }` (`message` at most 500 characters) for
  *    a message it refused (`FRAME_E_MESSAGE`), a module it could not render
- *    (`FRAME_E_RENDER`), and each diagnostic of the module's, with its own
- *    code (`FORMA_E_GRANT_FETCH`, `FORMA_E_UNRESOLVED`, …). The host checks
- *    each against its schema before acting on it, and none acts in the
- *    application's session.
+ *    (`FRAME_E_RENDER`), and each diagnostic the runtime raised for the
+ *    module, with its own code (`FORMA_E_GRANT_FETCH`, `FORMA_E_UNRESOLVED`,
+ *    …); a module's own `$dispatch('formajs:diagnostic', …)` is not one. A
+ *    diagnostic's message still quotes the module's expression, so its text
+ *    is the module's: the host checks each message against its schema,
+ *    treats its text as untrusted, and acts on none in the application's
+ *    session.
  *
  * Verified by: src/__tests__/runtime-frame.test.ts > "takes one port from its parent, renders each module in tier (c) and answers only ready, resize and error"
  * Verified by: src/__tests__/runtime-frame.test.ts > "ignores a port from any window but its parent, and every port after the first"
@@ -131,8 +134,12 @@ export function connectFrame(win: FrameWindow): void {
   win.addEventListener('message', onWindow);
 
   // The module's own diagnostics (an expression not evaluated, a grant
-  // denied) reach the host as errors, once each, as they are dispatched.
+  // denied) reach the host as errors, once each, as they are dispatched. The
+  // runtime dispatches them on the window itself; one that started at an
+  // element is a module's `$dispatch('formajs:diagnostic', …)` and is not
+  // forwarded.
   win.addEventListener('formajs:diagnostic', (event) => {
+    if (event.target !== event.currentTarget) return;
     const detail = (event as CustomEvent<{ code?: unknown; reason?: unknown; expr?: unknown }>).detail;
     fail(String(detail?.code), `${String(detail?.reason)}: ${String(detail?.expr)}`);
   });
