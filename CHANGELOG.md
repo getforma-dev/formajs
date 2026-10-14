@@ -89,6 +89,53 @@ FORMA-127, FORMA-173, FORMA-128).
 
 ### Security
 
+- **The preview frame mounts no `<link>` and no `srcdoc`** (FORMA-128's
+  follow-up; the A2 audit, S1; formajs#35's review, B1 and S2). WebKit opened
+  a TCP connection to any host a previewed module's `<link rel="preconnect">`
+  named, its `href` written or bound, from inside the sandboxed frame:
+  `connect-src 'none'`, `default-src 'none'` and the sandbox do not govern
+  preconnect. An unreviewed mount (`tier: 'unreviewed'`, which the frame
+  runtime uses) now parses its markup once, in the root's own context, removes
+  every `<link>` and every `srcdoc` attribute from those nodes, nested
+  templates included, and writes the nodes themselves: the root is never given
+  a string, because a strip done in an inert `<template>` and then written
+  through `innerHTML` was a second parse in another insertion mode, and
+  foreign content and foster parenting (nested `<form>`, `<math>`, `<mglyph>`,
+  `<style>`) re-created in it a `<link>` the first parse had not seen, in all
+  three engines, with WebKit connecting (B1). After every write the live
+  subtree is checked again, and a `<link>` or `srcdoc` found there is removed,
+  reported, and the render refused with the root cleared. `srcdoc` goes too
+  because an `<iframe srcdoc>` parses a child document the strip cannot see
+  into, and WebKit connected for a `<link>` in it (S2): the attribute is
+  removed from the markup, and `data-bind:srcdoc` is refused in this tier
+  before it runs. Each removal is a coded diagnostic (`FORMA_E_UNREVIEWED_LINK`,
+  `FORMA_E_UNREVIEWED_SRCDOC`; kind `markup-refused`, reported whatever any
+  diagnostics switch says; the frame forwards it to its host). Under the
+  frame's policy no `<link>` did anything else, and a binding cannot create an
+  element. Measured with a TCP listener: without the strip this repository's
+  frame spec counted 1, 1 and 4 connections in Chromium, Firefox and WebKit,
+  and with the template strip alone the foreign-content payloads still placed
+  a `<link>` in the document in all three and connected in WebKit; now none.
+  Tests: `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount
+  renders no <link>: each is removed before the markup reaches the document",
+  "an unreviewed mount parses its markup once, in the root's context, and
+  writes no string to the root", "an unreviewed mount renders no srcdoc: the
+  attribute is removed, a binding that would write one is refused, and each is
+  reported", "an unreviewed mount fails closed: a <link> that reaches the root
+  after the strip is removed, reported, and the markup refused";
+  `src/__tests__/runtime-frame.test.ts` > "a module's <link> never reaches the
+  frame document, and the host hears why", "a module's srcdoc never reaches
+  the frame document, and the host hears why"; `e2e/frame.spec.ts` > "a
+  module's <link> opens no connection: preconnect, dns-prefetch, prefetch,
+  preload, a bound href", "a module's <link> survives no second parse: foreign
+  content and foster parenting open no connection, after render and after
+  update()", "a module's iframe srcdoc renders no document: the attribute is
+  removed, written or bound, and nothing connects" (three engines). Size
+  (L-51): the CDN runtime 40,329 to 41,094 B (gate 41,500), the hardened
+  runtime 39,344 to 40,106 B (gate 40,500), the frame runtime 38,953 to
+  39,705 B (gate 40,000); the review's one parse, live check and `srcdoc`
+  refusal are 454, 449 and 441 B of that.
+
 - **The tiered mount: markup a generator wrote mounts under a root it is
   handed, with grants** (FORMA-128; decision brief DR-14, DR-15, L-36, L-47;
   v2 TH11, SR16, SR31, SR37's runtime half). The script-tag runtime binds

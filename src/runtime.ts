@@ -161,7 +161,7 @@ import { createSignal, internalEffect, createComputed, batch } from './reactive'
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
 import { isTrustedHtml, trustedHtml, warnRuntimeSrcdoc, type TrustedHtml } from './dom/trusted-html';
-import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
+import { isDangerousUrl, isUrlAttr, isEventHandlerAttr, isRawHtmlAttr } from './security/url-safety';
 import {
   clearExpressionCache,
   compileExpression,
@@ -305,7 +305,7 @@ interface RuntimeConfig {
 }
 
 interface RuntimeDiagnostic {
-  kind: 'handler-unsupported' | 'expression-unsupported' | 'grant-denied';
+  kind: 'handler-unsupported' | 'expression-unsupported' | 'grant-denied' | 'markup-refused';
   expr: string;
   reason: string;
   /** Stable machine-readable cause, e.g. `FORMA_E_METHOD_DENIED`. */
@@ -414,7 +414,7 @@ function reportDiagnostic(
   mount?: MountCtx | null,
   grant?: RuntimeDiagnostic['grant'],
 ): void {
-  if (kind !== 'grant-denied' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;
+  if (kind !== 'grant-denied' && kind !== 'markup-refused' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;
 
   const key = mount ? `${kind}|${mount.id}|${reason}|${expr}` : `${kind}|${reason}|${expr}`;
   const now = Date.now();
@@ -2284,6 +2284,21 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       disposers.push(dispose);
     } else if (name.startsWith('data-bind:')) {
       const attrName = name.slice(10); // 'data-bind:'.length === 10
+      if (scope.mount?.tier === 'unreviewed' && isRawHtmlAttr(attrName)) {
+        // An unreviewed mount renders no srcdoc (see refuseUnreviewed): the
+        // one binding that could write one is refused before it runs, and
+        // reported (formajs#35's review, S2).
+        // Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount renders no srcdoc: the attribute is removed, a binding that would write one is refused, and each is reported"
+        reportDiagnostic(
+          'markup-refused',
+          attr.value,
+          'unreviewed markup renders no srcdoc: the binding is refused',
+          'FORMA_E_UNREVIEWED_SRCDOC',
+          scope.mount,
+        );
+        el.removeAttribute(attrName);
+        continue;
+      }
       const evaluate = evaluator(attr.value, asText);
       const dispose = internalEffect(() => {
         const val = evaluate();
@@ -3193,6 +3208,62 @@ function reconcile(container: Element, html: string | TrustedHtml): void {
 // ── Tiered mount ──
 
 /**
+ * What unreviewed markup never renders (FORMA-128's follow-up; the A2 audit,
+ * S1; formajs#35's review, B1 and S2), removed from `content` with a coded
+ * diagnostic for each: every `<link>` (`FORMA_E_UNREVIEWED_LINK`), because
+ * WebKit opens a connection for a `<link rel="preconnect">` in the preview
+ * frame whatever the frame's policy says (`connect-src 'none'`,
+ * `default-src 'none'` and the sandbox do not govern it), so a module could
+ * reach any host it names from markup alone, and under the frame's policy no
+ * `<link>` does anything else; and every `srcdoc` attribute
+ * (`FORMA_E_UNREVIEWED_SRCDOC`), because an `<iframe srcdoc>` parses a child
+ * document the strip cannot see into, and WebKit connects for a `<link>` in
+ * it. Nested `<template>` contents are walked too.
+ *
+ * It runs twice per render. First on the fragment the reconciler parsed in
+ * the root's own context, which the reconciler then writes as nodes: the root
+ * is never given a string, because a strip done in one parse and written
+ * through another let foreign content and foster parenting re-create a
+ * `<link>` the strip had not seen (`<form><math><mtext></form><form><mglyph>
+ * <style></math><link …>`, measured in all three engines). Then, `live`, on
+ * the root after the write, as defence in depth: anything found there is
+ * removed, reported as having reached the document, and the caller fails
+ * closed. A binding cannot create an element, and the one that could write a
+ * `srcdoc` (`data-bind:srcdoc`) is refused in this tier before it runs.
+ * Returns the code of the last thing removed, null when nothing was.
+ *
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount renders no <link>: each is removed before the markup reaches the document"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount parses its markup once, in the root's context, and writes no string to the root"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount renders no srcdoc: the attribute is removed, a binding that would write one is refused, and each is reported"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount fails closed: a <link> that reaches the root after the strip is removed, reported, and the markup refused"
+ */
+function refuseUnreviewed(content: ParentNode, mount: MountCtx, live: boolean): string | null {
+  let code: string | null = null;
+  const refuse = (el: Element, what: string, found: string): void => {
+    code = found;
+    reportDiagnostic(
+      'markup-refused',
+      el.outerHTML.slice(0, 200),
+      `unreviewed markup renders no ${what}: ${live ? 'one reached the document after the strip; removed, and the markup refused' : 'removed'}`,
+      code,
+      mount,
+    );
+  };
+  for (const link of Array.from(content.querySelectorAll('link'))) {
+    refuse(link, '<link>', 'FORMA_E_UNREVIEWED_LINK');
+    link.remove();
+  }
+  for (const el of Array.from(content.querySelectorAll('[srcdoc]'))) {
+    refuse(el, 'srcdoc', 'FORMA_E_UNREVIEWED_SRCDOC');
+    el.removeAttribute('srcdoc');
+  }
+  for (const nested of Array.from(content.querySelectorAll('template'))) {
+    code = refuseUnreviewed(nested.content, mount, live) ?? code;
+  }
+  return code;
+}
+
+/**
  * Mount `markup` under `root` in a tier, with grants (FORMA-128; decision
  * brief DR-14, DR-15, L-36, L-47). The runtime binds only under the root it is
  * handed, never by watching `body`, and the mount takes its configuration
@@ -3288,17 +3359,32 @@ function mountMarkup(root: Element, markup: string | TrustedHtml, options: Mount
     disconnectObserver,
     reconnectObserver,
     batch,
+    // Unreviewed markup is parsed once, in the root's context, stripped on
+    // those nodes, and written as nodes (see refuseUnreviewed).
+    strip: tier === 'unreviewed' ? (fragment) => { refuseUnreviewed(fragment, ctx, false); } : undefined,
   });
   const disposeAll = (): void => {
     for (const scope of Array.from(root.querySelectorAll('[data-forma-state]'))) unmountScope(scope, ctx);
   };
+  const clear = (): void => {
+    disposeAll();
+    root.replaceChildren();
+  };
   const render = (html: string | TrustedHtml): void => {
     if (!String(html).trim()) {
-      disposeAll();
-      root.replaceChildren();
+      clear();
       return;
     }
     reconcileInto(root, html);
+    if (tier === 'unreviewed') {
+      // Defence in depth: the strip ran on the nodes that were written, so
+      // nothing should be here; if it is, fail closed.
+      const reached = refuseUnreviewed(root, ctx, true);
+      if (reached) {
+        clear();
+        throw mountError(reached, `${ctx.name}: unreviewed markup reached the document unstripped; the root was cleared`);
+      }
+    }
     if (ctx.containment) applyContainmentHints(root, { skipIfAlreadySet: true });
   };
   let live = true;
@@ -3306,7 +3392,14 @@ function mountMarkup(root: Element, markup: string | TrustedHtml, options: Mount
     if (!live) throw mountError('FORMA_E_MOUNT_GONE', `${ctx.name} was unmounted`);
   };
 
-  render(markup);
+  try {
+    render(markup);
+  } catch (err) {
+    // A first render refused leaves the root free to mount again.
+    tieredRoots.delete(root);
+    tieredCount--;
+    throw err;
+  }
 
   return {
     root,
