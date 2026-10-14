@@ -13,7 +13,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import rawConfig from '../../../tsup.config';
-import { POLICY_REFUSED_CODE, RAW_STRING_CODES, RUNTIME_SRCDOC_CODE } from '../trusted-html';
+import { INNER_HTML_CHILDREN_CODE, POLICY_REFUSED_CODE, RAW_STRING_CODES, RUNTIME_SRCDOC_CODE } from '../trusted-html';
 
 const configs = rawConfig as Options[];
 
@@ -23,8 +23,9 @@ const RAW_MARKS = [
   'was given a plain string',
   POLICY_REFUSED_CODE,
 ];
-/** What only h('script')'s development warning carries. */
+/** What only h()'s own development warnings carry: h('script'), and children beside dangerouslySetInnerHTML. */
 const SCRIPT_MARK = 'FORMA_W_SCRIPT_ELEMENT';
+const CHILDREN_MARK = INNER_HTML_CHILDREN_CODE;
 /** What only the runtime's srcdoc bindings' development warning carries. */
 const RUNTIME_MARK = RUNTIME_SRCDOC_CODE;
 
@@ -67,8 +68,8 @@ async function buildAll(entries: string[], overrides: Options = {}): Promise<Rec
  * script warning).
  */
 const BUILDS: ReadonlyArray<{ name: string; entries: string[]; marks: string[] }> = [
-  { name: 'code-split ESM', entries: ['index', 'runtime', 'ssr/index'], marks: [...RAW_MARKS, SCRIPT_MARK, RUNTIME_MARK] },
-  { name: 'browser ESM bundle', entries: ['forma.esm'], marks: [...RAW_MARKS, SCRIPT_MARK] },
+  { name: 'code-split ESM', entries: ['index', 'runtime', 'ssr/index'], marks: [...RAW_MARKS, SCRIPT_MARK, CHILDREN_MARK, RUNTIME_MARK] },
+  { name: 'browser ESM bundle', entries: ['forma.esm'], marks: [...RAW_MARKS, SCRIPT_MARK, CHILDREN_MARK] },
   { name: 'runtime IIFE', entries: ['formajs-runtime'], marks: [...RAW_MARKS, RUNTIME_MARK] },
 ];
 
@@ -77,7 +78,7 @@ describe('the raw-HTML warnings in a production build (the real tsup configs)', 
     for (const { name, entries } of BUILDS) {
       const files = await buildAll(entries);
       const all = Object.values(files).join('\n');
-      for (const mark of [...RAW_MARKS, SCRIPT_MARK, RUNTIME_MARK]) expect(all, `${name}: ${mark}`).not.toContain(mark);
+      for (const mark of [...RAW_MARKS, SCRIPT_MARK, CHILDREN_MARK, RUNTIME_MARK]) expect(all, `${name}: ${mark}`).not.toContain(mark);
       // The typed path itself is there: the build dropped the warnings only.
       expect(all, name).toContain('createPolicy');
       expect(all, name).toContain('@getforma/core#trusted-types');

@@ -17,7 +17,7 @@ import { createSignal, onError } from 'forma/reactive';
 import { h } from '../element';
 import { mount } from '../mount';
 import { renderToString, sh } from '../../ssr/render';
-import { trustedHtml, type TrustedHtml } from '../trusted-html';
+import { INNER_HTML_CHILDREN_CODE, trustedHtml, type TrustedHtml } from '../trusted-html';
 
 const REGISTRY = Symbol.for('@getforma/core#trusted-types');
 
@@ -154,6 +154,7 @@ describe('dangerouslySetInnerHTML in adoption', () => {
     expect(adopted.innerHTML).toBe('<button id="b">go</button>');
     expect(client.innerHTML).toBe('<button>go</button>');
     expect(adopted.hasAttribute('dangerouslysetinnerhtml')).toBe(false);
+    expect(linesWith(INNER_HTML_CHILDREN_CODE)).toEqual([]);
   });
 
   it.each([
@@ -190,6 +191,48 @@ describe('dangerouslySetInnerHTML in adoption', () => {
     mount(() => h('article', { id: 'doc', dangerouslySetInnerHTML: { __html: '<label>Name <input id=name></label>' } }), '#app');
     expect(document.getElementById('name')).toBe(input);
     expect(input.value).toBe('typed before activation');
+  });
+
+  it('children beside the prop warn once in development, in h() and in adoption, and a falsy prop does not', () => {
+    h('article', { dangerouslySetInnerHTML: { __html: '<b>A</b>' } }, h('span', null, 'kid'));
+    h('article', { dangerouslySetInnerHTML: () => ({ __html: '<b>A</b>' }) }, 'text');
+    const lines = linesWith(INNER_HTML_CHILDREN_CODE);
+    expect(lines).toHaveLength(1);
+    expect(lines[0]).toMatch(/^\[forma\] FORMA_W_INNER_HTML_CHILDREN: /);
+    expect(lines[0]).toContain('adoption keeps only the markup');
+    // Adoption says the same, once per page or process.
+    delete (globalThis as Record<symbol, unknown>)[REGISTRY];
+    adopt('<article id="doc"><span>kid</span></article>', () => h('article', { id: 'doc', dangerouslySetInnerHTML: { __html: '<b>A</b>' } }, h('span', null, 'kid')));
+    expect(linesWith(INNER_HTML_CHILDREN_CODE)).toHaveLength(2);
+    // No prop, a falsy prop, or no children: nothing to say.
+    delete (globalThis as Record<symbol, unknown>)[REGISTRY];
+    h('article', { dangerouslySetInnerHTML: false }, h('span', null, 'kid'));
+    h('article', { dangerouslySetInnerHTML: null }, 'text');
+    h('article', { dangerouslySetInnerHTML: { __html: '<b>A</b>' } }, null, false);
+    h('article', null, h('span', null, 'kid'));
+    expect(linesWith(INNER_HTML_CHILDREN_CODE)).toHaveLength(2);
+  });
+
+  it("a reactive prop whose first value is null keeps the server's fallback child, bound, until markup arrives", () => {
+    // formajs#32's review (S2): adoption emptied the element at activation,
+    // where h() shows its children until the first markup.
+    const [inner, setInner] = createSignal<Inner>(null);
+    let clicks = 0;
+    const client = h('article', { dangerouslySetInnerHTML: () => inner() }, h('button', null, 'fallback'));
+    const adopted = adopt('<article id="doc"><button id="fb">fallback</button></article>',
+      () => h('article', { id: 'doc', dangerouslySetInnerHTML: () => inner() }, h('button', { id: 'fb', onClick: () => { clicks++; } }, 'fallback')));
+    const button = document.getElementById('fb')!;
+    expect(button.parentElement).toBe(adopted);
+    button.click();
+    expect(clicks).toBe(1);
+    expect(client.innerHTML).toBe('<button>fallback</button>');
+    // Markup replaces the children, client-rendered and adopted alike; null then empties both.
+    setInner({ __html: '<b>A</b>' });
+    expect(adopted.innerHTML).toBe('<b>A</b>');
+    expect(client.innerHTML).toBe('<b>A</b>');
+    setInner(null);
+    expect(adopted.childNodes.length).toBe(0);
+    expect(client.childNodes.length).toBe(0);
   });
 
   it('adoption writes a string through the raw sink with its development warning, and trustedHtml() with none', () => {

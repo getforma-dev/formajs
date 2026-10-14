@@ -19,7 +19,7 @@ import {
   isUnsafeAttrWrite,
   isUrlAttr,
 } from '../security/url-safety.js';
-import { htmlOf, isTrustedHtml, rawHtml, warnRawAttr, warnScriptElement } from './trusted-html.js';
+import { htmlOf, isTrustedHtml, rawHtml, warnInnerHtmlChildren, warnRawAttr, warnScriptElement } from './trusted-html.js';
 
 /**
  * Symbol used as JSX Fragment factory. h(Fragment, null, ...children) returns DocumentFragment.
@@ -488,11 +488,14 @@ function handleInnerHTML(el: Element, _key: string, value: unknown): void {
  * - `null` empties the element and forgets the markup, so the same markup
  *   after a `null` is written again (A → null → A).
  * - `adopt` makes the first run an adoption (DR-5): markup the server's
- *   element already holds is not written again ({@link holdsMarkup}).
+ *   element already holds is not written again ({@link holdsMarkup}), and a
+ *   first `null` keeps the server's content, the children adoption bound, as
+ *   h() shows its children until markup arrives.
  *
  * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "an adopted reactive dangerouslySetInnerHTML shows its content, follows its signal through null and back, and matches client rendering ($name)"
  * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "A → null → A shows A again, client-rendered and adopted"
  * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "adoption writes nothing where the server already holds the markup"
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "a reactive prop whose first value is null keeps the server's fallback child, bound, until markup arrives"
  * Verified by: src/dom/__tests__/trusted-html.test.ts > "a refused string does not block the same markup sent later as trustedHtml(), client-rendered and adopted"
  */
 export function bindInnerHTML(el: Element, value: unknown, adopt: boolean): void {
@@ -503,7 +506,7 @@ export function bindInnerHTML(el: Element, value: unknown, adopt: boolean): void
     const cache = getCache(el);
     if (resolved == null) {
       cache['innerHTML'] = null;
-      if (el.firstChild) el.replaceChildren();
+      if (!adopting && el.firstChild) el.replaceChildren();
       return;
     }
     const html = innerHtmlOf(resolved);
@@ -1046,6 +1049,10 @@ export function fillElement<E extends Element>(
   props: Record<string, unknown> | null | undefined,
   children: unknown[],
 ): E {
+  // Children beside dangerouslySetInnerHTML: h() renders the markup, then
+  // them, until the markup next changes; ./ssr and adoption keep the markup.
+  // Said once, in development (FORMA-176).
+  warnInnerHtmlChildren(props, children);
   // Props are split into a static and a dynamic path. Static props
   // (string/number/boolean literals) are written once and never re-read, so
   // they skip the attribute cache entirely; only function-valued props need it,

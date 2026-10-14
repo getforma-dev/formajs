@@ -648,3 +648,21 @@ test('markup the server wrote in a form the browser serialises differently is ad
   expect(writes.kept).toEqual(markups.map(() => true));
   await expect(page.locator('#typed')).toHaveValue('typed before activation');
 });
+
+test('a reactive dangerouslySetInnerHTML whose first value is null keeps the server\'s fallback child, bound, until markup arrives', async ({ page }) => {
+  // formajs#32's review (S2): adoption emptied the element at activation.
+  await serve(page, '<div id="app" data-forma-ssr><article id="doc"><button id="fb">fallback</button></article></div>');
+  await page.evaluate(async () => {
+    const { h, mount, createSignal, trustedHtml } = await import('/adoption-core.mjs' as string);
+    const [inner, setInner] = createSignal(null);
+    (window as any).clicks = 0;
+    (window as any).showMarkup = () => setInner({ __html: trustedHtml('<b id="m">markup</b>') });
+    mount(() => h('article', { id: 'doc', dangerouslySetInnerHTML: () => inner() },
+      h('button', { id: 'fb', onClick: () => { (window as any).clicks++; } }, 'fallback')), '#app');
+  });
+  await page.locator('#fb').click();
+  expect(await page.evaluate(() => (window as any).clicks)).toBe(1);
+  await page.evaluate(() => (window as any).showMarkup());
+  await expect(page.locator('#m')).toHaveText('markup');
+  await expect(page.locator('#fb')).toHaveCount(0);
+});

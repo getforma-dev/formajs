@@ -2200,8 +2200,8 @@
   "tags": [
    "security"
   ],
-  "find": "      if (el.firstChild) el.replaceChildren();",
-  "replace": "      if (el.firstChild) el.innerHTML = '';",
+  "find": "      if (!adopting && el.firstChild) el.replaceChildren();",
+  "replace": "      if (!adopting && el.firstChild) el.innerHTML = '';",
   "note": "a reactive dangerouslySetInnerHTML that becomes null empties the element with a string write (DR-20, FORMA-127). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
  },
  {
@@ -2500,7 +2500,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "  } else if (inner == null || inner === false) {",
+  "find": "  } else if (markup == null || markup === false) {",
   "replace": "  } else {",
   "note": "adoption walks a dangerouslySetInnerHTML element's markup as the descriptor's children, replacing server nodes (FORMA-176). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"the server's markup is the prop's content, not children to adopt: no mismatch and no write\""
  },
@@ -2520,7 +2520,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "  } else if (inner == null || inner === false) {",
+  "find": "  } else if (markup == null || markup === false) {",
   "replace": "  } else if (inner === undefined) {",
   "note": "adoption skips the children of an element whose dangerouslySetInnerHTML is null or false, so their bindings never attach (formajs#32 review B1). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"a falsy static dangerouslySetInnerHTML is no prop: the server's children are adopted and bound (%s)\""
  },
@@ -2533,6 +2533,46 @@
   "find": "  if (current === markup) return true;\n  const tpl = document.createElement('template');\n  tpl.innerHTML = sink;\n  return tpl.innerHTML === current;",
   "replace": "  return current === markup;",
   "note": "adoption judges the server's markup by byte equality with the browser's serialisation, so ./ssr markup such as <br/> or &#39; is rewritten: iframes reload, typed text is lost (formajs#32 review S1, DR-5). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"markup the server wrote in a form the browser serialises differently is not rewritten: %j\""
+ },
+ {
+  "id": "adopt/inner-html-null-first-empties",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      if (!adopting && el.firstChild) el.replaceChildren();",
+  "replace": "      if (el.firstChild) el.replaceChildren();",
+  "note": "a reactive dangerouslySetInnerHTML whose first value is null empties the server's fallback child at activation (formajs#32 review S2). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"a reactive prop whose first value is null keeps the server's fallback child, bound, until markup arrives\""
+ },
+ {
+  "id": "adopt/inner-html-null-first-skips-children",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  const markup = typeof inner === 'function' ? untrack(inner as () => unknown) : inner;",
+  "replace": "  const markup = inner;",
+  "note": "adoption leaves a fallback child unbound when the reactive dangerouslySetInnerHTML starts at null (formajs#32 review S2). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"a reactive prop whose first value is null keeps the server's fallback child, bound, until markup arrives\""
+ },
+ {
+  "id": "el/inner-html-children-silent",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  warnInnerHtmlChildren(props, children);\n",
+  "replace": "",
+  "note": "h() takes children beside dangerouslySetInnerHTML without the development warning (formajs#32 review S2). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"children beside the prop warn once in development, in h() and in adoption, and a falsy prop does not\""
+ },
+ {
+  "id": "adopt/inner-html-children-silent",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  warnInnerHtmlChildren(desc.props, desc.children);\n",
+  "replace": "",
+  "note": "adoption drops children beside dangerouslySetInnerHTML without the development warning (formajs#32 review S2). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"children beside the prop warn once in development, in h() and in adoption, and a falsy prop does not\""
  },
  {
   "id": "el/inner-html-recorded-before-write",

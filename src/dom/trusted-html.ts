@@ -336,6 +336,35 @@ function warnPolicyRefused(name: string): void {
   }
 }
 
+/** The code children given beside `dangerouslySetInnerHTML` log. */
+export const INNER_HTML_CHILDREN_CODE = 'FORMA_W_INNER_HTML_CHILDREN';
+
+/**
+ * The development warning for children given beside a `dangerouslySetInnerHTML`
+ * prop that owns the element's content (a function, or a value that is not
+ * `null`, `undefined` or `false`): the renderers disagree on them, so they are
+ * a mistake to pass (FORMA-176).
+ *
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "children beside the prop warn once in development, in h() and in adoption, and a falsy prop does not"
+ */
+export function warnInnerHtmlChildren(props: Record<string, unknown> | null | undefined, children: unknown[]): void {
+  // The condition of warnRawString, for the same reason.
+  if ((typeof __FORMA_DEV_BUILD__ === 'boolean' && __FORMA_DEV_BUILD__)
+    || (typeof __FORMA_DEV_BUILD__ !== 'boolean' && __DEV__)) {
+    const inner = props?.dangerouslySetInnerHTML;
+    if ((typeof inner === 'function' || (inner != null && inner !== false))
+      && children.some((child) => child != null && child !== false && child !== true)) {
+      warnOnce(
+        INNER_HTML_CHILDREN_CODE,
+        `[forma] ${INNER_HTML_CHILDREN_CODE}: an element was given dangerouslySetInnerHTML and children. ` +
+        'h() renders the markup and then the children, until the markup next changes and replaces ' +
+        'them; ./ssr renders only the markup; adoption keeps only the markup and binds none of the ' +
+        'children. Give the element one or the other. Logged once, in development builds.',
+      );
+    }
+  }
+}
+
 /**
  * The development warning for `h(tag)` where `tag` is `script`, which 3.0.0
  * refuses (FORMA-109).
