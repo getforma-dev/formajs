@@ -230,6 +230,35 @@ for (const [entry, code] of [
 }
 
 // ---------------------------------------------------------------------------
+// 3c. The raw-HTML warnings are development-only
+// ---------------------------------------------------------------------------
+// A plain string given to a raw sink, and h('script'), log a coded warning in
+// a development build (FORMA-126, src/dom/trusted-html.ts). Each sits behind
+// the build flag itself, written out at the warning, so every production
+// artifact drops it, code-split chunks and the CDN bundles included; the
+// development twins keep it.
+const RAW_HTML_WARNING = /FORMA_W_(?:RAW_[A-Z_]+|SCRIPT_ELEMENT)/;
+for (const rel of jsArtifacts()) {
+  if (!isDevelopment(rel) && RAW_HTML_WARNING.test(read(rel))) {
+    fail(`${rel} contains a raw-HTML development warning: the build flag did not fold it away`);
+  }
+}
+for (const [entry, codes] of [
+  ['index', ['FORMA_W_RAW_INNER_HTML', 'FORMA_W_RAW_SET_HTML', 'FORMA_W_RAW_TEMPLATE', 'FORMA_W_RAW_SRCDOC', 'FORMA_W_SCRIPT_ELEMENT']],
+  ['runtime', ['FORMA_W_RAW_RECONCILE']],
+  ['runtime-hardened', ['FORMA_W_RAW_RECONCILE']],
+]) {
+  for (const ext of ['js', 'cjs']) {
+    const rel = `${DEV_OUT_DIR}/${entry}.${ext}`;
+    if (!existsSync(resolve(ROOT, rel))) continue; // reported by section 1
+    const graph = collectGraph(rel, ROOT).files.map((file) => read(file)).join('\n');
+    for (const code of codes) {
+      if (!graph.includes(code)) fail(`${rel} does not log ${code}: the development build lost the raw-HTML warning`);
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
 // 4. NO artifact contains a dynamic-code path
 // ---------------------------------------------------------------------------
 // This used to check the two hardened runtime files. It now checks all of them:
