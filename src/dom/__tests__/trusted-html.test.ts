@@ -449,6 +449,22 @@ describe('core under Trusted Types (simulated: happy-dom has none)', () => {
     expect(linesWith(warn, 'FORMA_W_RAW_RECONCILE')).toHaveLength(1);
   });
 
+  it("an adopted island's dangerouslySetInnerHTML writes trustedHtml() typed, as content and never as an attribute", () => {
+    // FORMA-176: adoption used to write the prop as an attribute.
+    sim = enforceTrustedTypes();
+    document.body.innerHTML = trustedHtml('<div id="app" data-forma-ssr><article></article></div>') as unknown as string;
+    const [inner, setInner] = createSignal<{ __html: TrustedHtml } | null>({ __html: trustedHtml('<b>one</b>') });
+    mount(() => h('article', { dangerouslySetInnerHTML: () => inner() }), '#app');
+    const article = document.querySelector('article')!;
+    expect(article.innerHTML).toBe('<b>one</b>');
+    setInner(null);
+    expect(article.childNodes.length).toBe(0);
+    setInner({ __html: trustedHtml('<b>one</b>') });
+    expect(article.innerHTML).toBe('<b>one</b>');
+    expect(article.hasAttribute('dangerouslysetinnerhtml')).toBe(false);
+    expect(sim.violations).toEqual([]);
+  });
+
   it("an adopted island's srcdoc binding writes trustedHtml() typed and warns once for a string", () => {
     sim = enforceTrustedTypes({ reportOnly: true });
     document.body.innerHTML = trustedHtml(

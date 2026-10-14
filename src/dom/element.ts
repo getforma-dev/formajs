@@ -466,25 +466,54 @@ function handleEvent(el: Element, key: string, value: unknown): void {
  */
 function handleInnerHTML(el: Element, _key: string, value: unknown): void {
   if (typeof value === 'function') {
-    internalEffect(() => {
-      const resolved = (value as () => unknown)();
-      if (resolved == null) {
-        el.replaceChildren();
-        return;
-      }
-      const html = innerHtmlOf(resolved);
-      const markup = String(html);
-      const cache = getCache(el);
-      if (cache['innerHTML'] === markup) return;
-      cache['innerHTML'] = markup;
-      el.innerHTML = rawHtml(html, 'innerHTML');
-    });
+    bindInnerHTML(el, value, false);
   } else {
     if (value == null) {
       el.replaceChildren();
       return;
     }
     el.innerHTML = rawHtml(innerHtmlOf(value), 'innerHTML');
+  }
+}
+
+/**
+ * Bind `value`, a `dangerouslySetInnerHTML` prop (static or a function), to
+ * `el`'s content: h()'s reactive path and adoption's (FORMA-176), one writer so
+ * the two cannot drift.
+ *
+ * - Markup reaches the content through the raw sink: a `trustedHtml()` value
+ *   typed, anything else as before, with its development warning.
+ * - `null` empties the element and forgets the markup, so the same markup
+ *   after a `null` is written again (A → null → A).
+ * - `adopt` makes the first write an adoption (DR-5): markup the server's
+ *   element already holds is not written again.
+ *
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "an adopted reactive dangerouslySetInnerHTML shows its content, follows its signal through null and back, and matches client rendering ($name)"
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "A → null → A shows A again, client-rendered and adopted"
+ * Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "adoption writes nothing where the server already holds the markup"
+ */
+export function bindInnerHTML(el: Element, value: unknown, adopt: boolean): void {
+  let first = adopt;
+  const write = (resolved: unknown): void => {
+    const cache = getCache(el);
+    if (resolved == null) {
+      cache['innerHTML'] = null;
+      if (el.firstChild) el.replaceChildren();
+    } else {
+      const html = innerHtmlOf(resolved);
+      const markup = String(html);
+      if (cache['innerHTML'] !== markup) {
+        cache['innerHTML'] = markup;
+        const sink = rawHtml(html, 'innerHTML');
+        if (!first || el.innerHTML !== markup) el.innerHTML = sink;
+      }
+    }
+    first = false;
+  };
+  if (typeof value === 'function') {
+    internalEffect(() => { write((value as () => unknown)()); });
+  } else {
+    write(value);
   }
 }
 

@@ -482,6 +482,31 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **A reactive `dangerouslySetInnerHTML` is adopted as content, and A → null
+  → A shows A again** (FORMA-176; DR-5, DR-9, DR-19). Adoption treated the
+  prop as an attribute: a reactive one wrote `dangerouslysetinnerhtml="[object
+  Object]"` and never touched the content, where client rendering writes it,
+  and a static one was skipped though the walker ships such an element empty.
+  It now binds the prop as h() does, through one writer
+  (`bindInnerHTML` in `src/dom/element.ts`): the content through the raw sink
+  (a `trustedHtml()` value typed, a string with `FORMA_W_RAW_INNER_HTML` in
+  development), never an attribute, writing nothing where the server's element
+  already holds the markup, and not walking that markup as children. And a
+  reactive value going A → null → A left the element empty, in h() as in
+  adoption: the `null` branch kept A's markup as the current one, so A again
+  read as no change; `null` now forgets it. Tests:
+  `src/dom/__tests__/adopt-inner-html.test.ts` (eight: both server outputs,
+  the walker's empty element and `./ssr`'s markup, matched against client
+  rendering through every transition; no write where the server agrees; the
+  string warning); `src/dom/__tests__/trusted-html.test.ts` > "an adopted
+  island's dangerouslySetInnerHTML writes trustedHtml() typed, as content and
+  never as an attribute"; `e2e/adoption.spec.ts` > "a reactive
+  dangerouslySetInnerHTML is adopted as content, follows its signal through
+  null and back, and matches client rendering", and the Trusted Types sink
+  test's adopted island, in Chromium, Firefox and WebKit. Size: the core entry
+  grows by 100 B gzipped (29,285 to 29,385 B of its 30,000 B gate) and the
+  browser ESM bundle by 92 B (28,143 to 28,235 B); the CDN runtimes, which do
+  not adopt, do not change.
 - **SVG and MathML namespaces where `h()` knows the parent** (FORMA-026,
   DR-9). A tag that is both HTML and SVG (`title`, `a`, `script`, `style`,
   `font`) now takes the namespace of the content it is built in. Where its

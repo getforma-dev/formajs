@@ -559,3 +559,33 @@ test('content built inside an svg is SVG and rendered once: a createShow branch,
     { show: 1, rows: 2, cases: 1 }, { show: 2, rows: 3, cases: 2 }, { show: 3, rows: 3, cases: 3 }, { show: 4, rows: 3, cases: 3 },
   ]);
 });
+
+test('a reactive dangerouslySetInnerHTML is adopted as content, follows its signal through null and back, and matches client rendering', async ({ page }) => {
+  // FORMA-176: adoption used to write the prop as an attribute
+  // ("[object Object]") and never the content. The walker ships the element
+  // empty; the client-rendered twin is the reference.
+  await serve(page, '<div id="app" data-forma-ssr><article id="doc"></article></div><div id="client"></div>');
+  const steps = await page.evaluate(async () => {
+    const { h, mount, createSignal, trustedHtml } = await import('/adoption-core.mjs' as string);
+    const [inner, setInner] = createSignal({ __html: trustedHtml('<b>A</b>') });
+    mount(() => h('article', { id: 'doc', dangerouslySetInnerHTML: () => inner() }), '#app');
+    mount(() => h('article', { id: 'twin', dangerouslySetInnerHTML: () => inner() }), '#client');
+    const doc = document.getElementById('doc')!;
+    const twin = document.getElementById('twin')!;
+    const seen: unknown[] = [];
+    const record = () => seen.push([doc.innerHTML, twin.innerHTML, doc.getAttribute('dangerouslysetinnerhtml')]);
+    record();
+    for (const next of [{ __html: trustedHtml('<i>B</i>') }, null, { __html: trustedHtml('<b>A</b>') }, { __html: '<u>C</u>' }]) {
+      setInner(next);
+      record();
+    }
+    return seen;
+  });
+  expect(steps).toEqual([
+    ['<b>A</b>', '<b>A</b>', null],
+    ['<i>B</i>', '<i>B</i>', null],
+    ['', '', null],
+    ['<b>A</b>', '<b>A</b>', null],
+    ['<u>C</u>', '<u>C</u>', null],
+  ]);
+});
