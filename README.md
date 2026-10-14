@@ -52,18 +52,18 @@ Or use a CDN — no build step, no bundler:
 <script src="https://unpkg.com/@getforma/core/dist/formajs-runtime.global.js"></script>
 ```
 
-> **Production:** Pin the version (e.g., `@getforma/core@2.0.3`) instead of `@latest`.
+> **Production:** Pin the version (e.g., `@getforma/core@2.1.0`) instead of `@latest`.
 
 Any bundler works — Vite, esbuild, tsup, webpack, Rollup. FormaJS ships standard ESM and CJS via `package.json` exports. No plugins, no special config. For JSX, set `jsx: "react"`, `jsxFactory: "h"`, `jsxFragmentFactory: "Fragment"`.
 
-Gzipped sizes, measured by `npm run check:size` on the 2.0.1 build on 2026-08-08 (that script walks the real ESM import graph, so shared chunks are weighed, and CI fails the build if any entry exceeds its limit):
+Gzipped sizes, measured by `npm run check:size` on the 2.1.0 build on 2026-10-14 (that script walks the real ESM import graph, so shared chunks are weighed, and CI fails the build if any entry exceeds its limit):
 
 | Artifact | Gzipped | CI limit |
 |---|---|---|
-| `@getforma/core` entry + every chunk it imports | 24.8 KB (25,429 B) | 30,000 B |
-| CDN HTML runtime (`formajs-runtime.global.js`) | 31.3 KB (32,015 B) | 41,500 B |
-| CDN HTML runtime, hardened (`formajs-runtime-hardened.global.js`) | 30.3 KB (31,017 B) | 40,500 B |
-| CDN browser ESM (`forma.esm.js`, inlines alien-signals) | 23.6 KB (24,198 B) | 29,000 B |
+| `@getforma/core` entry + every chunk it imports | 28.8 KB (29,515 B) | 30,000 B |
+| CDN HTML runtime (`formajs-runtime.global.js`) | 40.1 KB (41,094 B) | 41,500 B |
+| CDN HTML runtime, hardened (`formajs-runtime-hardened.global.js`) | 39.2 KB (40,106 B) | 40,500 B |
+| CDN browser ESM (`forma.esm.js`, inlines alien-signals) | 27.7 KB (28,369 B) | 29,000 B |
 | Preview frame runtime (`formajs-frame.global.js`, inlined by the server) | 38.8 KB (39,705 B) | 40,000 B |
 
 The core figure is **untree-shaken** — it is everything `dist/index.js` pulls in. A bundler that drops what your app does not import ships less. The gzipped figures are a measurement and rot; the CI limits are not, because a test reads them back out of the gate script.
@@ -85,7 +85,7 @@ All three share the same signal graph and reactive engine. Pick one, or mix them
 JSX compiles to `h()` — same function, no JSX-specific runtime. The HTML runtime reads `data-*` attributes out of the page and wires them to the same signals.
 
 ```html
-<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.0.3/dist/formajs-runtime.global.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@getforma/core@2.1.0/dist/formajs-runtime.global.js"></script>
 
 <div data-forma-state='{ "count": 0 }'>
   <p data-text="{count}"></p>
