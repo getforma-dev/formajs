@@ -23,15 +23,21 @@ All notable changes to this project will be documented in this file.
     diagnostics switch and the server's directive map do not reach it;
   - every hop from `$el`, `$event` or `$refs` that yields an element is
     checked against the root, and one past it is refused with
-    `FORMA_E_GRANT_DOM` unless the mount grants `dom`, so `$el.closest('body')`
-    reaches nothing; without `dom` a selector given to `matches()`,
+    `FORMA_E_GRANT_DOM` unless the mount grants `dom`; without `dom`,
+    `closest()` walks only up to the root and answers `null` past it, never
+    testing an element outside it (so `$el.closest('body')` reaches nothing,
+    and no answer can read an outside ancestor's attribute a character at a
+    time: formajs#30's review, B1), and a selector given to `matches()`,
     `closest()` or `querySelector(All)()` must be local (no combinator, which
-    would ask about an ancestor or a sibling);
+    would ask about an ancestor or a sibling, and no `:has()`, `:scope` or
+    `:host`);
   - `data-fetch` sends only what the `fetch` grant names (methods, path
     prefixes checked on the normalised path, cookies or not, a timeout up to
-    30 s), and `click()` needs `navigate`; a status outside 200-299 is an
-    error in the `error:` target, never data; `$refetch` reaches only its own
-    mount's fetches;
+    30 s), and `click()` needs `navigate`, as does `$dispatch` of an
+    activation event (`click`, `auxclick`, `DOMActivate`, `submit`,
+    `reset`), which WebKit or Firefox run as activation (review S1); a status
+    outside 200-299 is an error in the `error:` target, never data;
+    `$refetch` reaches only its own mount's fetches;
   - every denial is a coded `formajs:diagnostic` (`kind: 'grant-denied'`,
     `FORMA_E_GRANT_FETCH`, `_DOM` or `_NAVIGATE`, with the grant, the mount's
     name and its tier), whatever any diagnostics switch says, counted per
@@ -68,11 +74,12 @@ All notable changes to this project will be documented in this file.
   gains `element:needs-navigate.click` and the four `element:selector.*`
   methods: a restriction recorded where the capabilities are, not a new one.
 - **Size** (L-51): measured on `main` with FORMA-126/127, the CDN runtime grows
-  by 3,510 B gzipped (36,374 to 39,884 B) and the hardened runtime by 3,501 B
-  (35,396 to 38,897 B); their gates rise from 36,500 to 40,000 B and from
-  35,500 to 39,000 B. The bytes are the
-  mount, its grant checks, the selector check (about 450 B) and the page's
-  mount switch (about 215 B). The core entry and the browser ESM bundle are
+  by 3,737 B gzipped (36,374 to 40,111 B) and the hardened runtime by 3,726 B
+  (35,396 to 39,122 B); their gates rise from 36,500 to 40,500 B and from
+  35,500 to 39,500 B. The bytes are the
+  mount, its grant checks, the selector check (about 450 B), the page's
+  mount switch (about 215 B), and the review's confined `closest()` and gated
+  `$dispatch` (about 225 B). The core entry and the browser ESM bundle are
   unchanged.
 
 - **Operators that build or read strings are charged before they run**
@@ -618,6 +625,60 @@ All notable changes to this project will be documented in this file.
 
 ### Fixed
 
+- **A reactive `dangerouslySetInnerHTML` is adopted as content, and A → null
+  → A shows A again** (FORMA-176; DR-5, DR-9, DR-19). Adoption treated the
+  prop as an attribute: a reactive one wrote `dangerouslysetinnerhtml="[object
+  Object]"` and never touched the content, where client rendering writes it,
+  and a static one was skipped though a walker can ship such an element empty.
+  It now binds the prop as h() does, through one writer (`bindInnerHTML` in
+  `src/dom/element.ts`):
+  - the content goes through the raw sink (a `trustedHtml()` value typed, a
+    string with `FORMA_W_RAW_INNER_HTML` in development), never an attribute;
+  - a static `null`, `undefined` or `false` (the `cond && { __html }` pattern)
+    is no prop, as in h() and `./ssr`: the server's children are adopted and
+    bound;
+  - adoption writes nothing where the server's element already holds the
+    markup, judged by parsing the markup through a `<template>` and comparing
+    it with the server's content as the browser serialises both, so markup
+    `./ssr` wrote as given (`<br/>`, single quotes, `&#39;`, an unclosed `<p>`,
+    a `<table>` without `<tbody>`) is not rewritten: an iframe in it does not
+    reload, and text typed into it before activation survives. An empty
+    element (the walker's) is written without the parse, so a string raises
+    one Trusted Types report, as client rendering does;
+  - a reactive prop whose first value is `null` keeps the server's content
+    (its children, adopted and bound) until markup arrives, as h() shows its
+    children until then;
+  - markup is recorded as current only once written, so a string a page
+    enforcing Trusted Types refused does not block the same markup sent later
+    as `trustedHtml()`.
+
+  A reactive value going A → null → A left the element empty, in h() as in
+  adoption: the `null` branch kept A's markup as the current one, so A again
+  read as no change; `null` now forgets it.
+
+  **Children given beside the prop** are a mistake the renderers disagree on:
+  h() renders the markup and then the children, until the markup next changes
+  and replaces them; `./ssr` renders only the markup; the compiler's walker
+  renders only the children. Adoption keeps the markup and binds none of the
+  children (in 2.0.3 it adopted the children and wrote the prop as an
+  attribute). h() and adoption now log `FORMA_W_INNER_HTML_CHILDREN` once in
+  development; give the element one or the other.
+
+  Tests: `src/dom/__tests__/adopt-inner-html.test.ts` (both server outputs,
+  the walker's empty element and `./ssr`'s markup, matched against client
+  rendering through every transition; the three falsy values with a bound
+  child; sixteen non-canonical markups not rewritten; typed text kept; the
+  `null`-first fallback child; the children warning);
+  `src/dom/__tests__/trusted-html.test.ts` > "an adopted island's
+  dangerouslySetInnerHTML writes trustedHtml() typed, as content and never as
+  an attribute" and "a refused string does not block the same markup sent
+  later as trustedHtml(), client-rendered and adopted"; `e2e/adoption.spec.ts`
+  (four tests, among them twenty-one non-canonical markups, the review's
+  among them, adopted without one DOM write) and the Trusted Types sink test's adopted
+  island, in Chromium, Firefox and WebKit. Size: the core entry grows by 230 B
+  gzipped (29,285 to 29,515 B of its 30,000 B gate) and the browser ESM bundle
+  by 226 B (28,143 to 28,369 B of 29,000 B); the CDN runtimes, which do not
+  adopt, do not change.
 - **SVG and MathML namespaces where `h()` knows the parent** (FORMA-026,
   DR-9). A tag that is both HTML and SVG (`title`, `a`, `script`, `style`,
   `font`) now takes the namespace of the content it is built in. Where its

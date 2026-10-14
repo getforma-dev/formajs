@@ -449,6 +449,56 @@ describe('core under Trusted Types (simulated: happy-dom has none)', () => {
     expect(linesWith(warn, 'FORMA_W_RAW_RECONCILE')).toHaveLength(1);
   });
 
+  it("an adopted island's dangerouslySetInnerHTML writes trustedHtml() typed, as content and never as an attribute", () => {
+    // FORMA-176: adoption used to write the prop as an attribute.
+    sim = enforceTrustedTypes();
+    document.body.innerHTML = trustedHtml('<div id="app" data-forma-ssr><article></article></div>') as unknown as string;
+    const [inner, setInner] = createSignal<{ __html: TrustedHtml } | null>({ __html: trustedHtml('<b>one</b>') });
+    mount(() => h('article', { dangerouslySetInnerHTML: () => inner() }), '#app');
+    const article = document.querySelector('article')!;
+    expect(article.innerHTML).toBe('<b>one</b>');
+    setInner(null);
+    expect(article.childNodes.length).toBe(0);
+    setInner({ __html: trustedHtml('<b>one</b>') });
+    expect(article.innerHTML).toBe('<b>one</b>');
+    expect(article.hasAttribute('dangerouslysetinnerhtml')).toBe(false);
+    expect(sim.violations).toEqual([]);
+  });
+
+  it("adopting a string onto the walker's empty element raises one Trusted Types report, as client rendering does", () => {
+    // formajs#32's second review: holdsMarkup parsed the string through a
+    // template before writing it, a second report for one write.
+    sim = enforceTrustedTypes({ reportOnly: true });
+    document.body.innerHTML = trustedHtml('<div id="app" data-forma-ssr><article></article></div>') as unknown as string;
+    mount(() => h('article', { dangerouslySetInnerHTML: () => ({ __html: '<b>x</b>' }) }), '#app');
+    expect(document.querySelector('#app article')!.innerHTML).toBe('<b>x</b>');
+    expect(sim.violations).toEqual(['innerHTML <b>x</b>']);
+    // Client rendering, for comparison: one report for one write.
+    const client = h('article', { dangerouslySetInnerHTML: () => ({ __html: '<b>x</b>' }) });
+    expect(client.innerHTML).toBe('<b>x</b>');
+    expect(sim.violations).toEqual(['innerHTML <b>x</b>', 'innerHTML <b>x</b>']);
+  });
+
+  it('a refused string does not block the same markup sent later as trustedHtml(), client-rendered and adopted', () => {
+    // formajs#32's review (N1): the markup was recorded as current before the
+    // write, so after an enforcing page refused it as a string, the same
+    // markup as trustedHtml() read as no change and was never written.
+    sim = enforceTrustedTypes();
+    document.body.innerHTML = trustedHtml('<div id="app" data-forma-ssr><article><b>old</b></article></div>') as unknown as string;
+    const [inner, setInner] = createSignal<{ __html: string | TrustedHtml }>({ __html: trustedHtml('<b>old</b>') });
+    const client = h('article', { dangerouslySetInnerHTML: () => inner() });
+    mount(() => h('article', { dangerouslySetInnerHTML: () => inner() }), '#app');
+    const adopted = document.querySelector('#app article')!;
+    vi.spyOn(console, 'error').mockImplementation(() => {});
+    setInner({ __html: '<b>new</b>' });
+    expect(adopted.innerHTML).toBe('<b>old</b>');
+    expect(client.innerHTML).toBe('<b>old</b>');
+    setInner({ __html: trustedHtml('<b>new</b>') });
+    expect(adopted.innerHTML).toBe('<b>new</b>');
+    expect(client.innerHTML).toBe('<b>new</b>');
+    expect(sim.violations).toEqual(['innerHTML <b>new</b>', 'innerHTML <b>new</b>']);
+  });
+
   it("an adopted island's srcdoc binding writes trustedHtml() typed and warns once for a string", () => {
     sim = enforceTrustedTypes({ reportOnly: true });
     document.body.innerHTML = trustedHtml(

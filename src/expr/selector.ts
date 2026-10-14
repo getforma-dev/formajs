@@ -10,7 +10,7 @@
  * does not grant `dom` accepts only a LOCAL selector: a list of compound
  * selectors (type, `*`, `#id`, `.class`, `[attribute]` and pseudo-classes), with
  * no combinator (descendant, `>`, `+`, `~`), no pseudo-element, no namespace,
- * no nesting `&`, no `:host`, and of the functional pseudo-classes only
+ * no nesting `&`, no `:host` or `:scope`, and of the functional pseudo-classes only
  * `:not()`, `:is()` and `:where()` (whose arguments are checked as part of the
  * whole) and the `:nth-*()` family over `An+B`. A local selector judges each
  * element by its own tag, attributes and state.
@@ -42,11 +42,12 @@ const LIST_OPEN = /:(?:not|is|where)\(/gi;
 
 /**
  * Left after the rewrites below, what is not local: a pseudo-element, `:host`,
- * or any character a compound selector does not have, which takes in every
+ * `:scope` (which names the receiver, so has no business in a local
+ * selector), or any character a compound selector does not have, which takes in every
  * combinator (whitespace, `>`, `+`, `~`, `||`), a namespace `|`, nesting `&`,
  * and the `(` of any other function.
  */
-const NOT_LOCAL = /::|:host\b|[^\w\-#.*:,\u0001)\u0080-\uffff]/i;
+const NOT_LOCAL = /::|:host\b|:scope\b|[^\w\-#.*:,\u0001)\u0080-\uffff]/i;
 
 /** An empty compound: a leading, doubled or trailing comma, or an empty argument list. */
 const EMPTY = /^,|[,\u0001],|,$|,\)|\u0001\)/;

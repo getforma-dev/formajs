@@ -23,7 +23,7 @@ import { LIMITS } from './ast';
 import { charge, enter, evalExpr, leave, makeCtx, runProgram, type Meter, type ScopeLike } from './interp';
 
 export { LIMITS } from './ast';
-export { isExprError, type FormaExprError, type ExprErrorCode } from './errors';
+export { exprError, isExprError, type FormaExprError, type ExprErrorCode } from './errors';
 export { hostFn, hostObject, isHost, type Bound, type ExprGrant, type Host } from './host';
 export { isLocalSelector } from './selector';
 export { allowlistSnapshot, SAFE_GLOBALS } from './allowlist';

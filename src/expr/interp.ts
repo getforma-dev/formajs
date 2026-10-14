@@ -752,6 +752,23 @@ function guardGrants(host: Host, bound: Bound, method: string, args: unknown[], 
   }
 }
 
+/**
+ * `closest()` under a mount without `dom` (L-36): the walk tests the element
+ * and its ancestors up to the mount root, and never one outside it; past the
+ * root it answers `null`, as no match does. Testing an outside ancestor, even
+ * to refuse the answer, would make the refusal an oracle: an attribute
+ * selector matching only that ancestor, asked a prefix at a time, reads its
+ * value (formajs#30, review B1).
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "closest() without dom never tests an element outside the root: an outside ancestor's attribute cannot be read a character at a time"
+ */
+function closestWithin(el: Element, root: Node, selector: string): Element | null {
+  if (el === root || !root.contains(el)) return null;
+  for (let n: Element | null = el; n !== null && n !== root; n = n.parentElement) {
+    if (n.matches(selector)) return n;
+  }
+  return null;
+}
+
 function callHostMethod(host: Host, method: string, argNodes: Expr[], ctx: EvalCtx, at: number): unknown {
   const args = argNodes.map((a) => evalArg(a, ctx));
 
@@ -793,7 +810,9 @@ function callHostMethod(host: Host, method: string, argNodes: Expr[], ctx: EvalC
   if (typeof fn !== 'function') {
     throw exprError('FORMA_E_METHOD_DENIED', `${host.label}.${method}() is unavailable here`, at);
   }
-  const result = Reflect.apply(fn as (...a: unknown[]) => unknown, target, args);
+  const result = host.kind === 'element' && method === 'closest' && host.bound && !host.bound.dom
+    ? closestWithin(target as unknown as Element, host.bound.root, String(args[0] ?? ''))
+    : Reflect.apply(fn as (...a: unknown[]) => unknown, target, args);
 
   if (host.kind === 'element' && Object.hasOwn(ELEMENT_METHOD_RESULT, method)) {
     const as = ELEMENT_METHOD_RESULT[method]!;

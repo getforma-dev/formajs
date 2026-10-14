@@ -559,3 +559,110 @@ test('content built inside an svg is SVG and rendered once: a createShow branch,
     { show: 1, rows: 2, cases: 1 }, { show: 2, rows: 3, cases: 2 }, { show: 3, rows: 3, cases: 3 }, { show: 4, rows: 3, cases: 3 },
   ]);
 });
+
+test('a reactive dangerouslySetInnerHTML is adopted as content, follows its signal through null and back, and matches client rendering', async ({ page }) => {
+  // FORMA-176: adoption used to write the prop as an attribute
+  // ("[object Object]") and never the content. The walker ships the element
+  // empty; the client-rendered twin is the reference.
+  await serve(page, '<div id="app" data-forma-ssr><article id="doc"></article></div><div id="client"></div>');
+  const steps = await page.evaluate(async () => {
+    const { h, mount, createSignal, trustedHtml } = await import('/adoption-core.mjs' as string);
+    const [inner, setInner] = createSignal({ __html: trustedHtml('<b>A</b>') });
+    mount(() => h('article', { id: 'doc', dangerouslySetInnerHTML: () => inner() }), '#app');
+    mount(() => h('article', { id: 'twin', dangerouslySetInnerHTML: () => inner() }), '#client');
+    const doc = document.getElementById('doc')!;
+    const twin = document.getElementById('twin')!;
+    const seen: unknown[] = [];
+    const record = () => seen.push([doc.innerHTML, twin.innerHTML, doc.getAttribute('dangerouslysetinnerhtml')]);
+    record();
+    for (const next of [{ __html: trustedHtml('<i>B</i>') }, null, { __html: trustedHtml('<b>A</b>') }, { __html: '<u>C</u>' }]) {
+      setInner(next);
+      record();
+    }
+    return seen;
+  });
+  expect(steps).toEqual([
+    ['<b>A</b>', '<b>A</b>', null],
+    ['<i>B</i>', '<i>B</i>', null],
+    ['', '', null],
+    ['<b>A</b>', '<b>A</b>', null],
+    ['<u>C</u>', '<u>C</u>', null],
+  ]);
+});
+
+test('a falsy static dangerouslySetInnerHTML is no prop: the server\'s children are adopted and their handlers work', async ({ page }) => {
+  // formajs#32's review (B1): undefined, null and false (`cond && { __html }`)
+  // are no prop to h() and ./ssr, which renders the children; adoption threw
+  // on false and wiped the children for the others.
+  await serve(page, [0, 1, 2].map((i) => `<div id="app${i}" data-forma-ssr><article><button id="b${i}">go</button></article></div>`).join(''));
+  const errors: string[] = [];
+  page.on('pageerror', (err) => errors.push(String(err)));
+  await page.evaluate(async () => {
+    const { h, mount } = await import('/adoption-core.mjs' as string);
+    const clicks = [0, 0, 0];
+    (window as any).clicks = clicks;
+    [undefined, null, false].forEach((value, i) => {
+      mount(() => h('article', { dangerouslySetInnerHTML: value }, h('button', { id: `b${i}`, onClick: () => { clicks[i]++; } }, 'go')), `#app${i}`);
+    });
+  });
+  for (const i of [0, 1, 2]) await page.locator(`#b${i}`).click();
+  expect(await page.evaluate(() => (window as any).clicks)).toEqual([1, 1, 1]);
+  await expect(page.locator('article button')).toHaveCount(3);
+  await expect(page.locator('[dangerouslysetinnerhtml]')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});
+
+test('markup the server wrote in a form the browser serialises differently is adopted without one DOM write, and typed text survives', async ({ page }) => {
+  // formajs#32's review (S1): the reviewer's non-canonical markups, as ./ssr
+  // writes them. Compared through a template parse, each is the content the
+  // client would write, so adoption writes nothing (DR-5).
+  const markups = [
+    '<br/>', '<br />', '<img src="x.png" alt="a" />', '<a href=x>link</a>', "<a href='x'>link</a>", '<p class="a"  id="b">x</p>',
+    '<input disabled>', 'It&#39;s', '&quot;q&quot;', 'a & b', '&copy; 2026', '<B>upper</B>', '<p>one<p>two',
+    '<table><tr><td>x</td></tr></table>', '<svg><path d="M0 0"/></svg>', '<div title="a<b">x</div>', '<div title="a>b">x</div>',
+    '<pre>\n\nx</pre>', '<textarea>\nx</textarea>',
+    '<p>It&#39;s a &quot;test&quot;</p>\n<pre><code class="language-js">const a = &quot;b&quot;;\n</code></pre>\n',
+    "<label>Name <input id=typed value=''></label>",
+  ];
+  await serve(page, markups.map((m, i) => `<div id="m${i}" data-forma-ssr><article>${m}</article></div>`).join(''));
+  await page.locator('#typed').fill('typed before activation');
+  const writes = await page.evaluate(async (list) => {
+    const { h, mount, createSignal } = await import('/adoption-core.mjs' as string);
+    const firsts = list.map((_, i) => document.querySelector(`#m${i} article`)!.firstChild);
+    const observer = new MutationObserver(() => {});
+    for (let i = 0; i < list.length; i++) {
+      observer.observe(document.querySelector(`#m${i} article`)!, { subtree: true, childList: true, attributes: true, characterData: true });
+    }
+    list.forEach((markup, i) => {
+      const [inner] = createSignal({ __html: markup });
+      mount(() => h('article', { dangerouslySetInnerHTML: () => inner() }), `#m${i}`);
+    });
+    const records = observer.takeRecords();
+    observer.disconnect();
+    return {
+      records: records.length,
+      kept: list.map((_, i) => document.querySelector(`#m${i} article`)!.firstChild === firsts[i]),
+    };
+  }, markups);
+  expect(writes.records).toBe(0);
+  expect(writes.kept).toEqual(markups.map(() => true));
+  await expect(page.locator('#typed')).toHaveValue('typed before activation');
+});
+
+test('a reactive dangerouslySetInnerHTML whose first value is null keeps the server\'s fallback child, bound, until markup arrives', async ({ page }) => {
+  // formajs#32's review (S2): adoption emptied the element at activation.
+  await serve(page, '<div id="app" data-forma-ssr><article id="doc"><button id="fb">fallback</button></article></div>');
+  await page.evaluate(async () => {
+    const { h, mount, createSignal, trustedHtml } = await import('/adoption-core.mjs' as string);
+    const [inner, setInner] = createSignal(null);
+    (window as any).clicks = 0;
+    (window as any).showMarkup = () => setInner({ __html: trustedHtml('<b id="m">markup</b>') });
+    mount(() => h('article', { id: 'doc', dangerouslySetInnerHTML: () => inner() },
+      h('button', { id: 'fb', onClick: () => { (window as any).clicks++; } }, 'fallback')), '#app');
+  });
+  await page.locator('#fb').click();
+  expect(await page.evaluate(() => (window as any).clicks)).toBe(1);
+  await page.evaluate(() => (window as any).showMarkup());
+  await expect(page.locator('#m')).toHaveText('markup');
+  await expect(page.locator('#fb')).toHaveCount(0);
+});

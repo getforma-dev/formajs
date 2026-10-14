@@ -50,8 +50,9 @@ const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
  * the typed reconcile() and its forma-runtime policy) raised them to 36,500
  * and 35,500 B (36,374 and 35,396 B measured).
  * FORMA-128 (the tiered mount: roots handed in, grants, the bound on `$el`,
- * coded denials, the page's mount switch; core 2.1.0) raised them to 40,000
- * and 39,000 B (39,884 and 38,897 B measured).
+ * coded denials, the page's mount switch, its review's confined `closest()`
+ * and gated `$dispatch`; core 2.1.0) raised them to 40,500 and 39,500 B
+ * (40,111 and 39,122 B measured).
  * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
 export const GATES = [
@@ -62,7 +63,7 @@ export const GATES = [
   },
   {
     entry: 'dist/formajs-runtime.global.js',
-    limit: 40000,
+    limit: 40500,
     note: 'CDN runtime bundle (single self-contained IIFE)',
   },
   {
@@ -84,7 +85,7 @@ export const GATES = [
     // release.yml — while being the build the docs pointed CSP-strict users at
     // and the target of the `runtime-csp` exports subpath.
     entry: 'dist/formajs-runtime-hardened.global.js',
-    limit: 39000,
+    limit: 39500,
     note: 'CDN hardened runtime bundle (single self-contained IIFE)',
   },
 ];

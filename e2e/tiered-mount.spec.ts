@@ -94,7 +94,7 @@ test("SR16 and SR31 in a browser: $el.closest('body') reaches nothing, and an un
     );
   });
   await expect(page.locator('#failed')).toHaveText('data-fetch denied: the mount grants no fetch');
-  await expect(page.locator('#reach')).toHaveText('initial');
+  await expect(page.locator('#reach')).toHaveText('confined');
 
   // Granted, the request goes, and its 404 is an error, not data.
   await page.evaluate(() => {
@@ -164,4 +164,67 @@ test("SR16 in 2.x: with data-forma-mount=\"manual\" on the runtime's script, onl
     later: 'raw',
     refused: ['FORMA_E_MOUNT_MANUAL', 'FORMA_E_MOUNT_MANUAL'],
   });
+});
+
+test("closest() without dom never tests an element outside the root: an outside ancestor's attribute cannot be read a character at a time", async ({ page }) => {
+  // formajs#30's review, B1, as the reviewer measured it on the CDN build.
+  await bare(page);
+  const answers = await page.evaluate(() => {
+    const { FormaRuntime } = window as unknown as { FormaRuntime: Runtime };
+    const root = document.getElementById('root')!;
+    const ask = (prefix: string): string | null => {
+      const handle = FormaRuntime.mountMarkup(root,
+        `<div data-forma-state='{}'><p id="out" data-text="{$el.closest('[data-secret^=&quot;${prefix}&quot;]') ? 'HIT' : 'MISS'}">INIT</p></div>`,
+        { tier: 'reviewed', grants: {} });
+      const answer = document.getElementById('out')!.textContent;
+      handle.unmount();
+      return answer;
+    };
+    // Recover the secret as the oracle would: extend a prefix while it "hits".
+    const alphabet = 'abcdefghijklmnopqrstuvwxyz0123456789';
+    let recovered = '';
+    for (let i = 0; i < 8; i++) {
+      const next = [...alphabet].find((c) => ask(recovered + c) !== 'MISS');
+      if (!next) break;
+      recovered += next;
+    }
+    return { recovered, s: ask('s'), x: ask('x') };
+  });
+  expect(answers).toEqual({ recovered: '', s: 'MISS', x: 'MISS' });
+});
+
+test('$dispatch of an activation event needs navigate: nothing navigates, submits or resets without it', async ({ page }) => {
+  // formajs#30's review, S1: WebKit runs activation for an untrusted click,
+  // auxclick and DOMActivate; Firefox submits and resets on submit and reset.
+  await bare(page);
+  const result = await page.evaluate(async () => {
+    const { FormaRuntime } = window as unknown as { FormaRuntime: Runtime };
+    const root = document.getElementById('root')!;
+    const sink = document.createElement('iframe');
+    sink.name = 'sink';
+    document.body.appendChild(sink);
+    await new Promise((r) => setTimeout(r, 50));
+    let loads = 0;
+    sink.addEventListener('load', () => { loads++; });
+    const before = location.hash;
+    const outcomes: string[] = [];
+    for (const type of ['click', 'auxclick', 'DOMActivate', 'submit', 'reset']) {
+      const handle = FormaRuntime.mountMarkup(root,
+        `<div data-forma-state='{}'><a id="a" href="#navigated-${type}" data-on:mouseover="{$dispatch('${type}')}">a</a>` +
+        `<form id="f" action="about:blank" target="sink"><input id="t" name="q" value="v">` +
+        `<button id="s" type="submit" data-on:mouseover="{$dispatch('${type}')}">s</button>` +
+        `<button id="r" type="reset" data-on:mouseover="{$dispatch('${type}')}">r</button></form></div>`,
+        { tier: 'reviewed', grants: {} });
+      (document.getElementById('t') as HTMLInputElement).value = 'changed';
+      for (const id of ['a', 's', 'r']) document.getElementById(id)!.dispatchEvent(new Event('mouseover'));
+      await new Promise((r) => setTimeout(r, 100));
+      if ((document.getElementById('t') as HTMLInputElement).value !== 'changed') outcomes.push(`${type}: reset`);
+      handle.unmount();
+    }
+    if (location.hash !== before) outcomes.push(`navigated ${location.hash}`);
+    if (loads) outcomes.push('submitted');
+    return { outcomes, denied: FormaRuntime.getDiagnostics().filter((d) => d.code === 'FORMA_E_GRANT_NAVIGATE').length };
+  });
+  expect(result.outcomes).toEqual([]);
+  expect(result.denied).toBe(5);
 });
