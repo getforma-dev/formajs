@@ -215,7 +215,7 @@ describe('documented HTML runtime snippets', () => {
     runtime.mount(container);
     await tick();
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/items', { method: 'GET' });
+    expect(fetchMock).toHaveBeenCalledWith('/api/items', { method: 'GET', signal: expect.any(AbortSignal) });
     expect(container.querySelector('#out')!.textContent).toBe('load-1');
 
     (container.querySelector('#again') as HTMLButtonElement).click();
