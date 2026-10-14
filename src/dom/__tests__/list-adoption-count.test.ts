@@ -312,6 +312,90 @@ describe('list adoption row-count check', () => {
     expect(clicks).toEqual(['a']);
   });
 
+  // Round 3: the same for roots outside every island. The walk runs in a
+  // batch, so effects a signal written during it triggers in other roots run
+  // after the walk, outside its recording and outside its root.
+  it("a failing mount() whose ref writes a shared signal does not detach a second mount() root's new row", () => {
+    document.body.innerHTML =
+      `<div id="app2"></div><div id="app1" data-forma-ssr><div><div>x</div>${serverList(['a', 'b'])}</div></div>`;
+    const [rows, setRows] = createSignal(['r0']);
+    const clicks: string[] = [];
+    mount(() => h('ul', null, createList(rows, (r) => r, (r) => h('li', { onClick: () => clicks.push(r) }, r))) as unknown as HTMLElement, '#app2');
+    captureErrors(() => {
+      mount((() => h('div', null,
+        h('div', { ref: () => setRows(['r0', 'r1']) }, 'x'),
+        h('ul', null, createList(() => ['a'], (x) => x, (x) => h('li', null, x))))) as unknown as () => HTMLElement, '#app1');
+    });
+    expect(document.getElementById('app1')!.hasAttribute('data-forma-ssr')).toBe(true);
+    const lis = Array.from(document.querySelectorAll<HTMLElement>('#app2 li'));
+    expect(lis.map((li) => li.textContent)).toEqual(['r0', 'r1']);
+    for (const li of lis) li.click();
+    expect(clicks).toEqual(['r0', 'r1']);
+  });
+
+  it("a failing island's ref that writes a shared signal does not detach a client-rendered mount() root's new row", () => {
+    document.body.innerHTML =
+      `<div id="app2"></div><div data-forma-island="0" data-forma-component="B"><div>x</div>${serverList(['a', 'b'])}</div>`;
+    const [rows, setRows] = createSignal(['r0']);
+    const clicks: string[] = [];
+    mount(() => h('ul', null, createList(rows, (r) => r, (r) => h('li', { onClick: () => clicks.push(r) }, r))) as unknown as HTMLElement, '#app2');
+    captureErrors(() => {
+      activateIslands({
+        B: () => h('div', null,
+          h('div', { ref: () => setRows(['r0', 'r1']) }, 'x'),
+          h('ul', null, createList(() => ['a'], (x) => x, (x) => h('li', null, x)))),
+      });
+    });
+    expect(document.querySelector('[data-forma-island="0"]')!.getAttribute('data-forma-status')).toBe('error');
+    const lis = Array.from(document.querySelectorAll<HTMLElement>('#app2 li'));
+    expect(lis.map((li) => li.textContent)).toEqual(['r0', 'r1']);
+    for (const li of lis) li.click();
+    expect(clicks).toEqual(['r0', 'r1']);
+  });
+
+  it("a failing mount() whose ref writes a shared signal leaves another island's new row its handler", () => {
+    document.body.innerHTML =
+      `<div data-forma-island="0" data-forma-component="A"><ul><!--f:l0--><li>r0</li><!--/f:l0--></ul></div>` +
+      `<div id="app1" data-forma-ssr><div><div>x</div>${serverList(['a', 'b'])}</div></div>`;
+    const [rows, setRows] = createSignal(['r0']);
+    const clicks: string[] = [];
+    activateIslands({ A: () => h('div', null, h('ul', null, createList(rows, (r) => r, (r) => h('li', { onClick: () => clicks.push(r) }, r)))) });
+    captureErrors(() => {
+      mount((() => h('div', null,
+        h('div', { ref: () => setRows(['r0', 'r1']) }, 'x'),
+        h('ul', null, createList(() => ['a'], (x) => x, (x) => h('li', null, x))))) as unknown as () => HTMLElement, '#app1');
+    });
+    const lis = Array.from(document.querySelectorAll<HTMLElement>('[data-forma-island="0"] li'));
+    expect(lis.map((li) => li.textContent)).toEqual(['r0', 'r1']);
+    for (const li of lis) li.click();
+    expect(clicks).toEqual(['r0', 'r1']);
+  });
+
+  it("another island's row created while a failing island adopts keeps its reactive binding", () => {
+    // Before, the row's root was created during the walk with the failing
+    // island's root current, so it was disposed with it (on main too, for an
+    // island that fails by a throwing reactive child).
+    document.body.innerHTML =
+      `<div data-forma-island="0" data-forma-component="A"><ul><!--f:l0--><li>r0:</li><!--/f:l0--></ul></div>` +
+      `<div data-forma-island="1" data-forma-component="B"><div>x</div>${serverList(['a', 'b'])}</div>`;
+    const [rows, setRows] = createSignal(['r0']);
+    const [tag, setTag] = createSignal('');
+    captureErrors(() => {
+      activateIslands({
+        A: () => h('div', null, h('ul', null, createList(rows, (r) => r, (r) => h('li', null, () => `${r}:${tag()}`)))),
+        B: () => h('div', null,
+          h('div', { ref: () => setRows(['r0', 'r1']) }, 'x'),
+          h('ul', null, createList(() => ['a'], (x) => x, (x) => h('li', null, x)))),
+      });
+    });
+    const statuses = Array.from(document.querySelectorAll('[data-forma-island]'), (el) => el.getAttribute('data-forma-status'));
+    expect(statuses).toEqual(['active', 'error']);
+    for (const next of ['t', 'u', 'v']) {
+      setTag(next);
+      expect(Array.from(document.querySelectorAll('[data-forma-island="0"] li'), (li) => li.textContent)).toEqual([`r0:${next}`, `r1:${next}`]);
+    }
+  });
+
   it('a node the failing island builds outside every island during the walk (a portal of its own) is detached with it', () => {
     document.body.innerHTML =
       `<div id="outside"></div><div data-forma-island="0" data-forma-component="B"><div>x</div>${serverList(['a', 'b'])}</div>`;

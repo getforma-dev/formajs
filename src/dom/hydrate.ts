@@ -9,6 +9,7 @@
 
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
 import { reportError } from '../reactive/dev.js';
+import { openBatch, closeBatchWithoutRoot } from '../reactive/batch.js';
 import { h, Fragment, fillElement, SVG_NS, cleanup, getAbortController, recordListeners } from './element.js';
 import {
   adoptFormControlProperty,
@@ -1376,9 +1377,6 @@ export const HYDRATE_NODE_ERROR = 'FORMA_E_HYDRATE_NODE';
 /** The code of a list whose rows, matched by index, differ in count from the client's array. */
 export const HYDRATE_LIST_COUNT_ERROR = 'FORMA_E_HYDRATE_LIST_COUNT';
 
-/** An island root, as activateIslands finds it. */
-const ISLAND_SELECTOR = '[data-forma-island]';
-
 /** `n` and `noun`, plural unless `n` is 1. */
 const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
@@ -1506,12 +1504,21 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
   // the walk runs in its own root, disposed on failure, so no binding adopted
   // before the failure stays live, even for a hydrateIsland() caller whose
   // own root lives on. On success that root is owned by the caller's.
+  //
+  // The walk runs in a batch that ends after recording stops, and ends with no
+  // current root. A signal the walk's own code writes (in a ref, say) still
+  // updates at once, but the effects it triggers elsewhere (another island, a
+  // second mount() root) run after the walk, so everything recorded is this
+  // walk's own, and the rows they create are not owned by this island's root.
   // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "an island failed by the row count keeps no handler or binding that adoption attached before the list"
   // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "an island failed by the row count answers no click on the nodes adoption built fresh before the list"
   // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "hydrateIsland() called directly keeps no binding it adopted before the list failed"
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a failing mount() whose ref writes a shared signal does not detach a second mount() root's new row"
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a failing island's ref that writes a shared signal does not detach another island's new list row"
   const attached: Element[] = [];
   const outer = recordListeners(attached);
   let disposeWalk: (() => void) | undefined;
+  openBatch();
   try {
     createRoot((dispose) => {
       disposeWalk = dispose;
@@ -1519,24 +1526,11 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
     });
   } catch (err) {
     disposeWalk?.();
-    // Detach only what this walk's island holds. The recording sees every
-    // listener controller created during the walk, and the walk can make
-    // another island build nodes (its own code writing a shared signal, from
-    // a ref, a reactive child's first run or a row's render). An element
-    // inside an island other than the one `target` belongs to (another island,
-    // or a nested island within `target`) is that island's and keeps its
-    // listeners; one inside this island, or outside every island (a portal the
-    // walk opened), is detached.
-    // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a failing island's ref that writes a shared signal does not detach another island's new list row"
-    // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a failing island's ref that writes a shared signal does not detach another island's new show branch"
-    const home = target.closest(ISLAND_SELECTOR);
-    for (const el of attached) {
-      const island = el.closest(ISLAND_SELECTOR);
-      if (!island || island === home) cleanup(el);
-    }
+    for (const el of attached) cleanup(el);
     throw err;
   } finally {
     recordListeners(outer);
+    closeBatchWithoutRoot();
   }
 
   // 5. Remove SSR marker

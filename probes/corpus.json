@@ -761,8 +761,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "      if (!island || island === home) cleanup(el);",
-  "replace": "      if (false) cleanup(el);",
+  "find": "    for (const el of attached) cleanup(el);",
+  "replace": "",
   "note": "an island whose adoption failed part-way stays error but still answers clicks on the elements adopted before the failure. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"an island failed by the row count keeps no handler or binding that adoption attached before the list\""
  },
  {
@@ -776,24 +776,14 @@
   "note": "a binding adopted before a failing list stays live while a hydrateIsland() caller's root lives, writing into the server's DOM. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"hydrateIsland() called directly keeps no binding it adopted before the list failed\""
  },
  {
-  "id": "hydrate/failed-walk-detaches-other-islands",
+  "id": "hydrate/failed-walk-unbatched",
   "file": "src/dom/hydrate.ts",
   "tags": [
    "correctness"
   ],
-  "find": "      if (!island || island === home) cleanup(el);",
-  "replace": "      cleanup(el);",
-  "note": "a failing island whose code writes a shared signal mid-walk detaches the listeners of nodes another, active island built in response. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"a failing island's ref that writes a shared signal does not detach another island's new list row\""
- },
- {
-  "id": "hydrate/failed-walk-keeps-outside-nodes",
-  "file": "src/dom/hydrate.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "      if (!island || island === home) cleanup(el);",
-  "replace": "      if (island === home) cleanup(el);",
-  "note": "a node the failing island built outside every island during its walk keeps its click handler. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"a node the failing island builds outside every island during the walk (a portal of its own) is detached with it\""
+  "find": "  openBatch();\n  try {\n    createRoot((dispose) => {\n      disposeWalk = dispose;\n      adopt(descriptor, target);\n    });\n  } catch (err) {\n    disposeWalk?.();\n    for (const el of attached) cleanup(el);\n    throw err;\n  } finally {\n    recordListeners(outer);\n    closeBatchWithoutRoot();\n  }",
+  "replace": "  try {\n    createRoot((dispose) => {\n      disposeWalk = dispose;\n      adopt(descriptor, target);\n    });\n  } catch (err) {\n    disposeWalk?.();\n    for (const el of attached) cleanup(el);\n    throw err;\n  } finally {\n    recordListeners(outer);\n  }",
+  "note": "effects that a signal written during adoption triggers in other roots run mid-walk, so a failing walk detaches the listeners of nodes a second mount() root or another island built. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"a failing mount() whose ref writes a shared signal does not detach a second mount() root's new row\""
  },
  {
   "id": "hydrate/fallback-children-html",
@@ -1317,6 +1307,16 @@
   "find": "  const resolvedTarget = typeof target === 'string'\n    ? document.querySelector(target)\n    : (target ?? document.body);",
   "replace": "  const resolvedTarget = typeof target === 'string'\n    ? document.body\n    : (target ?? document.body);",
   "note": "string portal selector ignored — always body"
+ },
+ {
+  "id": "reactive/batch-flush-under-caller-root",
+  "file": "src/reactive/batch.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  runWithoutRoot(endBatch);",
+  "replace": "  endBatch();",
+  "note": "adoption's batch flushes with the failing island's root current, so another island's row created by the flush is owned by it and loses its bindings when it is disposed. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"another island's row created while a failing island adopts keeps its reactive binding\""
  },
  {
   "id": "reactive/untrack-noop",

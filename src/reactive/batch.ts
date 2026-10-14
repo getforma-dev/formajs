@@ -9,6 +9,7 @@
  */
 
 import { startBatch, endBatch } from 'alien-signals';
+import { runWithoutRoot } from './root.js';
 
 /**
  * Group multiple signal updates so that effects only run once after all
@@ -32,4 +33,20 @@ export function batch(fn: () => void): void {
   } finally {
     endBatch();
   }
+}
+
+/** @internal Open a batch that {@link closeBatchWithoutRoot} closes (adoption, hydrate.ts). */
+export function openBatch(): void {
+  startBatch();
+}
+
+/**
+ * @internal Close a batch with no current root or owner: the effects it
+ * flushes run as a re-run outside any root does, so what they create is owned
+ * by no caller (adoption ends its walk's batch this way, hydrate.ts).
+ *
+ * Verified by: src/dom/__tests__/list-adoption-count.test.ts > "another island's row created while a failing island adopts keeps its reactive binding"
+ */
+export function closeBatchWithoutRoot(): void {
+  runWithoutRoot(endBatch);
 }

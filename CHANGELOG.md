@@ -33,9 +33,14 @@ All notable changes to this project will be documented in this file.
   during adoption are removed, on the server's elements and on any adoption
   built through `h()` before the failure, and the bindings it adopted are
   disposed, also for a direct `hydrateIsland()` caller whose root lives on.
-  This holds for any adoption that fails part-way, and touches only that
-  island: nodes another island builds during it (the failing island's code
-  writing a shared signal) keep their listeners. Nodes adoption replaced or
+  This holds for any adoption that fails part-way.
+  **Adoption now runs in a batch.** A signal written during adoption (in a
+  `ref`, say) takes its new value at once, but the effects that write triggers
+  in other islands or roots run when the walk ends, not during it. Adoption's
+  own bindings still run when they are created. So a failing island detaches
+  nothing that another island or `mount()` root built. Such a root's new rows
+  are no longer owned by the failing island either; before, they were disposed
+  with it, also on 2.0.x for an island failing by a throwing reactive child. Nodes adoption replaced or
   added before the failing list (a tag mismatch, a fresh keyed row) stay as it
   left them. `mount()` and `hydrateIsland()` keep `data-forma-ssr` and do not
   throw, as for `FORMA_E_HYDRATE_NODE`. Equal counts adopt as before, and rows
