@@ -80,11 +80,14 @@ signal's debug name. `__DEV__` is true in a development build, which is one of:
   condition.** Each subpath's `import` and `require` branch has a
   `development` key that selects a twin of its file under `dist/dev/`, built
   from the same sources with `__DEV__` folded to `true`; the type declarations
-  are shared. Vite's dev server and webpack in development mode set the
-  condition themselves; esbuild and Node set it only when told to
-  (`conditions: ['development', 'module']`, `node --conditions=development`);
-  `@getforma/build` sets it in watch mode. See
-  [CDN-AND-EXPORTS.md](CDN-AND-EXPORTS.md#development-build).
+  are shared. Vite's dev server, webpack in development mode, Vitest and
+  Bun's bundler set the condition themselves (Bun's even in a minified build,
+  unless given `--production` or `NODE_ENV=production`, and Vitest in every
+  test run unless told otherwise); esbuild, Rollup and Node set it only when
+  told to (`conditions: ['development', 'module']`, `exportConditions`,
+  `node --conditions=development`); `@getforma/build` sets it in watch mode.
+  See [CDN-AND-EXPORTS.md](CDN-AND-EXPORTS.md#development-build), which has
+  every resolver checked and how to keep a Vitest suite on production.
 - **Core compiled from its source**: in Node with `NODE_ENV` other than
   `production`; in a browser bundle of the source, which has no `process`, only
   with the global `__FORMA_DEV__` set.

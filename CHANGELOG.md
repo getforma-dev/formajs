@@ -176,33 +176,53 @@ All notable changes to this project will be documented in this file.
   warnings. Each `exports` subpath's `import` and `require` branch now has a
   `development` key, after `types` and before `default`, that selects a twin
   of its file under `dist/dev/`: the same sources and options, with `__DEV__`
-  folded to `true`. The type declarations are shared. Vite's dev server and
-  webpack in development mode select it by themselves, esbuild with
-  `conditions: ['development', 'module']`, Node with `--conditions=development`,
+  folded to `true`. The type declarations are shared. Vite's dev server,
+  webpack in development mode, Vitest and Bun's bundler select it by
+  themselves; esbuild with `conditions: ['development', 'module']`, Rollup with
+  `exportConditions: ['development']`, Node with `--conditions=development`,
   and `@getforma/build` in watch mode (forma-tools, FORMA-169).
-  `docs/CDN-AND-EXPORTS.md` (*Development build*) says how, and
-  `docs/STABILITY.md` (*Development builds*) says the CDN bundles have no
+  `docs/CDN-AND-EXPORTS.md` (*Development build*) has every resolver checked,
+  and `docs/STABILITY.md` (*Development builds*) says the CDN bundles have no
   development build. Additive; rollback is removing the condition.
+  - **Test suites log core's warnings.** Vitest (4 and 5) asks for
+    `development` by default, for a test's own imports and for the
+    dependencies it leaves to Node, so a suite on this release loads the
+    development build and its output shows `[forma]` warnings; a suite that
+    fails on console output fails on them. To keep a suite on production, run
+    it with `NODE_ENV=production`, or drop the condition with the
+    `configEnvironment` plugin in `docs/CDN-AND-EXPORTS.md` (*Vitest*).
+    Setting `resolve.conditions` or `ssr.resolve.conditions` does not do it:
+    Vitest appends its own list, which carries the condition.
+  - **Bun's bundler selects it even when minifying.** `bun build --minify`
+    and `Bun.build({ minify: true })` ship `dist/dev/` unless given
+    `--production` or `NODE_ENV=production`; that is Bun's convention, and
+    the package cannot override it.
   - **Production is unchanged.** A resolver that does not ask for the
     condition resolves the same files as before, and all 87 production files
     under `dist/`, maps and declarations included, are byte-identical to
     `main`'s build before this change. `node scripts/dist-baseline.mjs [ref]`
     (new, `npm run check:baseline`) builds a ref in a temporary worktree and
     compares, through `scripts/verify-dist.mjs --baseline`. No size gate moves.
-  - **Package size** (`npm pack`, against `main` at FORMA-026's merge):
-    1,413,825 to 1,586,698 B packed (+172,873 B, +12.2%), 5,735,898 to
-    6,518,397 B unpacked (+782,499 B, +13.6%), 90 to 120 files. The
-    JavaScript behind `exports` (778,965 B) ships twice. The twins carry no source maps, which would have added
-    another 2.7 MB unpacked (0.64 MB packed): their code keeps its names and
-    one statement a line. A development bundle's own source map therefore
-    reaches core's `dist/dev/` files, not its TypeScript sources.
+  - **Package size** (`npm pack`, against `main` at FORMA-123's merge):
+    1,477,609 to 1,656,308 B packed (+178,699 B, +12.1%), 5,978,199 to
+    6,783,862 B unpacked (+805,663 B, +13.5%), 90 to 120 files. The
+    JavaScript behind `exports` (802,129 B) ships twice. The twins carry no
+    source maps, which would have added another 2.7 MB unpacked (0.64 MB
+    packed): their code keeps its names and one statement a line. A
+    development bundle's own source map therefore reaches core's `dist/dev/`
+    files, not its TypeScript sources.
   - **One build per process.** A resolver applies one set of conditions to
     every specifier, and a development file imports only development files,
     so one resolver loads one copy of core's reactive state. Two resolvers in
-    one process that disagree (a development server bundling with the
-    condition while Node loads an external dependency without it) load both,
-    and the existing duplicate-instance warning says so. `sideEffects` lists
-    the twins' runtime files and chunks as it lists production's.
+    one process that disagree (Vite's server-side rendering with
+    `ssr.resolve.externalConditions: ['development']` while Node loads an
+    external dependency without `--conditions=development`) load both
+    builds, and the existing duplicate-instance warning says so. A bundler
+    that inlines core while Node loads it for an external dependency (Vite's
+    `ssr.noExternal`, Vitest's `server.deps.inline`) loaded two copies before
+    this change and still does; only which build each copy is can differ.
+    `sideEffects` lists the twins' runtime files and chunks as it lists
+    production's.
   - **Checks.** `scripts/verify-dist.mjs` fails a build in which a subpath's
     branch lacks its twin or orders it after `default`, a twin is
     byte-identical to its production file, a development graph reaches a

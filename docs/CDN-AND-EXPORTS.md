@@ -134,27 +134,70 @@ renderer drops, raw-HTML sinks, the `FORMA_W_DEPRECATED_` codes
 ([STABILITY.md](STABILITY.md#development-builds)). The type declarations are
 shared, so TypeScript sees one package either way.
 
+Whether a resolver asks for the condition is its own convention, and two ask
+by default where you might not expect it: **Vitest** and **Bun's bundler**.
+
 | Resolver | Selects the development build |
 |---|---|
-| Vite's dev server | Yes, by itself: its default conditions include `development` unless the mode is `production` |
-| webpack 5 with `mode: 'development'` | Yes, by itself |
+| Vite, dev server (`vite`) | Yes, by itself |
+| Vite, `vite build` | Only with `NODE_ENV=development`. Vite chooses by `NODE_ENV`, not by mode: `vite build --mode development` selects production |
+| Vite, server-side rendering (`ssrLoadModule`; core externalized, the default) | Only with `ssr.resolve.externalConditions: ['development']` **and** Node run with `--conditions=development`. The first covers your code's imports of core, the second an external dependency's; with one alone they load different builds |
+| Vitest | **Yes, by itself**, for your tests' imports and for external dependencies. See [Vitest](#vitest) |
+| webpack 5 | With `mode: 'development'`; not with `'production'` or `'none'` |
+| Rollup (`@rollup/plugin-node-resolve`) | Only with `exportConditions: ['development']` |
 | esbuild | Only with `conditions: ['development', 'module']`. Listing any condition drops esbuild's automatic `module`, so list it too |
+| Bun's bundler (`bun build`, `Bun.build`) | **Yes, by itself, also when minifying**, unless `bun build --production` or `NODE_ENV=production` (`Bun.build`: `NODE_ENV=production`, or `define: { 'process.env.NODE_ENV': '"production"' }`). Without one of these a production bundle ships `dist/dev/` |
+| Bun's runtime (`bun run`) | Only with `--conditions=development` |
+| Deno (`deno run`, `deno bundle`) | Only with `--conditions=development` |
 | `@getforma/build` | In watch mode |
-| Node (tests, scripts, server rendering) | Only with `node --conditions=development` (or the same in `NODE_OPTIONS`) |
+| Node (scripts, server rendering) | Only with `node --conditions=development` (or the same in `NODE_OPTIONS`) |
 
-A resolver that does not ask for the condition resolves exactly the files it
-resolved before the development build existed, and those files are byte for
-byte what they were.
+Checked with Vite 8.3.4, Vitest 4.1.10 and 5.0.4, webpack 5.111, Rollup 4.64
+with node-resolve 16, esbuild 0.28, Bun 1.4.3, Deno 2.9 and Node 22; another
+version may choose differently. A resolver that does not ask for the
+condition resolves exactly the files it resolved before the development build
+existed, and those files are byte for byte what they were.
+
+### Vitest
+
+Vitest asks for `development` unless `NODE_ENV` is `production`, and passes it
+to Node for the dependencies it does not bundle. A test suite therefore loads
+core's development build, and core's warnings (`[forma] …`) appear in its
+output; a suite that fails on console output fails on them. To keep a suite on
+the production build, run it with `NODE_ENV=production`, or remove the
+condition in its config:
+
+```js
+// vitest.config.js: resolve without the `development` condition, for every package
+const withoutDevelopmentCondition = {
+  name: 'without-development-condition',
+  configEnvironment(name, config) {
+    if (config.resolve?.conditions) {
+      config.resolve.conditions = config.resolve.conditions.filter(
+        (c) => c !== 'development|production' && c !== 'development',
+      );
+    }
+  },
+};
+
+export default { plugins: [withoutDevelopmentCondition] };
+```
+
+Setting `resolve.conditions` or `ssr.resolve.conditions` is not enough: Vitest
+appends its own list, which carries the condition, to yours. (Checked with
+Vitest 4.1.10 and 5.0.4, in the `node` and `happy-dom` environments.)
 
 **One build per process.** Core keeps its reactive state in module scope, so
-the two builds in one process are two unrelated copies of it. A resolver
-applies one set of conditions to every specifier, and a development file
-imports only development files, so one resolver always loads one build. Two
-resolvers in one process can still disagree: a development server that
-bundles your code with the condition but lets Node load an external
-dependency without it. Give both the same conditions (for Node,
-`NODE_OPTIONS=--conditions=development`); if they differ, core logs
-*"Duplicate @getforma/core instance detected"*.
+two copies in one process are two unrelated states. A resolver applies one set
+of conditions to every specifier, and a development file imports only
+development files, so one resolver always loads one build. Two resolvers in
+one process can disagree, as in Vite's server-side rendering above with only
+one of its two settings. Give both the same conditions. That removes mixed
+builds, not every second copy: a bundler that inlines core while Node loads it
+for an external dependency (Vite's `ssr.noExternal`, Vitest's
+`server.deps.inline`) has loaded two copies since before this build existed,
+and still does. Either way core logs *"Duplicate @getforma/core instance
+detected"*.
 
 The development build is slower where `__DEV__` checks something on every
 call, such as `createList`'s duplicate-key check

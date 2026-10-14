@@ -43,10 +43,13 @@ export const DEV_DEFINE = Object.freeze({
 });
 
 /**
- * The export condition that selects the development build. A bundler sets it
- * in development (Vite and webpack by mode; esbuild, and Node, only when told
- * to with `conditions` / `--conditions`). Nothing sets it by default, so every
- * resolver that does not ask for it gets the production files.
+ * The export condition that selects the development build. Whether a resolver
+ * sets it is the resolver's own convention. Some set it by themselves: Vite's
+ * dev server and `vite build` with NODE_ENV=development, webpack in
+ * development mode, Vitest, and Bun's bundler (even when minifying, unless
+ * given `--production` or NODE_ENV=production). Others only when told to:
+ * esbuild, Rollup, Node, Deno and Bun's runtime. A resolver that does not set
+ * it gets the production files. docs/CDN-AND-EXPORTS.md has the table.
  */
 export const DEV_CONDITION = 'development';
 
