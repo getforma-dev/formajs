@@ -237,4 +237,5 @@ Verified by `src/__tests__/docs-truth.test.ts` > "CSP.md's version history ends 
 | 2.0.1 | No CSP-affecting changes since 2.0.0. |
 | 2.0.2 | No CSP-affecting changes since 2.0.1. |
 | 2.0.3 | No CSP-affecting changes since 2.0.2. |
-| Unreleased | Trusted Types: what core writes of its own passes `require-trusted-types-for 'script'; trusted-types forma forma-runtime` (its clears use `replaceChildren()`; the runtime's parser re-mints trusted markup through `forma-runtime`, and its diff of that markup writes no `on*` or script `src`), and every raw sink takes `trustedHtml()`, made by core's policy `forma`. Such a page reports only what the application writes as a string, the runtime's `srcdoc` bindings included. See [Trusted Types](#trusted-types). |
+| 2.1.0 | Trusted Types: what core writes of its own passes `require-trusted-types-for 'script'; trusted-types forma forma-runtime` (its clears use `replaceChildren()`; the runtime's parser re-mints trusted markup through `forma-runtime`, and its diff of that markup writes no `on*` or script `src`), and every raw sink takes `trustedHtml()`, made by core's policy `forma`. Such a page reports only what the application writes as a string, the runtime's `srcdoc` bindings included. See [Trusted Types](#trusted-types). |
+| Unreleased | No CSP-affecting changes since 2.1.0. |

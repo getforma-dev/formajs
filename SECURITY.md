@@ -289,6 +289,7 @@ Stated here rather than left for a reader to discover:
 
 | Version | Supported |
 |---------|-----------|
+| 2.1.x | Yes |
 | 2.0.x | Yes |
 | 1.5.x | Security fixes only |
 | 1.1.x – 1.4.x | No — upgrade to 2.0 |

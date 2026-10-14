@@ -4,6 +4,81 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-10-14
+
+Release A2, the bridge to 3.0.0: additive, with deprecations. Every 2.0.3 call
+keeps working; the old forms warn in development builds and go in 3.0.0. What
+an application may meet on upgrading is listed first, then the sizes, then
+each change. Rollback: pin 2.0.3.
+
+### Upgrading from 2.0.3: what an application may meet
+
+- **The HTML runtime's expressions are charged per task and per event, and
+  operators that build strings are charged** (Security). Some computations
+  2.0.3 answered are refused with `FORMA_E_BUDGET`: building a string with
+  `reduce` and `+` past about 1,200 rows of 20 characters, for one. Bindings
+  that together pass the budget in one task render over several tasks, so a
+  frame or two may show a binding's previous text, and `data-forma-expr-budget`
+  now sets a task's budget, not each evaluation's. The full list is under
+  Security, "Behaviour change: what a task can no longer compute".
+- **List adoption: a row-count mismatch leaves the island inert** (Changed,
+  FORMA-123). Unkeyed server rows whose count differs from the client array
+  (an empty array included) are no longer removed or rendered fresh: the
+  island is marked `error`, and `FORMA_E_HYDRATE_LIST_COUNT` is logged in
+  every build. A list the client computes for itself inside a server-rendered
+  island now needs its signal started empty, or rendering in the browser only.
+  Adoption also runs in a batch: effects a write during adoption triggers run
+  when the walk ends.
+- **`data-fetch` aborts a request after 30 seconds** (`data-fetch timed out
+  after 30000 ms` in the `error:` target), and `createWebSocket` waits a
+  random delay up to its backoff cap before each reconnect (Changed,
+  FORMA-132).
+- **Development builds now warn.** The package's `development` export
+  condition (Added, FORMA-169) is what Vite's dev server, webpack in
+  development mode, Vitest and Bun's bundler pick by themselves, so core's
+  development warnings reach them for the first time: the deprecations below
+  (`FORMA_W_RAW_*`, `FORMA_W_SCRIPT_ELEMENT`, `FORMA_W_DEPRECATED_*`), hydration
+  mismatches, dropped props. A test suite that fails on console output fails
+  on them; run it with `NODE_ENV=production` to keep it on production files.
+  Production files are unchanged by this.
+- **Trusted Types.** Core's own writes pass Trusted Types through two
+  policies it creates, `forma` and `forma-runtime`, where the browser has
+  them. Under forma-server 0.2.2's Report-Only header, a string an
+  application writes to a raw sink is reported, not blocked; a page whose own
+  enforced `trusted-types` directive leaves out either name makes core write
+  strings it then refuses (`FORMA_W_TT_POLICY_REFUSED` in development).
+- **Client-rendered SVG and MathML** take the namespace of the content they
+  are built in where `h()` knows the parent (Fixed, FORMA-026): a `title`,
+  `a`, `script`, `style` or `font` that 2.0.3 created as HTML inside an SVG is
+  now SVG, which changes what CSS and `instanceof` see.
+- **A reactive `dangerouslySetInnerHTML` is adopted as content** (Fixed,
+  FORMA-176), where 2.0.3 wrote it as an attribute.
+- **Bigger runtimes.** The CDN runtimes grow by about 6.5 KB gzipped, the core
+  entry by about 1.8 KB (Size, below).
+
+### Size: 2.1.0 against 2.0.3
+
+Measured on the release tree with `npm run check:size` (gzipped, each entry
+with every chunk it imports), and for a page with one island bundled from the
+core entry with esbuild 0.28.1 (minified, gzip -9). Each change's own Size
+line below is its merge against its first parent on `main`, re-measured for
+this release (FORMA-138); three were corrected to those measurements
+(FORMA-026, FORMA-123 and FORMA-173 had been measured on an earlier base).
+
+| Entry | 2.0.3 | 2.1.0 | Change | Gate (headroom) |
+|---|---|---|---|---|
+| core entry + its chunks | 27,703 B | 29,515 B | +1,812 B | 30,000 B (485 B) |
+| CDN runtime | 33,861 B | 40,329 B | +6,468 B | 40,500 B (171 B) |
+| CDN hardened runtime | 32,873 B | 39,344 B | +6,471 B | 39,500 B (156 B) |
+| CDN browser ESM | 26,614 B | 28,369 B | +1,755 B | 29,000 B (631 B) |
+| preview frame runtime (new) | none | 38,953 B | new | 39,000 B (47 B) |
+| a counter island page (`docs/ISLANDS.md`'s `Counter`) | 12,974 B | 13,820 B | +846 B | none |
+| a `createShow` and `createList` island page | 12,986 B | 13,842 B | +856 B | none |
+
+The runtime gates rose under L-51, from 34,000 and 33,000 B, with each
+change that passed them (FORMA-132, FORMA-028 and FORMA-025, FORMA-126 and
+FORMA-127, FORMA-173, FORMA-128).
+
 ### Security
 
 - **The tiered mount: markup a generator wrote mounts under a root it is
@@ -255,11 +330,10 @@ All notable changes to this project will be documented in this file.
   bundle as they were.
 - **Size** (L-51, FORMA-173): measured on `main` with FORMA-126 and FORMA-127,
   deferral decided per budget, the cap on a charge after a binding waits and
-  its per-task allowance grow the CDN runtime by 191 B gzipped (36,385 to
-  36,576 B) and the hardened runtime by 193 B (35,406 to 35,599 B); their
+  its per-task allowance grow the CDN runtime by 202 B gzipped (36,374 to
+  36,576 B) and the hardened runtime by 203 B (35,396 to 35,599 B); their
   gates rise from 36,500 to 37,000 B and from 35,500 to 36,000 B. The core
-  entry is as it was, and the browser ESM bundle is 11 B smaller (28,154 to
-  28,143 B).
+  entry and the browser ESM bundle are as they were (29,515 and 28,369 B).
 - **What core writes of its own passes Trusted Types, and its raw sinks take
   them** (FORMA-126, FORMA-127; DR-19, DR-20). Under a page policy with
   `require-trusted-types-for 'script'`, which forma-server 0.2.2 sends as
@@ -521,8 +595,9 @@ All notable changes to this project will be documented in this file.
   disposed, also for a direct `hydrateIsland()` caller whose root lives on.
   This holds for any adoption that fails part-way.
   **Adoption now runs in a batch.** A signal written during adoption (in a
-  `ref`, say) takes its new value at once, but the effects that write triggers
-  in other islands or roots run when the walk ends, not during it. Adoption's
+  `ref`, say) takes its new value at once, but the effects that write
+  triggers, wherever they are (the island's own bindings included), run when
+  the walk ends, not during it. Adoption's
   own bindings still run when they are created. So a failing island detaches
   nothing that another island or `mount()` root built. Such a root's new rows
   are no longer owned by the failing island either; before, they were disposed
@@ -538,12 +613,12 @@ All notable changes to this project will be documented in this file.
   inert. Start that list's signal empty and fill it after activation (an empty
   array adopts the empty region), or render the list in the browser only.
   Core's ESM entry grows by 365 B gzipped (28,411 to 28,776 B, gate 30,000 B
-  unchanged) and the CDN ESM bundle by 323 B (27,303 to 27,626 B, gate
+  unchanged) and the CDN ESM bundle by 333 B (27,293 to 27,626 B, gate
   29,000 B). A page with one island, bundled from the core entry with esbuild
-  (minified, gzip -9) as DR-35 counts N2, grows by about 205 B (a counter from
-  12,595 to 12,801 B). The CDN runtimes do not include adoption; each shrinks by
-  8 B, because a module-level `Symbol.for` call in the adoption code, kept in
-  their bundles as a side effect, is gone.
+  (minified, gzip -9) as DR-35 counts N2, grows by about 205 B (`docs/ISLANDS.md`'s
+  counter from 13,417 to 13,619 B, a `createShow` and `createList` page from
+  13,433 to 13,644 B). The CDN runtimes, which do not include adoption, are
+  unchanged (35,540 and 34,542 B).
 - **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
   reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
   deploy every client of a server reconnected in the same instant. The delay is
@@ -569,6 +644,24 @@ All notable changes to this project will be documented in this file.
   size table).
 
 ### Deprecated
+
+Each keeps working through 2.x, warns in a development build, and goes in
+3.0.0 (`docs/STABILITY.md`, *Deprecated entry points* and *Deprecated forms*):
+
+| Deprecated in 2.1.0 | Code | Use instead (3.0.0's form) |
+|---|---|---|
+| `reconcile()` from `@getforma/core/runtime` | `FORMA_W_DEPRECATED_RECONCILE` | `mountMarkup(root, markup, { tier, grants })` |
+| the runtime's auto-mount of `data-forma-state` (on load and through a `body` observer) | none in 2.x | `mountMarkup()` with a tier; `data-forma-mount="manual"` turns the auto-mount off now |
+| a string as `dangerouslySetInnerHTML`'s `__html` | `FORMA_W_RAW_INNER_HTML` | `{ __html: trustedHtml(markup) }` |
+| a string to `setHTMLUnsafe()` | `FORMA_W_RAW_SET_HTML` | `setHTMLUnsafe(el, trustedHtml(markup))` |
+| a string to `template()` or `templateMany()` | `FORMA_W_RAW_TEMPLATE` | `template(trustedHtml(markup))` |
+| a string to `reconcile()` | `FORMA_W_RAW_RECONCILE` | `mountMarkup()`, as above (`reconcile(container, trustedHtml(markup))` until then) |
+| a string as a `srcdoc` value | `FORMA_W_RAW_SRCDOC` | `srcdoc: trustedHtml(markup)` |
+| `h('script')` | `FORMA_W_SCRIPT_ELEMENT` | a script in the page, or a module the build bundles |
+| the runtime's `data-bind:srcdoc`, or `{item…}` in a list row's `srcdoc` | `FORMA_W_RAW_RUNTIME_SRCDOC` | the frame built with `h()` and `trustedHtml(markup)` |
+| `@getforma/core/server` (server functions: `"use server"` RPC, `createAction`, the revalidation helpers) | `FORMA_W_DEPRECATED_SERVER` | a route in the application's Rust server |
+| `@getforma/core/ssr` (`renderToString`, `renderToStream`) | `FORMA_W_DEPRECATED_SSR` | the Rust walker: forma-server's `try_render` |
+| `@getforma/core/wasm` | `FORMA_W_DEPRECATED_WASM` | core's `h()`, which islands already re-render with |
 
 - **`reconcile()` from `@getforma/core/runtime`, and the runtime's auto-mount,
   are deprecated, and are removed in 3.0.0** (FORMA-128, FORMA-108; DR-14).
@@ -732,12 +825,13 @@ All notable changes to this project will be documented in this file.
   run through `h()`, `renderToString`, and each browser's parser and adoption
   in Chromium, Firefox and WebKit.
   **Size (L-51, DR-35):** core's ESM entry grows by 605 B gzipped (27,806 to
-  28,411 B, gate 30,000 B) and the CDN ESM bundle by 568 B (26,725 to
+  28,411 B, gate 30,000 B) and the CDN ESM bundle by 580 B (26,713 to
   27,293 B, gate 29,000 B); no gate is passed and none rises. A page with one
   island, bundled from the core entry with esbuild (minified, gzip -9) as
-  DR-35 counts N2, grows by about 456 B: a counter from 12,139 to 12,595 B,
-  a page with a `createShow` and a `createList` from 12,210 to 12,668 B. The
-  CDN runtimes build nothing through `h()` and shrink by 12 B and 13 B.
+  DR-35 counts N2, grows by about 445 B: `docs/ISLANDS.md`'s counter from
+  12,974 to 13,417 B, a page with a `createShow` and a `createList` from
+  12,986 to 13,433 B. The CDN runtimes build nothing through `h()` and are
+  unchanged (34,061 and 33,072 B).
 
 ### Documentation
 
