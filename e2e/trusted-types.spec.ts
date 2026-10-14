@@ -333,6 +333,29 @@ test.describe('the controls: the policy is live in this engine', () => {
     ]);
   });
 
+  test("under Report-Only a string reconcile()'s diff writes a changed onclick and srcdoc as 2.0 did, and each string is reported", async ({ page }) => {
+    // formajs#29's second review (R1): the diff of a string keeps 2.0.3's
+    // behaviour (L-18); only trusted markup's diff leaves on* unwritten.
+    const { errors } = await underTrustedTypes(page, MODES[0].header);
+    await page.goto('/tt-sinks.html');
+    const out = await page.evaluate(() => {
+      const runtime = (window as unknown as { FormaRuntime: { reconcile(el: Element, html: unknown): void } }).FormaRuntime;
+      const live = document.getElementById('live')!;
+      const framed = (doc: string, handler: string) =>
+        `<div data-forma-id="f"><iframe sandbox="" srcdoc="&lt;p&gt;${doc}&lt;/p&gt;"></iframe>` +
+        `<button onclick="${handler}()">x</button></div>`;
+      runtime.reconcile(live, framed('one', 'a'));
+      runtime.reconcile(live, framed('two', 'b'));
+      return [live.querySelector('iframe')!.getAttribute('srcdoc'), live.querySelector('button')!.getAttribute('onclick')];
+    });
+    expect(out).toEqual(['<p>two</p>', 'b()']);
+    // Four string writes: the first parse, the second parse, the srcdoc and the onclick.
+    await expect.poll(async () => (await violations(page)).map((v) => `${v.directive} ${v.disposition}`)).toEqual(
+      Array(4).fill('require-trusted-types-for report'),
+    );
+    expect(errors).toEqual([]);
+  });
+
   test('enforced, a string written to innerHTML is refused and raises one violation', async ({ page }) => {
     await underTrustedTypes(page, MODES[1].header);
     await page.goto('/tt-sinks.html');

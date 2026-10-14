@@ -163,7 +163,8 @@ runtime's IIFE beside core's ESM build, say) shares it through a registry on
 no policy: it holds the mint `trustedHtml()` is, so a script that reaches the
 key can mint `forma` values as `trustedHtml()` can (SR8's lint lists the key
 as a raw entry), and a `forma-runtime` parser that takes only a browser
-`TrustedHTML`, so no script can mint a `forma-runtime` value from a string.
+`TrustedHTML`, so on an enforcing page no script can mint a `forma-runtime`
+value from a string.
 If the page refuses either name (it is not listed, or another script created
 it first), core writes markup as a string, which the page then refuses, and a
 development build logs `FORMA_W_TT_POLICY_REFUSED` once.
@@ -174,8 +175,10 @@ What core writes of its own passes such a policy:
   that becomes `null` empty an element with `replaceChildren()`, which no
   policy checks.
 - `reconcile()` writes markup that arrived trusted through `forma-runtime`,
-  and its diff writes no `on*` attribute or script `src`: a changed one is
-  removed, as h() and adoption write no `on*` name either.
+  and its diff of that markup writes no `on*` attribute or script `src`: a
+  changed one is removed, as h() and adoption write no `on*` name either. The
+  diff of a string writes them, and every other changed attribute, as 2.0 did:
+  as strings, which such a page reports or refuses.
 
 The raw sinks write what the application gives them, which is typed only if it
 is `trustedHtml()`. Two raw sinks no `trustedHtml()` can reach are the runtime's
@@ -194,6 +197,7 @@ every merge, and in Firefox and WebKit before each release.
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "reconcile() parses trusted markup through the forma-runtime policy and a string through no policy"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "a string reconcile()'s diff writes a changed on*, script src and srcdoc as 2.0 did"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "the shared registry holds no policy, and its forma-runtime handle mints nothing from a string"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "trustedHtml() returns a TrustedHTML from the forma policy where the browser has Trusted Types"
 Verified by `src/__tests__/runtime-srcdoc.test.ts` > "data-bind:srcdoc writes its string and warns once with the runtime code"
@@ -233,4 +237,4 @@ Verified by `src/__tests__/docs-truth.test.ts` > "CSP.md's version history ends 
 | 2.0.1 | No CSP-affecting changes since 2.0.0. |
 | 2.0.2 | No CSP-affecting changes since 2.0.1. |
 | 2.0.3 | No CSP-affecting changes since 2.0.2. |
-| Unreleased | Trusted Types: what core writes of its own passes `require-trusted-types-for 'script'; trusted-types forma forma-runtime` (its clears use `replaceChildren()`; the runtime's parser re-mints trusted markup through `forma-runtime` and writes no `on*` or script `src`), and every raw sink takes `trustedHtml()`, made by core's policy `forma`. Such a page reports only what the application writes as a string, the runtime's `srcdoc` bindings included. See [Trusted Types](#trusted-types). |
+| Unreleased | Trusted Types: what core writes of its own passes `require-trusted-types-for 'script'; trusted-types forma forma-runtime` (its clears use `replaceChildren()`; the runtime's parser re-mints trusted markup through `forma-runtime`, and its diff of that markup writes no `on*` or script `src`), and every raw sink takes `trustedHtml()`, made by core's policy `forma`. Such a page reports only what the application writes as a string, the runtime's `srcdoc` bindings included. See [Trusted Types](#trusted-types). |

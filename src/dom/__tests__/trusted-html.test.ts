@@ -500,6 +500,27 @@ describe('core under Trusted Types (simulated: happy-dom has none)', () => {
       .toEqual(expect.arrayContaining(['<p>two</p>', '<p>three</p>', '<p>four</p>']));
   });
 
+  it("a string reconcile()'s diff writes a changed on*, script src and srcdoc as 2.0 did", () => {
+    // formajs#29's second review (R1): only the diff of trusted markup leaves
+    // script attributes unwritten. A string keeps 2.0.3's behaviour (L-18),
+    // and its writes are strings, which the page reports.
+    sim = enforceTrustedTypes({ reportOnly: true });
+    const live = document.createElement('div');
+    const markup = (doc: string, handler: string, src: string) =>
+      `<div data-forma-id="a"><iframe sandbox="" srcdoc="&lt;p&gt;${doc}&lt;/p&gt;"></iframe>` +
+      `<button onclick="${handler}()">x</button><script type="text/x-inert" src="/${src}.js"></script></div>`;
+    reconcile(live, markup('one', 'a', 'a'));
+    for (const [doc, handler, src] of [['two', 'b', 'b'], ['three', 'c', 'c']] as const) {
+      reconcile(live, markup(doc, handler, src));
+      expect(live.querySelector('iframe')!.getAttribute('srcdoc'), doc).toBe(`<p>${doc}</p>`);
+      expect(live.querySelector('button')!.getAttribute('onclick')).toBe(`${handler}()`);
+      expect(live.querySelector('script')!.getAttribute('src')).toBe(`/${src}.js`);
+    }
+    // Written as strings: the page saw each srcdoc write, and nothing minted it.
+    expect(sim.violations.filter((v) => v.startsWith('srcdoc '))).toEqual(['srcdoc <p>two</p>', 'srcdoc <p>three</p>']);
+    expect(sim.minted.filter((v) => v.policy === 'forma-runtime')).toEqual([]);
+  });
+
   it('the shared registry holds no policy, and its forma-runtime handle mints nothing from a string', () => {
     // formajs#29's review (S2): the registry held both live policies, so any
     // script could mint a forma-runtime value from a string.

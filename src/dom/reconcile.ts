@@ -108,22 +108,26 @@ function parseHTML(html: string): DocumentFragment {
 
 /**
  * An attribute that is a Trusted Types script sink: an `on*` handler, or a
- * script element's `src` or `href`. Core writes none, as h() and adoption
- * write no `on*` name, and v2's nonce policy runs none of them anyway.
+ * script element's `src` or `href`. The diff of trusted markup writes none,
+ * as h() and adoption write no `on*` name, and v2's nonce policy runs none of
+ * them anyway; a string's diff writes them as 2.0 did (L-18).
  */
 function isScriptAttr(el: Element, name: string): boolean {
   return isEventHandlerAttr(name) || (el.localName === 'script' && /^(?:src|href|xlink:href)$/i.test(name));
 }
 
 /**
- * Patch `liveEl`'s attributes to `newEl`'s. `parser` is set when the markup
- * arrived as trusted HTML: a changed `srcdoc` is then minted again through
- * forma-runtime, so a page enforcing Trusted Types accepts it. A changed
- * script attribute is never written: the stale one is removed.
+ * Patch `liveEl`'s attributes to `newEl`'s. `trusted` is set when the markup
+ * arrived as trusted HTML: a changed script attribute is then not written (the
+ * stale one is removed), and where `parser` is set too, a changed `srcdoc` is
+ * minted again through forma-runtime, so a page enforcing Trusted Types
+ * accepts it. A string's diff writes every changed attribute as a string, as
+ * 2.0 did (L-18), which such a page reports or refuses.
  *
  * Verified by: src/dom/__tests__/trusted-html.test.ts > "reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src"
+ * Verified by: src/dom/__tests__/trusted-html.test.ts > "a string reconcile()'s diff writes a changed on*, script src and srcdoc as 2.0 did"
  */
-function patchAttributes(liveEl: Element, newEl: Element, parser: RuntimeParser | null): void {
+function patchAttributes(liveEl: Element, newEl: Element, trusted: boolean, parser: RuntimeParser | null): void {
   const bindTargets = getBindTargets(liveEl);
   const hasDataShow = liveEl.hasAttribute('data-show');
   const hasDataModel = liveEl.hasAttribute('data-model');
@@ -150,7 +154,7 @@ function patchAttributes(liveEl: Element, newEl: Element, parser: RuntimeParser 
 
     const liveVal = liveEl.getAttribute(attr.name);
     if (liveVal !== attr.value) {
-      if (isScriptAttr(liveEl, attr.name)) {
+      if (trusted && isScriptAttr(liveEl, attr.name)) {
         liveEl.removeAttribute(attr.name);
         continue;
       }
@@ -250,6 +254,7 @@ function diffChildren(
   liveParent: Element,
   newParent: Element,
   config: ReconcilerConfig,
+  trusted: boolean,
   parser: RuntimeParser | null,
 ): void {
   // Skip directive-owned subtrees
@@ -308,15 +313,15 @@ function diffChildren(
         switch (mode) {
           case 'PRESERVE':
             // Patch attributes only, keep reactive bindings alive
-            patchAttributes(liveMatch, newChild, parser);
+            patchAttributes(liveMatch, newChild, trusted, parser);
             // Recurse into non-directive-owned children
-            diffChildren(liveMatch, newChild, config, parser);
+            diffChildren(liveMatch, newChild, config, trusted, parser);
             break;
 
           case 'RESET':
             // Unmount old scope, patch DOM, mount fresh
             config.unmountScope(liveMatch);
-            patchAttributes(liveMatch, newChild, parser);
+            patchAttributes(liveMatch, newChild, trusted, parser);
             // Replace inner content
             replaceInnerContent(liveMatch, newChild);
             config.mountScope(liveMatch);
@@ -336,8 +341,8 @@ function diffChildren(
         }
       } else {
         // Non-scope element: patch attrs and recurse
-        patchAttributes(liveMatch, newChild, parser);
-        diffChildren(liveMatch, newChild, config, parser);
+        patchAttributes(liveMatch, newChild, trusted, parser);
+        diffChildren(liveMatch, newChild, config, trusted, parser);
       }
 
       // Ensure element is in the correct position
@@ -462,9 +467,10 @@ export function createReconciler(config: ReconcilerConfig) {
     // what is written; a string is parsed as a string, which such a page
     // reports or refuses, and warns once in development (FORMA_W_RAW_RECONCILE).
     // Verified by: src/dom/__tests__/trusted-html.test.ts > "reconcile() parses trusted markup through the forma-runtime policy and a string through no policy"
+    let trusted = false;
     let parser: RuntimeParser | null = null;
     if (typeof html === 'string') warnRawString('reconcile');
-    else if (isTrustedHtml(html)) parser = runtimeParser(html);
+    else if ((trusted = isTrustedHtml(html))) parser = runtimeParser(html);
     else throw new TypeError('reconcile: expected a string or a trustedHtml() value, got ' + typeof html);
     const trimmed = String(html).trim();
     if (!trimmed) return;
@@ -540,7 +546,7 @@ export function createReconciler(config: ReconcilerConfig) {
 
       // ── Diff and patch ──
       config.batch(() => {
-        diffChildren(container, templateContainer, config, parser);
+        diffChildren(container, templateContainer, config, trusted, parser);
       });
       lastHtmlByContainer.set(container, trimmed);
     } finally {

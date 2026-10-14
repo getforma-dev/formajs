@@ -2350,7 +2350,7 @@
   "tags": [
    "security"
   ],
-  "find": "      if (isScriptAttr(liveEl, attr.name)) {\n        liveEl.removeAttribute(attr.name);\n        continue;\n      }\n",
+  "find": "      if (trusted && isScriptAttr(liveEl, attr.name)) {\n        liveEl.removeAttribute(attr.name);\n        continue;\n      }\n",
   "replace": "",
   "note": "reconcile()'s diff writes a changed on* handler or script src, a Trusted Types script sink core writes nowhere else (formajs#29 review S1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src\""
  },
@@ -2453,5 +2453,15 @@
   "find": "          warnRuntimeSrcdoc(attr.name);\n",
   "replace": "",
   "note": "a list row's srcdoc writes a document from row data with no development warning (formajs#29 review S3). Verified by: src/__tests__/runtime-srcdoc.test.ts > \"a list row's srcdoc writes its string and warns once with the runtime code\""
+ },
+ {
+  "id": "trusted/reconcile-string-script-attrs-removed",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      if (trusted && isScriptAttr(liveEl, attr.name)) {",
+  "replace": "      if (isScriptAttr(liveEl, attr.name)) {",
+  "note": "a string reconcile()'s diff removes a changed on* handler or script src, where 2.0.3 wrote it (formajs#29 second review R1, L-18). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a string reconcile()'s diff writes a changed on*, script src and srcdoc as 2.0 did\""
  }
 ]

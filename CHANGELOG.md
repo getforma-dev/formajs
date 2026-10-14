@@ -177,9 +177,11 @@ All notable changes to this project will be documented in this file.
   - `reconcile()` trims what it is given before parsing it, so markup that
     arrived as a browser `TrustedHTML` is minted again, trimmed, through core's
     second policy, `forma-runtime`, and parsed by it; a string is never
-    minted. Its diff mints a changed `srcdoc` of an iframe that trusted markup
-    parsed into, and writes no `on*` attribute or script `src` (or `href`): a
-    changed one is removed, as h() and adoption write no `on*` name. It records
+    minted. The diff of trusted markup mints a changed `srcdoc` of an iframe
+    that markup parsed into, and writes no `on*` attribute or script `src` (or
+    `href`): a changed one is removed, as h() and adoption write no `on*` name.
+    The diff of a string writes every changed attribute, those included, as
+    2.0.3 did (formajs#29's second review, R1: L-18). It records
     markup as current only once the write succeeded, so after a write the page
     refused, the same markup as `trustedHtml()` is not skipped as unchanged.
   - Each policy is made once per page, on first use, since an enforcing page
@@ -188,8 +190,9 @@ All notable changes to this project will be documented in this file.
     on `globalThis` (`Symbol.for('@getforma/core#trusted-types')`, a record
     with no prototype). The registry holds no policy object: it holds the mint
     `trustedHtml()` is, which a consumer's SR8 lint lists as a raw entry, and
-    a `forma-runtime` parser that takes only a browser `TrustedHTML`, so no
-    script can mint a `forma-runtime` value from a string. If the page refuses
+    a `forma-runtime` parser that takes only a browser `TrustedHTML`, so on an
+    enforcing page no script can mint a `forma-runtime` value from a string.
+    If the page refuses
     a name, core writes strings (which the page then refuses), and a
     development build logs `FORMA_W_TT_POLICY_REFUSED` once per name. An
     element clobbered onto `window.trustedTypes` is not taken for Trusted
@@ -206,8 +209,8 @@ All notable changes to this project will be documented in this file.
     refuses; see *Deprecated*.
 - **Size** (L-51, FORMA-126 and FORMA-127), measured against `main` with
   FORMA-123 and FORMA-169: `trustedHtml()`, the two policies, the typed
-  `reconcile()` and its parser grow the CDN runtime by 816 B gzipped (35,540
-  to 36,356 B) and the hardened runtime by 835 B (34,542 to 35,377 B). Both
+  `reconcile()` and its parser grow the CDN runtime by 834 B gzipped (35,540
+  to 36,374 B) and the hardened runtime by 854 B (34,542 to 35,396 B). Both
   passed their gates, which rise to the measured size rounded up to the next
   500 B: 36,000 to 36,500 B and 35,000 to 35,500 B (`scripts/check-size.mjs`,
   the README's size table). The core entry grows by 509 B (28,776 to 29,285 B
@@ -425,19 +428,20 @@ All notable changes to this project will be documented in this file.
   none, and `scripts/verify-dist.mjs` fails a build in which a production
   file holds one or a development entry lacks one. The CDN bundles have no
   development build, so a page loading the runtime from a CDN logs none.
-  - Tests: `src/dom/__tests__/trusted-html.test.ts` (twenty, under a
+  - Tests: `src/dom/__tests__/trusted-html.test.ts` (twenty-one, under a
     simulated Trusted Types engine where it matters, among them "a string to
     each raw sink still renders, and warns once with the sink's code in
     development", "core's own writes raise no Trusted Types violation: mount,
     unmount, the null clear, and every sink given trustedHtml()", "reconcile()'s
     diff mints a changed srcdoc of trusted markup and writes no on* or script
-    src" and "the shared registry holds no policy, and its forma-runtime handle
+    src", "a string reconcile()'s diff writes a changed on*, script src and
+    srcdoc as 2.0 did" and "the shared registry holds no policy, and its forma-runtime handle
     mints nothing from a string"); `src/__tests__/renderer-contract.test.ts` >
     "writes %s as the string the URL guard checked, not a second conversion"
     (static, reactive, adoption and SSR); `src/__tests__/runtime-srcdoc.test.ts`
     (three); `src/dom/__tests__/trusted-html-build.test.ts` > "a production
     build carries none of the raw-HTML warnings, in any artifact" (the real
-    tsup configs) and its control; `e2e/trusted-types.spec.ts` (fourteen per
+    tsup configs) and its control; `e2e/trusted-types.spec.ts` (fifteen per
     engine); `e2e/development-build.spec.ts` > "a development bundle of the
     packed package logs a string at a raw sink once, with its code, and
     trustedHtml() never".
