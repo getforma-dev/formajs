@@ -283,7 +283,7 @@ widget.unmount(); // every binding disposed, the root emptied
 |---|---|---|
 | `fetch: { methods?, paths, cookies?, timeoutMs? }` | `data-fetch` with those `methods` (default `['GET']`), to URLs under those `paths` (`'/api/x/'` on the page's origin, or an absolute `https://…/` prefix on another; a prefix without a trailing slash covers that path and the paths below it, never `/api/x-admin`), with the user's cookies only if `cookies: true`, aborted after `timeoutMs` (at most and by default 30,000) | the request is never sent; its `error:` target reads `data-fetch denied: …` |
 | `dom: true` | an element outside the mount root through `$el`, `$event` or `$refs`, and a selector that asks about one | `FORMA_E_GRANT_DOM`; the binding writes nothing |
-| `navigate: true` | `click()`, which follows a link or submits a form in the user's session | `FORMA_E_GRANT_NAVIGATE`; the click is not made |
+| `navigate: true` | `click()`, which follows a link or submits a form in the user's session, and `$dispatch` of an activation event (`click`, `auxclick`, `DOMActivate`, `submit`, `reset`, in any case), which WebKit or Firefox run as activation | `FORMA_E_GRANT_NAVIGATE`; the click is not made, the event not dispatched |
 
 A grant left out of `grants` is not given; leaving out `grants` altogether
 gives every grant. That default is 2.1.0's bridge, so a host can move its
@@ -301,23 +301,30 @@ Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant admits
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant's cookies decide the request's credentials"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant's timeout shortens the abort"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$el.click() is denied without navigate and runs with it"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$dispatch of an activation event needs navigate: %s"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a mount call names a known tier, an element and markup, and mounts a root once"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "takes trustedHtml() markup beside a string, and nothing else"
 
 **`$el` stops at the mount root** (L-36). Every hop that yields an element
 (`closest()`, `querySelector()`, `querySelectorAll()`, `children`, the first,
 last, next and previous element, `$event.target`, `$event.currentTarget`,
-`$refs`) hands back an element under the root, or is refused without `dom`, so
-`$el.closest('body')` reaches nothing. A selector is a read of what it names,
-so without `dom` it must be local: compound selectors (`li.row:not(.done)`,
-`[data-key]`, `:nth-child(2n+1)`), with no combinator, which would ask about an
-ancestor or a sibling (`body .row`, `[data-email^="a"] *`). What the allowlist
+`$refs`) hands back an element under the root, or is refused without `dom`.
+`closest()` without `dom` walks only up to the root: it never tests an element
+outside it, and past it answers `null`, as no match does, so
+`$el.closest('body')` reaches nothing and no answer tells an outside ancestor's
+attributes apart. A selector is a read of what it names, so without `dom` it
+must be local: compound selectors (`li.row:not(.done)`, `[data-key]`,
+`:nth-child(2n+1)`), with no combinator, which would ask about an ancestor or
+a sibling (`body .row`, `[data-email^="a"] *`), and no `:has()`, `:scope` or
+`:host`; `:is()`, `:where()` and `:not()` only over local selectors. What the allowlist
 never offers stays unreachable whatever the grants: `parentElement`,
 `parentNode`, `ownerDocument`, `getRootNode()`, `offsetParent`, `shadowRoot`,
 `assignedSlot`, `form`, `labels`, `list`, `ownerSVGElement`, the node
 siblings, `$event.relatedTarget`, `$event.composedPath()`, `$event.view`.
 
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$el.closest('body') reaches nothing without dom"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "closest() without dom never tests an element outside the root: an outside ancestor's attribute cannot be read a character at a time"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "matches() and querySelector(All)() cannot read past the element through %s"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "no hop from $el reaches past the mount root: %s"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a selector that reads past the element needs dom: %s"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "no property or method outside the allowlist reaches another element, granted dom or not: $el.%s"

@@ -58,6 +58,9 @@ const NOT_LOCAL: readonly string[] = [
   'li:nth-child(2 of .x)', // `of` filters siblings by a selector
   ':host',
   ':host(.x)',
+  ':scope', // names the receiver: no business in a local selector
+  ':scope > p',
+  'div:SCOPE',
   ':host-context(.dark)',
   ':lang(en)', // inherited from an ancestor
   ':dir(rtl)',

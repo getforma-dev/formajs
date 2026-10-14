@@ -150,7 +150,7 @@ describe('SR16: binding only under the root handed in', () => {
         `<button id="inc" data-on:click="{n++}">+</button><p id="n" data-text="{n}">-</p></div>`,
       { tier: 'reviewed', grants: {} },
     );
-    expect(text('reach')).toBe('initial');
+    expect(text('reach')).toBe('confined');
     expect(text('n')).toBe('0');
 
     // Markup the page inserts under the root later: the observer does not bind it.
@@ -163,7 +163,7 @@ describe('SR16: binding only under the root handed in', () => {
     runtime.mount(document.body);
     runtime.initRuntime();
     expect(text('late')).toBe('raw');
-    expect(text('reach')).toBe('initial');
+    expect(text('reach')).toBe('confined');
 
     // A tierless scope around the root binds its own elements, never the mount's.
     // Nor do its $refs reach into the mount.
@@ -173,7 +173,7 @@ describe('SR16: binding only under the root handed in', () => {
     document.getElementById('n')!.setAttribute('data-ref', 'counter');
     runtime.mount(app);
     expect(text('title')).toBe('app');
-    expect(text('reach')).toBe('initial');
+    expect(text('reach')).toBe('confined');
 
     // The attribute the observer watches, changed under the root: ignored.
     root.querySelector('[data-forma-state]')!.setAttribute('data-forma-state', '{"n":5}');
@@ -185,7 +185,7 @@ describe('SR16: binding only under the root handed in', () => {
     runtime.initRuntime();
     click('inc');
     expect(text('n')).toBe('1');
-    expect(text('reach')).toBe('initial');
+    expect(text('reach')).toBe('confined');
   });
 
   it('a mount nested in another binds with its own grants, and the outer one never binds its markup', () => {
@@ -197,11 +197,15 @@ describe('SR16: binding only under the root handed in', () => {
     const inner = document.getElementById('inner-root')!;
     mountOn(
       inner,
-      `<div data-forma-state='{}'><p id="inner" data-text="{$el.closest('section') ? 'reached' : 'confined'}">initial</p></div>`,
+      `<div data-forma-state='{}'><p id="inner" data-text="{$el.closest('section') ? 'reached' : 'confined'}">initial</p>` +
+        `<p id="asks" data-text="{$el.matches('section p') ? 'read' : 'not read'}">initial</p></div>`,
       { tier: 'reviewed', grants: {} },
     );
-    // The inner mount's markup is bound by the inner mount, without dom: denied.
-    expect(text('inner')).toBe('initial');
+    // The inner mount's markup is bound by the inner mount, without dom: its
+    // closest() stops at its root, and a selector asking about the page is
+    // denied in the inner mount's name.
+    expect(text('inner')).toBe('confined');
+    expect(text('asks')).toBe('initial');
     expect(codes()).toEqual(['FORMA_E_GRANT_DOM']);
     expect(denials()[0]!.mount).toBe('#inner-root');
   });
@@ -314,12 +318,12 @@ describe('L-36: $el, $event and $refs stop at the mount root', () => {
   it("$el.closest('body') reaches nothing without dom", () => {
     const expr = `$el.closest('body') ? 'reached' : 'confined'`;
     const root = page();
+    // Without dom the walk stops at the root and answers null, as no match
+    // does: nothing outside is tested, so there is nothing to deny.
     const confined = mountOn(root, probe(expr), { tier: 'reviewed', grants: {} });
-    expect(text('out')).toBe('initial');
-    expect(denials()).toEqual([
-      expect.objectContaining({ code: 'FORMA_E_GRANT_DOM', grant: 'dom', mount: '#root', tier: 'reviewed' }),
-    ]);
-    expect(document.getElementById('out')!.getAttribute('data-forma-expr-error')).toBe('unsupported');
+    expect(text('out')).toBe('confined');
+    expect(denials()).toEqual([]);
+    expect(document.getElementById('out')!.hasAttribute('data-forma-expr-error')).toBe(false);
     confined.unmount();
 
     // An element inside the root is reachable without dom.
@@ -333,7 +337,47 @@ describe('L-36: $el, $event and $refs stop at the mount root', () => {
     handles.pop()!.unmount();
     mountOn(root, probe(expr), { tier: 'reviewed' });
     expect(text('out')).toBe('reached');
-    expect(denials()).toHaveLength(1);
+    expect(denials()).toEqual([]);
+  });
+
+  it("closest() without dom never tests an element outside the root: an outside ancestor's attribute cannot be read a character at a time", () => {
+    // formajs#30's review, B1: a local attribute selector that matches only
+    // an ancestor outside the root. When closest() tested that ancestor and
+    // refused the answer, the refusal (the binding kept its text) against no
+    // match (it rendered MISS) read the secret one prefix at a time.
+    const root = page(); // inside <section data-secret="s3cret">
+    const asked = (prefix: string): string | null => {
+      mountOn(root, probe(`$el.closest('[data-secret^=&quot;${prefix}&quot;]') ? 'HIT' : 'MISS'`), { tier: 'reviewed', grants: {} });
+      const answer = text('out');
+      handles.pop()!.unmount();
+      return answer;
+    };
+    const answers = ['s', 's3', 's3c', 'x', 'q'].map(asked);
+    expect(answers).toEqual(['MISS', 'MISS', 'MISS', 'MISS', 'MISS']);
+    expect(denials()).toEqual([]);
+    // The same selector still finds a match inside the root, and dom still
+    // reaches the ancestor: the walk is confined, not the selector refused.
+    mountOn(root, `<div data-forma-state='{}' data-secret="inside"><p id="out" data-text="{$el.closest('[data-secret^=&quot;in&quot;]') ? 'HIT' : 'MISS'}">-</p></div>`,
+      { tier: 'reviewed', grants: {} });
+    expect(text('out')).toBe('HIT');
+    handles.pop()!.unmount();
+    mountOn(root, probe(`$el.closest('[data-secret^=&quot;s3&quot;]') ? 'HIT' : 'MISS'`), { tier: 'reviewed', grants: { dom: true } });
+    expect(text('out')).toBe('HIT');
+  });
+
+  it.each([
+    [':has(+ aside)', `$el.closest('div').matches(':has(+ aside)')`],
+    [':has(span)', `$el.matches(':has(span)')`],
+    [':is() of a complex selector', `$el.matches(':is([data-secret] p)')`],
+    [':where() of a complex selector', `$el.matches(':where(section p)')`],
+    [':scope', `$el.closest('div').querySelector(':scope > p')`],
+    [':scope alone', `$el.matches(':scope')`],
+    [':not() of a complex selector', `$el.closest('div').querySelectorAll(':not(section *)').length`],
+  ])('matches() and querySelector(All)() cannot read past the element through %s', (_form, expr) => {
+    const root = page();
+    mountOn(root, probe(expr), { tier: 'reviewed', grants: {} });
+    expect(text('out')).toBe('initial');
+    expect(codes()).toEqual(['FORMA_E_GRANT_DOM']);
   });
 
   it("an element reached through $event or $refs carries the mount's bound", () => {
@@ -341,16 +385,16 @@ describe('L-36: $el, $event and $refs stop at the mount root', () => {
     mountOn(
       root,
       `<div data-forma-state='{"seen":"none"}'><p id="mine" data-ref="mine">mine</p>` +
-        `<button id="via-event" data-on:click="{seen = $event.target.closest('section') ? 'reached' : 'confined'}">e</button>` +
-        `<button id="via-refs" data-on:click="{seen = $refs.mine.closest('section') ? 'reached' : 'confined'}">r</button>` +
+        `<button id="via-event" data-on:click="{seen = 'event ' + ($event.target.closest('section') ? 'reached' : 'confined')}">e</button>` +
+        `<button id="via-refs" data-on:click="{seen = 'refs ' + ($refs.mine.closest('section') ? 'reached' : 'confined')}">r</button>` +
         `<button id="local" data-on:click="{seen = $event.target.closest('div') ? 'own div' : 'none'}">l</button>` +
         `<p id="seen" data-text="{seen}">-</p></div>`,
       { tier: 'reviewed', grants: {} },
     );
     click('via-event');
+    expect(text('seen')).toBe('event confined');
     click('via-refs');
-    expect(text('seen')).toBe('none');
-    expect(codes()).toEqual(['FORMA_E_GRANT_DOM', 'FORMA_E_GRANT_DOM']);
+    expect(text('seen')).toBe('refs confined');
     click('local');
     expect(text('seen')).toBe('own div');
   });
@@ -358,8 +402,11 @@ describe('L-36: $el, $event and $refs stop at the mount root', () => {
   it('the mount root itself is outside the mount', () => {
     const root = page();
     mountOn(root, probe(`$el.closest('#root') ? 'root' : 'none'`), { tier: 'reviewed', grants: {} });
+    expect(text('out')).toBe('none');
+    handles.pop()!.unmount();
+    // Through a hop that yields it, it is refused.
+    mountOn(root, probe(`$el.closest('div').parentElement`), { tier: 'reviewed', grants: {} });
     expect(text('out')).toBe('initial');
-    expect(codes()).toEqual(['FORMA_E_GRANT_DOM']);
   });
 
   it.each([
@@ -446,8 +493,16 @@ describe('L-36: no hop reaches past the mount root', () => {
   it.each(HOPS.map((h) => [h.hop, h] as const))('no hop from $el reaches past the mount root: %s', (_hop, entry) => {
     const denied = boundFor(false);
     let error: unknown;
-    try { evalHop(entry, denied.bound); } catch (err) { error = err; }
-    expect(isExprError(error) && error.code).toBe('FORMA_E_GRANT_DOM');
+    let answer: unknown = 'unset';
+    try { answer = evalHop(entry, denied.bound); } catch (err) { error = err; }
+    if (entry.hop === 'closest') {
+      // closest() is confined, not refused: its walk stops at the root and
+      // answers nothing, so no element outside it is tested (B1).
+      expect(error).toBeUndefined();
+      expect(answer).toBeUndefined();
+    } else {
+      expect(isExprError(error) && error.code).toBe('FORMA_E_GRANT_DOM');
+    }
     expect(denied.used).toEqual([]);
 
     // With dom the hop is answered, still wrapped, and its use recorded.
@@ -540,6 +595,48 @@ describe('DR-15: grants', () => {
     click('go');
     expect(clicks).toBe(1);
     expect(codes()).toEqual(['FORMA_E_GRANT_NAVIGATE']);
+  });
+
+  it.each(['click', 'auxclick', 'DOMActivate', 'submit', 'reset', 'Click'])(
+    '$dispatch of an activation event needs navigate: %s',
+    (type) => {
+      // formajs#30's review, S1: WebKit runs a link's, a submit button's and a
+      // form's activation for an untrusted click, auxclick or DOMActivate, and
+      // Firefox submits or resets a form on an untrusted submit or reset.
+      const root = page();
+      const markup =
+        `<div data-forma-state='{}'><form id="form"><button id="go" type="button" ` +
+        `data-on:mouseover="{$dispatch('${type}')}">go</button></form></div>`;
+      let seen = 0;
+      const count = (): void => { seen++; };
+
+      mountOn(root, markup, { tier: 'reviewed', grants: {} });
+      document.getElementById('form')!.addEventListener(type, count);
+      document.getElementById('go')!.dispatchEvent(new Event('mouseover'));
+      expect(seen).toBe(0);
+      expect(codes()).toEqual(['FORMA_E_GRANT_NAVIGATE']);
+      expect(denials()[0]!.grant).toBe('navigate');
+      handles.pop()!.unmount();
+
+      const granted = mountOn(root, markup, { tier: 'reviewed', grants: { navigate: true } });
+      document.getElementById('form')!.addEventListener(type, count);
+      document.getElementById('go')!.dispatchEvent(new Event('mouseover'));
+      expect(seen).toBe(1);
+      expect(granted.grantsUsed()).toEqual({ navigate: true });
+    },
+  );
+
+  it('$dispatch of any other event needs no grant', () => {
+    const root = page();
+    const handle = mountOn(root,
+      `<div data-forma-state='{}'><button id="go" data-on:mouseover="{$dispatch('selected', 7)}">go</button></div>`,
+      { tier: 'reviewed', grants: {} });
+    let detail: unknown = null;
+    document.getElementById('root')!.addEventListener('selected', (e) => { detail = (e as CustomEvent).detail; });
+    document.getElementById('go')!.dispatchEvent(new Event('mouseover'));
+    expect(detail).toBe(7);
+    expect(denials()).toEqual([]);
+    expect(handle.grantsUsed()).toEqual({});
   });
 
   it('with explicit empty grants a generated tree binds neither data-fetch nor $el.click()', async () => {
@@ -754,7 +851,7 @@ describe("SR37's runtime half: every denied grant is a coded diagnostic", () => 
     expect(events).toHaveLength(1);
     handles.pop()!.unmount();
     // A denied grant is reported whatever either switch says.
-    mountOn(root, probe(`$el.closest('body')`), { tier: 'reviewed', grants: {}, config: { diagnostics: false } });
+    mountOn(root, probe(`$el.matches('body *')`), { tier: 'reviewed', grants: {}, config: { diagnostics: false } });
     expect(events.map((e) => e.code)).toEqual(['FORMA_E_UNRESOLVED', 'FORMA_E_GRANT_DOM']);
   });
 });
@@ -847,8 +944,8 @@ describe('tiers and configuration', () => {
       { tier: 'unreviewed' },
     );
     expect(text('sum')).toBe('2');
-    expect(text('out')).toBe('initial');
-    expect(codes().sort()).toEqual(['FORMA_E_GRANT_DOM', 'FORMA_E_GRANT_FETCH']);
+    expect(text('out')).toBe('confined');
+    expect(codes()).toEqual(['FORMA_E_GRANT_FETCH']);
     expect(requests).toEqual([]);
     expect(denials().every((d) => d.tier === 'unreviewed')).toBe(true);
   });

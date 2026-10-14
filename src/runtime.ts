@@ -165,6 +165,7 @@ import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-sa
 import {
   clearExpressionCache,
   compileExpression,
+  exprError,
   compileHandler,
   evaluateExpression,
   GROW,
@@ -1881,6 +1882,18 @@ function initScope(stateEl: Element, mount: MountCtx | null): Scope {
 
 // ── Element binding ──
 
+/**
+ * Event types an engine treats as activation when an untrusted event of that
+ * type is dispatched on an element, so dispatching one can follow a link,
+ * submit or reset a form, or toggle a label's control or a `<details>`. Measured
+ * with `new CustomEvent(type)`: WebKit runs activation for `click`, `auxclick`
+ * and `DOMActivate`; Firefox submits on `submit` and resets on `reset`;
+ * Chromium runs none. Under a tiered mount `$dispatch` of one needs `navigate`,
+ * as `click()` does (formajs#30, review S1); the comparison ignores case.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "$dispatch of an activation event needs navigate: %s"
+ */
+const ACTIVATION_EVENTS: ReadonlySet<string> = new Set(['click', 'auxclick', 'domactivate', 'submit', 'reset']);
+
 function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void {
   // Per-element magics. Both are HOST values (src/expr/host.ts): the element is
   // reachable only through the element property allowlist, and $dispatch is a
@@ -1891,7 +1904,15 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   const elMagics: Record<string, unknown> = {
     $el: hostObject('element', el, '$el', scope.mount?.bound),
     $dispatch: hostFn('$dispatch', (name: unknown, detail?: unknown) => {
-      el.dispatchEvent(new CustomEvent(String(name), {
+      const type = String(name);
+      const mount = scope.mount;
+      if (mount && ACTIVATION_EVENTS.has(type.toLowerCase())) {
+        if (!mount.bound.navigate) {
+          throw exprError('FORMA_E_GRANT_NAVIGATE', `$dispatch('${type}') (no navigate grant)`);
+        }
+        mount.bound.use('navigate');
+      }
+      el.dispatchEvent(new CustomEvent(type, {
         bubbles: true,
         composed: true, // crosses Shadow DOM boundaries (important for <forma-stage>)
         detail,

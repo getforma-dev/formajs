@@ -37,7 +37,7 @@
   ],
   "find": "const FORBIDDEN_PROP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);",
   "replace": "const FORBIDDEN_PROP_KEYS = new Set<string>([]);",
-  "note": "SECURITY.md 'Island props sanitized' \u2014 stripping removed"
+  "note": "SECURITY.md 'Island props sanitized' — stripping removed"
  },
  {
   "id": "activate/props-reviver-recursive",
@@ -75,7 +75,7 @@
   "tags": [],
   "find": "  startBatch();\n  try {\n    fn();\n  } finally {\n    endBatch();\n  }",
   "replace": "  fn();",
-  "note": "batch() no longer batches \u2014 effects run per write"
+  "note": "batch() no longer batches — effects run per write"
  },
  {
   "id": "bus/emit-no-snapshot",
@@ -83,7 +83,7 @@
   "tags": [],
   "find": "      for (const handler of [...set]) {",
   "replace": "      for (const handler of set) {",
-  "note": "bus emit iterates live Set \u2014 off() during emit corrupts iteration"
+  "note": "bus emit iterates live Set — off() during emit corrupts iteration"
  },
  {
   "id": "bus/once-no-off",
@@ -117,7 +117,7 @@
   "tags": [],
   "find": "      const camel = prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());",
   "replace": "      const camel = prop;",
-  "note": "kebab-case CSS props no longer camelised \u2014 string styles silently drop"
+  "note": "kebab-case CSS props no longer camelised — string styles silently drop"
  },
  {
   "id": "el/static-onattr-guard-off",
@@ -125,8 +125,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  warnRawAttr(key, value);\n\n  // true \u2192 empty string attribute, else stringified value",
-  "replace": "  warnRawAttr(key, value);\n\n  // true \u2192 empty string attribute, else stringified value",
+  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  warnRawAttr(key, value);\n\n  // true → empty string attribute, else stringified value",
+  "replace": "  warnRawAttr(key, value);\n\n  // true → empty string attribute, else stringified value",
   "note": "h() static path writes ONCLICK as an inline handler"
  },
  {
@@ -383,7 +383,7 @@
   ],
   "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
   "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u214f]/);",
-  "note": "the case-mapped letterlike symbols (\u03a9 U+2126, K U+212A, \u00c5 U+212B) are charged as symbols that map to themselves. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+  "note": "the case-mapped letterlike symbols (Ω U+2126, K U+212A, Å U+212B) are charged as symbols that map to themselves. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
  },
  {
   "id": "expr/costly-set-too-broad",
@@ -403,7 +403,7 @@
   ],
   "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
   "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff]/);",
-  "note": "one curly apostrophe, dash, \u20ac or \u2122 puts a record's lowercasing in the costly tier, refusing an ordinary English search past about 1,700 records (review R4-1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+  "note": "one curly apostrophe, dash, € or ™ puts a record's lowercasing in the costly tier, refusing an ordinary English search past about 1,700 records (review R4-1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
  },
  {
   "id": "expr/data-args-charged",
@@ -701,7 +701,7 @@
   "tags": [],
   "find": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V {",
   "replace": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V { if (v && typeof v === 'object') return v;",
-  "note": "history entries alias live objects \u2014 undo/redo returns mutated state"
+  "note": "history entries alias live objects — undo/redo returns mutated state"
  },
  {
   "id": "http/ws-random-unchecked",
@@ -771,7 +771,7 @@
   "tags": [
    "security"
   ],
-  "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) \u2014 use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
+  "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) — use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
   "replace": "",
   "note": "hydration writes ONCLICK as an inline handler"
  },
@@ -1102,7 +1102,7 @@
   "tags": [],
   "find": "  if (e.ctrlKey !== parsed.ctrl) return false;",
   "replace": "",
-  "note": "ctrl modifier ignored \u2014 's' fires a 'ctrl+s' binding"
+  "note": "ctrl modifier ignored — 's' fires a 'ctrl+s' binding"
  },
  {
   "id": "keyboard/no-meta-check",
@@ -1138,7 +1138,7 @@
   ],
   "find": "      if (lisFlags[i]) {",
   "replace": "      if (!lisFlags[i]) {",
-  "note": "the LIS rows are the ones skipped-as-in-place \u2014 final order corrupted",
+  "note": "the LIS rows are the ones skipped-as-in-place — final order corrupted",
   "all": true
  },
  {
@@ -1149,7 +1149,7 @@
   ],
   "find": "  for (const li of lisOfReused) {\n    lisFlags[reusedPositions[li]!] = 1;\n  }",
   "replace": "",
-  "note": "every reused row is moved \u2014 LIS optimisation dead",
+  "note": "every reused row is moved — LIS optimisation dead",
   "all": true
  },
  {
@@ -1158,7 +1158,7 @@
   "tags": [],
   "find": "export function longestIncreasingSubsequence(arr: number[]): number[] {",
   "replace": "export function longestIncreasingSubsequence(arr: number[]): number[] { if (arr.length > 1) return [];",
-  "note": "LIS always empty \u2014 every keyed item moves (O(n) DOM churn, identity loss)"
+  "note": "LIS always empty — every keyed item moves (O(n) DOM churn, identity loss)"
  },
  {
   "id": "list/no-onInsert-hook",
@@ -1205,8 +1205,8 @@
   "tags": [],
   "find": "  if (oldLen < SMALL_LIST_THRESHOLD) {",
   "replace": "  if (oldLen < 1) {",
-  "note": "small-list path never taken \u2014 all lists go through the Map path",
-  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes \u2014 that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+  "note": "small-list path never taken — all lists go through the Map path",
+  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
  },
  {
   "id": "list/small-threshold-huge",
@@ -1214,8 +1214,8 @@
   "tags": [],
   "find": "  if (oldLen < SMALL_LIST_THRESHOLD) {",
   "replace": "  if (oldLen < 100000) {",
-  "note": "large-list Map path never taken \u2014 all lists go through the flat scan",
-  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes \u2014 that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+  "note": "large-list Map path never taken — all lists go through the flat scan",
+  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
  },
  {
   "id": "mount/container-namespace-ignored",
@@ -1262,7 +1262,7 @@
   "find": "    if (value !== undefined) {\n      (el.style as any)[key] = value;\n    }",
   "replace": "    (el.style as any)[key] = value;",
   "note": "undefined style values written through",
-  "equivalent": "CSSOM stringifies an assigned value, and \"undefined\" is not a valid declaration value, so the property is left unchanged either way. The guard saves a wasted assignment, not a wrong one \u2014 see the note on setStyle in src/dom-utils/mutate.ts."
+  "equivalent": "CSSOM stringifies an assigned value, and \"undefined\" is not a valid declaration value, so the property is left unchanged either way. The guard saves a wasted assignment, not a wrong one — see the note on setStyle in src/dom-utils/mutate.ts."
  },
  {
   "id": "mutate/setText-uses-innerHTML",
@@ -1358,7 +1358,7 @@
   "tags": [],
   "find": "    return () => {\n      removeMountedNode();\n    };",
   "replace": "    return () => { /* mutation: portal never detaches its node */ };",
-  "note": "portal never detaches the previous node \u2014 the target accumulates on every re-render and on dispose"
+  "note": "portal never detaches the previous node — the target accumulates on every re-render and on dispose"
  },
  {
   "id": "portal/target-namespace-ignored",
@@ -1376,7 +1376,7 @@
   "tags": [],
   "find": "  const resolvedTarget = typeof target === 'string'\n    ? document.querySelector(target)\n    : (target ?? document.body);",
   "replace": "  const resolvedTarget = typeof target === 'string'\n    ? document.body\n    : (target ?? document.body);",
-  "note": "string portal selector ignored \u2014 always body"
+  "note": "string portal selector ignored — always body"
  },
  {
   "id": "reactive/batch-flush-under-caller-root",
@@ -1394,7 +1394,7 @@
   "tags": [],
   "find": "export function untrack",
   "replace": "export function untrackDISABLED_UNUSED_SHIM_NOT_EXPORTED_PLACEHOLDER",
-  "note": "compile-break sentinel (expect CAUGHT \u2014 harness sanity check)"
+  "note": "compile-break sentinel (expect CAUGHT — harness sanity check)"
  },
  {
   "id": "reconcile/remove-all-skips-hook",
@@ -1552,7 +1552,7 @@
   ],
   "find": "const DANGEROUS_SCHEME_RE = /^(?:javascript|vbscript|data:text\\/html)/i;",
   "replace": "const DANGEROUS_SCHEME_RE = /(?:javascript|vbscript|data:text\\/html)/i;",
-  "note": "substring match \u2014 https://example.com/guides/javascript now blocked"
+  "note": "substring match — https://example.com/guides/javascript now blocked"
  },
  {
   "id": "sec/svg-any-tag-is-image",
@@ -1764,7 +1764,7 @@
   ],
   "find": "    .replace(/&/g, '&amp;')\n    .replace(/\"/g, '&quot;')\n    .replace(/</g, '&lt;')",
   "replace": "    .replace(/</g, '&lt;')",
-  "note": "SSR attribute values no longer escape double quotes \u2014 attribute breakout"
+  "note": "SSR attribute values no longer escape double quotes — attribute breakout"
  },
  {
   "id": "ssr/escapeAttr-drop-lt",
@@ -1784,7 +1784,7 @@
   ],
   "find": "    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#x27;');",
   "replace": "    .replace(/\"/g, '&quot;');",
-  "note": "SSR text nodes no longer escape < > & ' \u2014 raw XSS"
+  "note": "SSR text nodes no longer escape < > & ' — raw XSS"
  },
  {
   "id": "ssr/escapeHtml-drop-apos",
@@ -1854,7 +1854,7 @@
   ],
   "find": "  if (typeof node === 'string') { parts.push(escapeHtml(node)); return; }",
   "replace": "  if (typeof node === 'string') { parts.push(node); return; }",
-  "note": "SSR text children emitted raw \u2014 live <script> in the page"
+  "note": "SSR text children emitted raw — live <script> in the page"
  },
  {
   "id": "ssr/void-element-closed",
@@ -1892,7 +1892,7 @@
   ],
   "find": "  if ((v as any)[PROXY]) return false;\n  return true;\n}",
   "replace": "  if ((v as any)[PROXY]) return false;\n  return !Array.isArray(v);\n}",
-  "note": "arrays no longer plain \u2014 array reactivity path dead"
+  "note": "arrays no longer plain — array reactivity path dead"
  },
  {
   "id": "store/deepClone-identity",
@@ -1900,7 +1900,7 @@
   "tags": [],
   "find": "function deepClone(obj: unknown, seen?: WeakSet<object>): unknown {",
   "replace": "function deepClone(obj: unknown, seen?: WeakSet<object>): unknown { if (obj && typeof obj === 'object') return obj;",
-  "note": "store deepClone becomes identity \u2014 snapshots alias live state"
+  "note": "store deepClone becomes identity — snapshots alias live state"
  },
  {
   "id": "store/no-array-method-patch",
@@ -1916,7 +1916,7 @@
   "tags": [],
   "find": "      let entry = cache.get(val);",
   "replace": "      let entry = undefined as any;",
-  "note": "switch branch cache disabled \u2014 new node identity each visit"
+  "note": "switch branch cache disabled — new node identity each visit"
  },
  {
   "id": "switch/cases-outside-namespace",
@@ -1934,7 +1934,7 @@
   "tags": [],
   "find": "        let scooped = 0;\n        while (startMarker.nextSibling && startMarker.nextSibling !== endMarker) {\n          currentNode.appendChild(startMarker.nextSibling);\n          scooped++;\n        }",
   "replace": "        let scooped = 0;",
-  "note": "cached fragment branch not scooped back \u2014 3rd visit renders empty/duplicated"
+  "note": "cached fragment branch not scooped back — 3rd visit renders empty/duplicated"
  },
  {
   "id": "traverse/siblings-includes-self",
@@ -2250,8 +2250,8 @@
   "tags": [
    "security"
   ],
-  "find": "const NOT_LOCAL = /::|:host\\b|[^\\w\\-#.*:,\\u0001)\\u0080-\\uffff]/i;",
-  "replace": "const NOT_LOCAL = /::|:host\\b|[^\\s>+~\\w\\-#.*:,\\u0001)\\u0080-\\uffff]/i;",
+  "find": "const NOT_LOCAL = /::|:host\\b|:scope\\b|[^\\w\\-#.*:,\\u0001)\\u0080-\\uffff]/i;",
+  "replace": "const NOT_LOCAL = /::|:host\\b|:scope\\b|[^\\s>+~\\w\\-#.*:,\\u0001)\\u0080-\\uffff]/i;",
   "note": "a selector with a descendant, child or sibling combinator counts as local, so it asks about an ancestor or a sibling outside the mount. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
  },
  {
@@ -2963,5 +2963,55 @@
   "find": "      if (trusted && isScriptAttr(liveEl, attr.name)) {",
   "replace": "      if (isScriptAttr(liveEl, attr.name)) {",
   "note": "a string reconcile()'s diff removes a changed on* handler or script src, where 2.0.3 wrote it (formajs#29 second review R1, L-18). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a string reconcile()'s diff writes a changed on*, script src and srcdoc as 2.0 did\""
+ },
+ {
+  "id": "tiered/closest-unconfined",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  const result = host.kind === 'element' && method === 'closest' && host.bound && !host.bound.dom\n    ? closestWithin(target as unknown as Element, host.bound.root, String(args[0] ?? ''))\n    : Reflect.apply(fn as (...a: unknown[]) => unknown, target, args);",
+  "replace": "  const result = Reflect.apply(fn as (...a: unknown[]) => unknown, target, args);",
+  "note": "closest() without dom tests the ancestors outside the root and refuses a match, so the refusal against no match reads an outside ancestor's attribute a character at a time (formajs#30 review, B1). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"closest() without dom never tests an element outside the root: an outside ancestor's attribute cannot be read a character at a time\""
+ },
+ {
+  "id": "tiered/closest-walks-past-root",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  for (let n: Element | null = el; n !== null && n !== root; n = n.parentElement) {",
+  "replace": "  for (let n: Element | null = el; n !== null; n = n.parentElement) {",
+  "note": "the confined closest() walk does not stop at the root, so it tests the outside ancestors again. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"closest() without dom never tests an element outside the root: an outside ancestor's attribute cannot be read a character at a time\""
+ },
+ {
+  "id": "tiered/dispatch-activation-ungated",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (mount && ACTIVATION_EVENTS.has(type.toLowerCase())) {",
+  "replace": "      if (false) {",
+  "note": "$dispatch('click') runs a link's or a form's activation in WebKit, and $dispatch('submit') submits in Firefox, from a mount granted no navigate (formajs#30 review, S1). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$dispatch of an activation event needs navigate: %s\""
+ },
+ {
+  "id": "tiered/dispatch-activation-case",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (mount && ACTIVATION_EVENTS.has(type.toLowerCase())) {",
+  "replace": "      if (mount && ACTIVATION_EVENTS.has(type)) {",
+  "note": "an activation event named in another case (DOMActivate, Click) passes the navigate check. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$dispatch of an activation event needs navigate: %s\""
+ },
+ {
+  "id": "selector/scope",
+  "file": "src/expr/selector.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const NOT_LOCAL = /::|:host\\b|:scope\\b|",
+  "replace": "const NOT_LOCAL = /::|:host\\b|",
+  "note": ":scope, which names the receiver, counts as local. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
  }
 ]
