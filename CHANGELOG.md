@@ -4,6 +4,26 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Changed
+
+- **List adoption fails the island on a row-count mismatch instead of deleting
+  rows** (FORMA-123, DR-8). Server rows without `data-forma-key` are matched by
+  index. Before, a client array shorter than the server's rows had the extra
+  rows removed and a longer one had rows rendered fresh, silently (ksx's #5 lost
+  the server rows absent from a list's array before its state was seeded). Now, when the counts
+  differ (including an empty array, or an empty server region with items), no
+  row is adopted, removed or rendered: the island keeps the server's HTML and is
+  marked `error`, and `FORMA_E_HYDRATE_LIST_COUNT`, naming both counts, is
+  logged in every build and passed to `onError` handlers (source
+  `'hydration'`). Listeners adoption attached before the failure are removed,
+  so an island in `error` answers no click; this holds for any adoption that
+  fails part-way. `mount()` and `hydrateIsland()` keep `data-forma-ssr` and do
+  not throw, as for `FORMA_E_HYDRATE_NODE`. Equal counts adopt as before, and
+  rows that carry `data-forma-key` keep matching by key. Applications whose
+  state reaches the island from the server's data see no change. Core's ESM
+  entry grows by 192 B gzipped (27,895 B, gate 30,000 B unchanged); the CDN
+  runtimes do not include adoption and are unchanged.
+
 ### CI
 
 - **Actions pinned to commits; every job declares its token** (DR-32, SR21,

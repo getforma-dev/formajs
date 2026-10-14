@@ -49,17 +49,23 @@ never from a bare client-side default. That is why the Counter above seeds
 
 The reason is mechanical: adoption binds server-rendered text to your signals
 through effects, and an effect's first run **writes the current client signal
-value over the server-rendered text**. List adoption goes further — SSR rows
-whose keys are missing from the client array are **removed**. Seed a signal
-with an empty client default and the hydrated page silently erases the server's
-data on load.
+value over the server-rendered text**. List adoption goes further. SSR rows
+that carry `data-forma-key` and whose keys are missing from the client array
+are **removed**. Rows without keys are matched by index, and when their count
+differs from the client array's length the island **fails** instead (see
+[Server-rendered lists](#server-rendered-lists)). Seed a signal with an empty
+client default and the hydrated page either erases the server's data on load
+or leaves the island inert.
 
-In dev builds this mismatch is loud. Grep your console for:
+In dev builds a keyed mismatch is loud. Grep your console for:
 
 ```
 [FormaJS] Hydration: list item key "…" not found in SSR — rendering fresh
 [FormaJS] Hydration: removing extra SSR list item with key "…"
 ```
+
+An unkeyed count mismatch is logged in every build as
+`FORMA_E_HYDRATE_LIST_COUNT`.
 
 ### Getting props to the island
 
@@ -167,9 +173,28 @@ activateIslands({
 Keys are compared as strings — `data-forma-key="1"` matches `(item) => item.id`
 for `id: 1`. Matched rows are adopted in place without re-rendering; unmatched
 client items render fresh, and unmatched SSR rows are removed (the two warnings
-above). If **no** row carries `data-forma-key`, adoption falls back to
-index-based matching — fine for lists that never reorder, but keyed rows
-survive reorders.
+above).
+
+If **no** row carries `data-forma-key`, adoption matches rows by index, which is
+right only when the client array is the one the server rendered. So it first
+checks the count. When the number of server rows differs from the array's
+length (more items, fewer, or none at all, as before a signal is seeded), no
+row is adopted, removed or rendered. The island keeps the server's HTML and is
+marked `error`, and the error `FORMA_E_HYDRATE_LIST_COUNT`, naming both counts,
+is logged in every build and passed to `onError` handlers with the source
+`'hydration'`. Listeners adoption attached before the failure are removed, so an
+island in `error` answers no click. `mount()` and `hydrateIsland()` keep
+`data-forma-ssr` on the container and do not throw, as for
+`FORMA_E_HYDRATE_NODE` below. Equal counts adopt every row in place, and after
+adoption the list reconciles by key as usual. This check is the bridge until the
+server writes keys for every list (decision brief DR-8).
+
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "marks the island error with FORMA_E_HYDRATE_LIST_COUNT and removes or adds no row"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "a server region with no rows and a client array with items fails the island and inserts nothing"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "equal counts adopt 40 unkeyed rows in place by index, as before, and keep reconciling"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "rows that carry data-forma-key keep matching by key when the counts differ"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "an island failed by the row count keeps no handler or binding that adoption attached before the list"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "onError receives FORMA_E_HYDRATE_LIST_COUNT from activateIslands, mount() and hydrateIsland(), and each keeps the server rows"
 
 ### Server data flow
 

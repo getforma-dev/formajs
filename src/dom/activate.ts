@@ -7,7 +7,7 @@
  */
 
 import { createUnownedRoot, __DEV__ } from 'forma/reactive';
-import { hydrateIslandOrFail, isHydrateNodeError, reportHydrateNodeError } from './hydrate.js';
+import { hydrateIslandOrFail, isHydrateError, reportHydrateError } from './hydrate.js';
 
 /**
  * Function that hydrates an island.
@@ -440,8 +440,9 @@ function hydrateIslandRoot(
     // A coded hydration error is logged in every build and passed to onError:
     // in production the island's `error` status would otherwise be its only trace.
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns a detached DOM node is marked error with its code, its sibling unaffected"
+    // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "marks the island error with FORMA_E_HYDRATE_LIST_COUNT and removes or adds no row"
     // Verified by: src/dom/__tests__/props-loading.test.ts > "props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS"
-    if (isIslandPropsError(err) || isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island "${componentName}", id=${id})`);
+    if (isIslandPropsError(err) || isHydrateError(err)) reportHydrateError(err, ` (island "${componentName}", id=${id})`);
     else if (__DEV__) console.error(`[forma] Island "${componentName}" (id=${id}) failed:`, err);
     // Dispose whatever was built before the throw: a failed island must not
     // leave live effects writing into DOM nobody will hydrate again.

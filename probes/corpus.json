@@ -5,7 +5,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (isIslandPropsError(err) || isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
+  "find": "    if (isIslandPropsError(err) || isHydrateError(err)) reportHydrateError(err, ` (island \"${componentName}\", id=${id})`);\n    else if (__DEV__)",
   "replace": "    if (__DEV__)",
   "note": "an island failed by FORMA_E_HYDRATE_NODE leaves no coded log line naming it"
  },
@@ -15,8 +15,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (isIslandPropsError(err) || isHydrateNodeError(err))",
-  "replace": "    if (isHydrateNodeError(err))",
+  "find": "    if (isIslandPropsError(err) || isHydrateError(err))",
+  "replace": "    if (isHydrateError(err))",
   "note": "an island refused for its props type is marked error with no FORMA_E_ISLAND_PROPS line in a production build. Verified by: src/dom/__tests__/props-loading.test.ts > \"props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS\""
  },
  {
@@ -701,8 +701,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    (err as Error & { code: string }).code = HYDRATE_NODE_ERROR;\n    throw err;",
-  "replace": "    void err;",
+  "find": "    throw hydrateError(\n      HYDRATE_NODE_ERROR,",
+  "replace": "    void hydrateError(\n      HYDRATE_NODE_ERROR,",
   "note": "a detached DOM node returned while hydrating counts as adopted: data-forma-ssr removed, island active, nothing bound, nothing logged"
  },
  {
@@ -724,6 +724,16 @@
   "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) — use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
   "replace": "",
   "note": "hydration writes ONCLICK as an inline handler"
+ },
+ {
+  "id": "hydrate/failed-adoption-keeps-listeners",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    for (const el of attached) cleanup(el);",
+  "replace": "",
+  "note": "an island whose adoption failed part-way stays error but still answers clicks on the elements adopted before the failure. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"an island failed by the row count keeps no handler or binding that adoption attached before the list\""
  },
  {
   "id": "hydrate/fallback-children-html",
@@ -827,6 +837,36 @@
   "all": true
  },
  {
+  "id": "hydrate/list-count-check-on-keyed-rows",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (useIndexFallback && ssrElements.length !== currentItems.length) {",
+  "replace": "  if (ssrElements.length !== currentItems.length) {",
+  "note": "rows that carry data-forma-key fail the island on a count difference instead of matching by key. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"rows that carry data-forma-key keep matching by key when the counts differ\""
+ },
+ {
+  "id": "hydrate/list-count-error-uncoded",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  return code === HYDRATE_NODE_ERROR || code === HYDRATE_LIST_COUNT_ERROR;",
+  "replace": "  return code === HYDRATE_NODE_ERROR;",
+  "note": "FORMA_E_HYDRATE_LIST_COUNT is not a coded adoption error: mount() and hydrateIsland() throw it and onError never hears of it. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"onError receives FORMA_E_HYDRATE_LIST_COUNT from activateIslands, mount() and hydrateIsland(), and each keeps the server rows\""
+ },
+ {
+  "id": "hydrate/list-count-rows-removed",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (useIndexFallback && ssrElements.length !== currentItems.length) {",
+  "replace": "  if (false) {",
+  "note": "unkeyed server rows are matched by index whatever the client's array holds: a shorter array removes the server's rows and a longer one renders rows fresh, silently (ksx #5, DR-8). Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"marks the island error with FORMA_E_HYDRATE_LIST_COUNT and removes or adds no row\""
+ },
+ {
   "id": "hydrate/mismatch-rebuilt-as-html",
   "file": "src/dom/hydrate.ts",
   "tags": [
@@ -862,7 +902,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (!isHydrateNodeError(err)) throw err;\n    reportHydrateNodeError(err);\n    return target;",
+  "find": "    if (!isHydrateError(err)) throw err;\n    reportHydrateError(err);\n    return target;",
   "replace": "    throw err;",
   "note": "hydrateIsland() throws for a detached node, which 2.0.1 never did (a breaking change in a patch)"
  },
@@ -1113,7 +1153,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "        if (!isHydrateNodeError(err)) throw err;\n        failure = err;",
+  "find": "        if (!isHydrateError(err)) throw err;\n        failure = err;",
   "replace": "        throw err;",
   "note": "mount() throws for a detached node, aborting the rest of the page's module (FORMA-003 B1)"
  },

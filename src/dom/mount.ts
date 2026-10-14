@@ -9,7 +9,7 @@
  */
 
 import { createUnownedRoot } from 'forma/reactive';
-import { hydrateIslandOrFail, isHydrateNodeError, reportHydrateNodeError } from './hydrate.js';
+import { hydrateIslandOrFail, isHydrateError, reportHydrateError } from './hydrate.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -67,18 +67,20 @@ export function mount(
       try {
         active = hydrateIslandOrFail(component, target);
       } catch (err) {
-        if (!isHydrateNodeError(err)) throw err;
+        if (!isHydrateError(err)) throw err;
         failure = err;
       }
     });
-    // A detached DOM node from the component cannot be adopted. In 2.0.x that
-    // is reported, not thrown, so the statements after mount() still run: the
+    // A detached DOM node from the component, or a list whose unkeyed rows
+    // differ in count from its array, cannot be adopted. In 2.x that is
+    // reported, not thrown, so the statements after mount() still run: the
     // server's DOM stays as served, with its data-forma-ssr, and the effects the
     // component created are disposed.
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "mount() of a detached DOM node keeps the server DOM, logs the code, disposes its effects and does not throw"
+    // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "onError receives FORMA_E_HYDRATE_LIST_COUNT from activateIslands, mount() and hydrateIsland(), and each keeps the server rows"
     if (failure) {
       disposeRoot();
-      reportHydrateNodeError(failure);
+      reportHydrateError(failure);
     }
   } else {
     // Normal mount — clear and append
