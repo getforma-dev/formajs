@@ -13,7 +13,8 @@
 # code and no third-party action beyond the ones it needs, waits for every other
 # job, downloads only this run's packed artefact, checks it against the pack
 # job's record before it publishes, and cannot go on to publish after a failed
-# step or job. Ruby's standard library parses the YAML, so the check adds nothing
+# step or job; and unless the pack job uploads that artefact with
+# `overwrite: true`, so re-running all jobs after a failure replaces it. Ruby's standard library parses the YAML, so the check adds nothing
 # to the supply chain it guards. The repository-specific part is CONFIG.
 require 'yaml'
 
@@ -369,8 +370,18 @@ def check_pack_job(doc, config, out)
   unless steps.any? { |s| run_of(s) =~ %r{scripts/release-artifacts\.sh record\b} }
     out << 'K2 the pack job must write the record with `scripts/release-artifacts.sh record`'
   end
-  unless steps.any? { |s| action_of(s) == 'actions/upload-artifact' && with_of(s)['name'] == config[:artifact] }
+  upload = steps.find { |s| action_of(s) == 'actions/upload-artifact' && with_of(s)['name'] == config[:artifact] }
+  unless upload
     out << "K3 the pack job must upload the artefact #{config[:artifact].inspect}"
+    return
+  end
+  # A failed release is recovered by re-running all its jobs (forma documents
+  # it so). Without `overwrite: true` the new attempt's upload may fail on the
+  # name the earlier attempt's artefact holds (A2 audit S7, FORMA-179).
+  # Replacing it is safe: publish checks every file against the record whose
+  # hash `pack` passes as a job output, never against the artefact alone.
+  unless [true, 'true'].include?(with_of(upload)['overwrite'])
+    out << "K4 the pack job's upload of #{config[:artifact].inspect} must set `overwrite: true`, so re-running all jobs replaces the earlier attempt's artefact instead of failing on its name"
   end
 end
 
@@ -447,6 +458,12 @@ SEEDS = [
   ['the publish job as a reusable workflow', 'J1', ->(d) { d['jobs'][CONFIG[:publish_job]] = { 'uses' => './.github/workflows/x.yml', 'permissions' => { 'contents' => 'read', 'id-token' => 'write' } } }],
   ['publish not waiting for the pack job', 'J2', ->(d) { publish_job(d)['needs'] = needs_of(publish_job(d)) - [CONFIG[:pack_job]] }],
   ['a new gate job publish does not wait for', 'J2', ->(d) { d['jobs']['late-gate'] = { 'permissions' => {}, 'runs-on' => 'ubuntu-latest', 'steps' => [{ 'run' => 'true' }] } }],
+  ['the pack job uploading without overwrite: true', 'K4', lambda do |d|
+    pack_job(d)['steps'].find { |s| action_of(s) == 'actions/upload-artifact' }['with'].delete('overwrite')
+  end],
+  ['the pack job uploading with overwrite: false', 'K4', lambda do |d|
+    pack_job(d)['steps'].find { |s| action_of(s) == 'actions/upload-artifact' }['with']['overwrite'] = false
+  end],
   ['publish without its tag condition', 'J3', ->(d) { publish_job(d).delete('if') }],
   ['an environment the registry entry does not name', 'J4', ->(d) { publish_job(d)['environment'] = 'unknown-environment' }],
   ['continue-on-error on the artefact check', 'E1', ->(d) { check_step(d)['continue-on-error'] = true }],

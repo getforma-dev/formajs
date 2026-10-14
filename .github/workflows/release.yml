@@ -116,11 +116,16 @@ jobs:
           cat release/SHA256SUMS
           echo "record-sha256=$RECORD_SHA256" >> "$GITHUB_OUTPUT"
 
+      # overwrite: re-running all jobs after a failure replaces the earlier
+      # attempt's artefact instead of failing on its name;
+      # publish still checks every file against the record whose hash this job
+      # passes as an output (A2 audit S7, FORMA-179).
       - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: release-packed
           path: release/
           if-no-files-found: error
+          overwrite: true
 
   publish:
     needs: [engines, test, pack]

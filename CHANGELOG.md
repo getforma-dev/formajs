@@ -812,8 +812,13 @@ All notable changes to this project will be documented in this file.
   being reported (three WebKit failures of "each round-2 rope case is refused
   before the long task"). `resource.test.ts`'s "sets error on fetcher
   rejection" waits for its own read instead of a fixed 10 ms, which raced the
-  read's 0 ms timer and lost once in 100 runs under load. The published
-  package is unchanged.
+  read's 0 ms timer and lost once in 100 runs under load. The release's
+  `pack` job uploads `release-packed` with `overwrite: true`, so re-running
+  all jobs after a failure replaces the earlier attempt's artefact instead
+  of failing on its name (A2 audit S7); `publish` still checks every file
+  against the record whose hash `pack` passes as a job output. The SR43
+  lint's new rule K4 requires it, with two seeds in `--self-test`. The
+  published package is unchanged.
 
 ## [2.0.3] - 2026-10-14
 
