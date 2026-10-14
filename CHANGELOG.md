@@ -51,6 +51,20 @@ All notable changes to this project will be documented in this file.
   elements (and the zero-width space they write for empty text) is also
   accepted, and removed on adoption when it accounts for the whole difference
   from the client's text.
+- **Inline SVG and MathML are adopted, not rebuilt.** Adoption compared an
+  element's `tagName` with the component's tag upper-cased, but the parser keeps
+  an SVG or MathML tag's case (`svg`, `clipPath`), so every inline SVG was taken
+  for a mismatch and replaced at activation, with whatever focus or state it
+  held, and the replacement's `title` or `a` was an HTML element (an icon lost
+  its accessible name). Adoption now matches a foreign element by its exact
+  `localName`, and an HTML element in any case, as before. Where adoption must
+  create an element (the server rendered another tag, or nothing) inside SVG or
+  MathML, it creates it in that namespace with `createElementNS`; inside a
+  `foreignObject` it creates HTML. (FORMA-020)
+- **A reactive attribute the server already holds is not written at
+  adoption.** Adoption set every bound attribute once, even to the value it
+  had, which a `MutationObserver` records and which reloads an `iframe` whose
+  `src` is bound. A change is still written. (FORMA-020)
 - `createList` with `updateOnItemChange: 'rerender'` disposes a replaced row's
   effects. (Local checkpoint `042e353`.)
 

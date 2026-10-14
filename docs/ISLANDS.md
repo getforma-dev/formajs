@@ -186,7 +186,7 @@ clobber.
 
 ---
 
-## What adoption does with Fragments, form controls, `textarea` and `title`
+## What adoption does with Fragments, form controls, `textarea`, `title` and SVG
 
 **Fragments.** A component may return a Fragment (`<>…</>`, `h(Fragment, …)`
 or `fragment(…)`) at a `mount()` root, at an island root, inside an element or
@@ -249,6 +249,34 @@ Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "keeps text type
 Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "keeps server text that only looks like marker text, edited or not, without a write"
 Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "after the user types, a textarea's reactive text changes only its default, client-rendered and adopted alike"
 Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "binds a title's reactive text by the element, with or without marker text"
+
+**Inline SVG and MathML.** These are adopted like any other element: the nodes
+stay the server's, so focus and state inside an icon survive activation. The
+parser keeps an SVG or MathML tag's case (`clipPath`), and adoption matches it
+exactly; an HTML element matches a tag in any case. Where adoption must create
+an element (the server rendered another tag, or nothing), it creates it in the
+namespace the HTML parser would have used: SVG or MathML inside those
+elements, HTML inside a `foreignObject`. A `title` it creates in an SVG is an
+SVG `title`.
+
+**Reactive attributes.** An attribute the server already rendered with the
+client's value is not written at adoption, on any element; every later change
+is. Setting an attribute to the value it has is still a DOM write, and for an
+`iframe`'s `src` it reloads the frame.
+
+Client rendering differs for icons: plain `h()` creates SVG-only tags (`svg`,
+`path`, `clipPath`) in the SVG namespace by name, but a `title` or an `a` is
+built before the `svg` it goes into, so it is created as HTML. Build an icon
+that has a `title` or a link inside `svg()` (see the SVG section of
+[API.md](API.md)) to get what the server's HTML parses to.
+
+Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "adopts a server-rendered inline SVG with no DOM write and no re-created node"
+Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "adopts case-sensitive SVG tags such as clipPath and linearGradient in place"
+Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "rebuilds a mismatched SVG child in the SVG namespace, title and a included"
+Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "creates the content of a foreignObject in the HTML namespace"
+Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "creates MathML the server did not render in the MathML namespace"
+Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "writes nothing where the server already holds the value, and still writes every change"
+Verified by `src/dom/__tests__/svg-namespace.test.ts` > "an icon built in svg() has the namespaces and markup the parser gives the server HTML"
 
 ---
 

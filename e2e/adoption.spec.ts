@@ -246,3 +246,119 @@ test('an option bound to undefined submits its text, client-rendered and adopted
   await page.locator('#csr select').selectOption({ index: 1 });
   expect(await formData(page, '#csr')).toEqual([['c', 'Beta']]);
 });
+
+// FORMA-020: inline SVG and MathML (decision brief DR-5, DR-9, R7). Chromium's
+// parser puts them in their own namespaces, where `tagName` is not upper-cased.
+const NS = { html: 'http://www.w3.org/1999/xhtml', svg: 'http://www.w3.org/2000/svg', mathml: 'http://www.w3.org/1998/Math/MathML' };
+
+test('an inline SVG icon is adopted without one DOM write; its title stays SVG and a bound path updates in place', async ({ page }) => {
+  await serve(page, '<div id="app" data-forma-ssr><button id="close"><svg viewBox="0 0 10 10"><title>Close</title><path d="M0 0L10 10"/></svg></button></div>');
+  await expect(page.locator('#close')).toHaveAccessibleName('Close');
+
+  const adopted = await page.evaluate(async () => {
+    const app = document.getElementById('app')!;
+    const server = Array.from(app.querySelectorAll('*'));
+    const seen: string[] = [];
+    const observer = new MutationObserver((batch) => {
+      for (const r of batch) seen.push(`${r.type}:${(r.target as Element).id || (r.target as Node).nodeName}:${r.attributeName ?? ''}`);
+    });
+    observer.observe(app, { subtree: true, childList: true, attributes: true, characterData: true });
+    const { h, mount, createSignal } = await import('/adoption-core.mjs' as string);
+    const [d, setD] = createSignal('M0 0L10 10');
+    (window as any).setD = setD;
+    mount(() => h('button', { id: 'close' },
+      h('svg', { viewBox: '0 0 10 10' }, h('title', null, 'Close'), h('path', { d: () => d() }))), '#app');
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    seen.push(...observer.takeRecords().map((r) => `${r.type}:${(r.target as Element).id}:${r.attributeName ?? ''}`));
+    observer.disconnect();
+    const now = Array.from(app.querySelectorAll('*'));
+    return {
+      seen,
+      sameNodes: now.length === server.length && now.every((el, i) => el === server[i]),
+      namespaces: now.map((el) => `${el.localName}:${el.namespaceURI}`),
+    };
+  });
+
+  expect(adopted.seen).toEqual(['attributes:app:data-forma-ssr']);
+  expect(adopted.sameNodes).toBe(true);
+  expect(adopted.namespaces).toEqual([`button:${NS.html}`, `svg:${NS.svg}`, `title:${NS.svg}`, `path:${NS.svg}`]);
+  await expect(page.locator('#close')).toHaveAccessibleName('Close');
+
+  for (const next of ['M10 0L0 10', 'M0 5L10 5', 'M0 0L10 10']) {
+    const updated = await page.evaluate(async (d) => {
+      const path = document.querySelector('#app path')!;
+      const seen: string[] = [];
+      const observer = new MutationObserver(() => {});
+      observer.observe(document.getElementById('app')!, { subtree: true, childList: true, attributes: true, characterData: true });
+      (window as any).setD(d);
+      seen.push(...observer.takeRecords().map((r) => `${r.type}:${(r.target as Element).localName}:${r.attributeName ?? ''}`));
+      observer.disconnect();
+      return { seen, same: document.querySelector('#app path') === path, d: path.getAttribute('d') };
+    }, next);
+    expect(updated).toEqual({ seen: ['attributes:path:d'], same: true, d: next });
+  }
+});
+
+test('SVG and MathML are adopted in place, and what adoption must create inside them gets their namespace', async ({ page }) => {
+  await serve(page,
+    '<div id="app" data-forma-ssr><div><p id="formula"><math><mi>x</mi></math></p>' +
+    '<svg id="icon" viewBox="0 0 10 10"><circle r="1"/></svg></div></div>');
+  const page1 = await page.evaluate(async () => {
+    const math = document.querySelector('math')!;
+    const mi = document.querySelector('mi')!;
+    const icon = document.getElementById('icon')!;
+    const originalWarn = console.warn;
+    console.warn = () => {};
+    const { h, mount, createSignal } = await import('/adoption-core.mjs' as string);
+    const [x, setX] = createSignal('x');
+    (window as any).setX = setX;
+    try {
+      mount(() => h('div', null,
+        h('p', { id: 'formula' }, h('math', null, h('mi', null, () => x()), h('mo', null, '+'), h('mn', null, '1'))),
+        // The server rendered a circle; the client wants a titled link.
+        h('svg', { id: 'icon', viewBox: '0 0 10 10' }, h('title', null, 'Close'), h('a', { href: '#close' }, h('path', { d: 'M0 0L10 10' }))),
+      ), '#app');
+    } finally {
+      console.warn = originalWarn;
+    }
+    const ns = (sel: string) => Array.from(document.querySelectorAll(sel), (el) => `${el.localName}:${el.namespaceURI}`);
+    return {
+      kept: document.querySelector('math') === math && document.querySelector('mi') === mi && document.getElementById('icon') === icon,
+      math: ns('#formula *'),
+      svg: ns('#icon *'),
+    };
+  });
+  expect(page1.kept).toBe(true);
+  expect(page1.math).toEqual([`math:${NS.mathml}`, `mi:${NS.mathml}`, `mo:${NS.mathml}`, `mn:${NS.mathml}`]);
+  expect(page1.svg).toEqual([`title:${NS.svg}`, `a:${NS.svg}`, `path:${NS.svg}`]);
+  await expect(page.locator('#formula')).toHaveText('x+1');
+  await page.evaluate(() => (window as any).setX('y'));
+  await expect(page.locator('#formula')).toHaveText('y+1');
+});
+
+test("a bound iframe src the server already rendered is not set again, so the frame is not reloaded", async ({ page }) => {
+  await page.route(/\/frame\.html/, (route) => route.fulfill({
+    contentType: 'text/html',
+    body: `<!doctype html><p>frame ${new URL(route.request().url()).search}</p>`,
+  }));
+  await serve(page, '<div id="app" data-forma-ssr><iframe id="frame" src="/frame.html" title="frame"></iframe></div>');
+  await page.waitForFunction(() => (document.getElementById('frame') as HTMLIFrameElement).contentDocument?.readyState === 'complete');
+
+  const result = await page.evaluate(async () => {
+    const frame = document.getElementById('frame') as HTMLIFrameElement;
+    let loads = 0;
+    frame.addEventListener('load', () => loads++);
+    (frame.contentWindow as any).state = 'kept';
+    const { h, mount, createSignal } = await import('/adoption-core.mjs' as string);
+    const [src, setSrc] = createSignal('/frame.html');
+    (window as any).setSrc = setSrc;
+    mount(() => h('iframe', { id: 'frame', src: () => src(), title: 'frame' }), '#app');
+    await new Promise((resolve) => setTimeout(resolve, 300));
+    return { loads, state: (frame.contentWindow as any).state ?? null };
+  });
+  expect(result).toEqual({ loads: 0, state: 'kept' });
+
+  // A real change still navigates the frame.
+  await page.evaluate(() => (window as any).setSrc('/frame.html?next'));
+  await expect(page.frameLocator('#frame').locator('p')).toHaveText('frame ?next');
+});
