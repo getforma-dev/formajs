@@ -290,7 +290,7 @@ Stated here rather than left for a reader to discover:
 | Version | Supported |
 |---------|-----------|
 | 2.1.x | Yes |
-| 2.0.x | Yes |
+| 2.0.x | Security fixes only — upgrade to 2.1, which is additive within 2.x |
 | 1.5.x | Security fixes only |
 | 1.1.x – 1.4.x | No — upgrade to 2.0 |
 | 1.0.x | No — upgrade for the 1.1–2.0 correctness, security and RPC hardening |
