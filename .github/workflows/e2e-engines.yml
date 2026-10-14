@@ -1,0 +1,72 @@
+name: E2E engines
+
+# The whole e2e suite in Chromium, Firefox and WebKit, one job per engine.
+# Decision brief DR-9: Chromium on every merge (ci.yml's `e2e` job, which runs
+# `npm run test:e2e`, the `chromium` project only), all three before each
+# release (FORMA-027). Ways in:
+#   - release.yml calls this workflow and its `publish` job needs it, so a tag
+#     publishes only if all three engines pass on the tagged commit;
+#   - workflow_dispatch, to run it on a branch before cutting a tag:
+#       gh workflow run e2e-engines.yml --ref <branch>
+#   - a pull request that changes the gate itself (this file or the
+#     Playwright config). Not every PR: per-merge stays Chromium-only.
+on:
+  workflow_call:
+  workflow_dispatch:
+  pull_request:
+    branches: [main]
+    paths:
+      - '.github/workflows/e2e-engines.yml'
+      - 'playwright.config.ts'
+
+permissions:
+  contents: read
+
+# No concurrency group, deliberately. Called from release.yml, `github.workflow`
+# is the caller's name, so a group built from it equals the release's own and
+# deadlocks; and a group that a dispatch on the tag could share would let that
+# dispatch cancel the release's engine run. Dispatch and PR runs are rare.
+
+jobs:
+  e2e:
+    name: e2e (${{ matrix.browser }})
+    runs-on: ubuntu-latest
+    # Not yet measured in CI for Firefox and WebKit. ci.yml's Chromium e2e job
+    # measured 5.4m end to end; WebKit's `--with-deps` installs more system
+    # packages. Locally (macOS) all three engines run the 45 tests in ~20s.
+    timeout-minutes: 15
+    strategy:
+      # Each engine reports on its own: one red engine does not hide another.
+      fail-fast: false
+      matrix:
+        browser: [chromium, firefox, webkit]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+
+      # Browser binaries cached per engine, keyed on the resolved Playwright
+      # version. `--with-deps` still runs so the OS packages are present; only
+      # the download is skipped on a hit.
+      - name: Resolve Playwright version
+        id: pw
+        run: echo "version=$(node -p "require('@playwright/test/package.json').version")" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ runner.os }}-${{ steps.pw.outputs.version }}-${{ matrix.browser }}
+      - run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      # Builds dist, then runs every spec in this engine's project.
+      - run: npm run test:e2e:engines -- --project=${{ matrix.browser }}
+
+      - uses: actions/upload-artifact@v6
+        if: failure()
+        with:
+          name: e2e-results-${{ matrix.browser }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7
