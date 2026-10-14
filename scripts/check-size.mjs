@@ -48,7 +48,9 @@ const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
  * FORMA-025 (core 2.1.0) raised them again, to 36,000 and 35,000 B (35,540
  * and 34,542 B measured). FORMA-126 and FORMA-127 (core 2.1.0: trustedHtml(),
  * the typed reconcile() and its forma-runtime policy) raised them to 36,500
- * and 35,500 B (36,374 and 35,396 B measured).
+ * and 35,500 B (36,374 and 35,396 B measured). FORMA-173 (deferral per
+ * budget, the cap on a charge after a binding waits, its per-task allowance)
+ * raised them to 37,000 and 36,000 B (36,576 and 35,599 B measured).
  * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
 export const GATES = [
@@ -59,7 +61,7 @@ export const GATES = [
   },
   {
     entry: 'dist/formajs-runtime.global.js',
-    limit: 36500,
+    limit: 37000,
     note: 'CDN runtime bundle (single self-contained IIFE)',
   },
   {
@@ -72,7 +74,7 @@ export const GATES = [
     // release.yml — while being the build the docs pointed CSP-strict users at
     // and the target of the `runtime-csp` exports subpath.
     entry: 'dist/formajs-runtime-hardened.global.js',
-    limit: 35500,
+    limit: 36000,
     note: 'CDN hardened runtime bundle (single self-contained IIFE)',
   },
 ];
