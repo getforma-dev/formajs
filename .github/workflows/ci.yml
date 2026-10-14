@@ -123,7 +123,7 @@ jobs:
     # which playwright install was 0.3m. The Playwright config gives webServer
     # no explicit timeout, so it inherits the 60s default — `npx serve` failing
     # to bind fails the run at 60s and cannot hang. The two install steps are
-    # bounded on their own with one retry each (at most 9 and 5 minutes,
+    # bounded on their own with one retry each (at most 11 and 5 minutes,
     # FORMA-179), so 20 holds both at their worst plus a slow run of the rest.
     timeout-minutes: 20
     steps:
@@ -150,8 +150,9 @@ jobs:
           path: ~/.cache/playwright-apt
           key: playwright-apt-${{ steps.pw.outputs.image }}-${{ steps.pw.outputs.version }}-chromium
       - name: Install chromium's system packages, retried once
-        # Normally seconds (22 MB in 2s); each attempt is cut at 4 minutes.
-        timeout-minutes: 9
+        # Normally seconds (22 MB in 2s); each attempt is cut at 4 minutes;
+        # worst case about 9m40s with the dpkg wait, so 11.
+        timeout-minutes: 11
         run: |
           shopt -s nullglob
           mkdir -p ~/.cache/playwright-apt
@@ -167,7 +168,15 @@ jobs:
               exit 1
             fi
             echo "::warning::installing chromium's system packages failed or ran past 4 minutes; retrying once"
-            sudo dpkg --configure -a
+            # The same retry as e2e-engines.yml's: `dpkg --configure -a` may
+            # fail on a lock the cut `apt-get` still holds, and errexit would
+            # end the step before attempt 2 (A2 audit F17a, FORMA-180).
+            sudo dpkg --configure -a || true
+            for waited in $(seq 1 60); do
+              if ! sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then break; fi
+              if [ "$waited" = 60 ]; then echo "::warning::the dpkg lock is still held after 60s; attempt 2 runs anyway"; fi
+              sleep 1
+            done
           done
           fresh=(/var/cache/apt/archives/*.deb)
           if [ "${#fresh[@]}" -gt 0 ]; then cp "${fresh[@]}" ~/.cache/playwright-apt/; fi

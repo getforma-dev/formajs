@@ -60,7 +60,7 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 |-----------|-----------------|-------------------|
 | `el.style.cssText = '...'` | Yes (`style-src` without `unsafe-inline`) | **No** — removed in v1.0.9 |
 | `el.setAttribute('style', '...')` | Yes | **No** |
-| `innerHTML` with `style="..."` | Yes | **Not for library-generated markup** — `h()` builds DOM with `createElement`/`textContent`. `innerHTML` is reached only through the explicit opt-in sinks: `dangerouslySetInnerHTML`, `setHTMLUnsafe()`, `template()` and `reconcile()`, each of which takes `trustedHtml()`. See [SECURITY.md](./SECURITY.md#unsanitized-html-sinks) and [Trusted Types](#trusted-types). |
+| `innerHTML` with `style="..."` | Yes | **Not for library-generated markup** — `h()` builds DOM with `createElement`/`textContent`. `innerHTML` is reached only through the explicit opt-in sinks: `dangerouslySetInnerHTML`, `setHTMLUnsafe()`, `template()` and `templateMany()`, `reconcile()`, `mountMarkup()` and the `srcdoc` attribute (the browser parses its value as a document), each of which takes `trustedHtml()`. See [SECURITY.md](./SECURITY.md#unsanitized-html-sinks) and [Trusted Types](#trusted-types). |
 | `Object.assign(el.style, {...})` | No (CSSOM API) | **Yes** — all styles go through this |
 | `el.style.color = 'red'` | No (CSSOM API) | **Yes** (via Object.assign) |
 | `new Function(...)` | Yes (`script-src` without `unsafe-eval`) | **No** — an allowlist AST interpreter is used instead, in every build. There is no opt-in and no fallback; `scripts/verify-dist.mjs` greps every published artifact. |
@@ -93,7 +93,7 @@ All four patterns work under strict CSP. Internally, string styles are parsed by
 
 **Cause:** The expression is outside the grammar, or it named something the allowlist does not offer. It was **not** evaluated, by design — the binding left the DOM alone rather than writing an empty string.
 
-The `console.error` beside the attribute names the cause with a stable code and a column: `FORMA_E_SYNTAX` (the parser refused the text), `FORMA_E_UNRESOLVED` (an identifier that is not state, not a magic and not one of the frozen namespaces — `document`, `window` and `fetch` land here), `FORMA_E_METHOD_DENIED` / `FORMA_E_PROPERTY_DENIED` (not on the allowlist for that receiver), `FORMA_E_KEY_DENIED` (`constructor`, `__proto__`, `call`, …), `FORMA_E_ASSIGN_DENIED` (unknown or read-only target), `FORMA_E_LIMIT` / `FORMA_E_BUDGET` (a parse or evaluation budget).
+The `console.error` beside the attribute names the cause with a stable code and a column: `FORMA_E_SYNTAX` (the parser refused the text), `FORMA_E_UNRESOLVED` (an identifier that is not state, not a magic and not one of the frozen namespaces — `document`, `window` and `fetch` land here), `FORMA_E_METHOD_DENIED` / `FORMA_E_PROPERTY_DENIED` (not on the allowlist for that receiver), `FORMA_E_CALL_DENIED` (a call whose target is not an allowlisted callable: a value held in state, or a method passed as an argument), `FORMA_E_KEY_DENIED` (`constructor`, `__proto__`, `call`, …), `FORMA_E_ASSIGN_DENIED` (unknown or read-only target), `FORMA_E_UNSUPPORTED` (parsed, but outside the grammar: an arrow function anywhere but a callback's first argument, a block body, destructured parameters, a computed object key, a handler statement that is not an assignment, an update, an `if` or a call), `FORMA_E_LIMIT` / `FORMA_E_BUDGET` (a parse or evaluation budget), and under a tiered mount `FORMA_E_GRANT_DOM` / `FORMA_E_GRANT_NAVIGATE` (a grant the mount does not give; see [docs/HTML-RUNTIME.md](./docs/HTML-RUNTIME.md#mounting-markup-you-did-not-write-tiers-and-grants)).
 
 **Fix:** Rewrite it within the grammar (see [docs/HTML-RUNTIME.md](./docs/HTML-RUNTIME.md), *The expression grammar is an allowlist, not a blocklist*) or precompute the value server-side. There is no fallback to opt into: adding `'unsafe-eval'` to your policy will not make it run, because FormaJS has no code path that would use it. Call `getDiagnostics()` for the full list, or listen for the `formajs:diagnostic` event.
 
@@ -116,6 +116,11 @@ form-action 'self'
 ```
 
 Every page render generates a unique cryptographic nonce. Scripts and the personality `<style>` tag get this nonce. Everything else must come from `'self'` (same origin).
+
+The preview frame's document is the one place a script is allowed by hash, not by nonce: forma-server writes `formajs-frame.global.js` inline into that document (`PageResponse::frame`), and the document's policy names the script's SHA-256 (`script-src 'sha256-…'`) with no `'self'`, so the opaque-origin frame runs exactly that runtime and nothing a module could add. Styles there are allowed by nonce, which the hash-allowed runtime has none of to give a `<style>` element, so a module styles itself with `style` attributes only. The runtime is built so its hash holds: one classic script, byte-identical from build to build, with no `</script`, `<!--` or source map comment (see [docs/HTML-RUNTIME.md](./docs/HTML-RUNTIME.md#mounting-markup-you-did-not-write-tiers-and-grants), *The preview frame*).
+
+Verified by `src/__tests__/runtime-frame.test.ts` > "the frame runtime is one classic script a server can inline as it is"
+Verified by `src/__tests__/runtime-frame.test.ts` > "two builds of the frame runtime are byte-identical"
 
 **This header is satisfied by every build.** The hardened artifact is no longer a stronger guarantee — it is the same runtime, bundled without code splitting — so pick either on size and packaging grounds alone.
 

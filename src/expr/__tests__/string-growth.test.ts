@@ -203,6 +203,28 @@ describe('strings an expression builds and reads (FORMA-028)', () => {
       .toMatchObject({ code: 'answered', value: 13.5 });
   });
 
+  it('converting a 4,096-character numeric string charges at least an eighth of a unit a character', () => {
+    // FORMA-180 (F15, from FORMA-179's mutation runs): a mutant charging a
+    // 256th of a unit a character survived the test above, which asks only
+    // that a thousand conversions of a million digits are refused in time.
+    // The rate is pinned here as the number cost.ts measured (`PARSE`: 11 ns
+    // a character for digits at 4x, a tenth of an `Array.from` slot), not as
+    // the constant, which a mutant would carry into the expectation: one
+    // conversion of 4,096 digits is at least 512 units on the meter.
+    const digits = '1234567890'.repeat(409) + '123456';
+    expect(digits).toHaveLength(4096);
+    const meter: Meter = { steps: 0, cost: 0 };
+    const value = evaluateExpression(compileExpression('digits * 1'), scopeOf({ digits }), meter);
+    expect(value).toBe(Number(digits));
+    expect(meter.cost).toBeGreaterThanOrEqual(4096 / 8);
+    // The same conversion of a short string charges nothing (the test above
+    // says so for a price), so those units are the parse's and no other's.
+    const short: Meter = { steps: 0, cost: 0 };
+    evaluateExpression(compileExpression('digits * 1'), scopeOf({ digits: '12' }), short);
+    expect(short.cost).toBe(0);
+    expect(meter.cost - short.cost).toBeGreaterThanOrEqual(4096 / 8);
+  });
+
   it('a string method reads a string argument for a thirty-second of a unit a character', () => {
     // FORMA-004 charged every argument its text weight, so `s.includes(q)`
     // paid q's length in full on every call. A string method reads a string

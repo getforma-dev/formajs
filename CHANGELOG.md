@@ -4,6 +4,41 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- **A2 audit follow-ups, group 1 (FORMA-180).** `docs/HTML-RUNTIME.md`'s
+  frame section says the inlined frame runtime is unminified and
+  uncompressed, about 160 KB raw, so the application compresses the frame
+  responses (F1; the minified build is FORMA-118). The 2.1.0 Upgrading list
+  names `FORMA_W_INNER_HTML_CHILDREN`; `SECURITY.md` counts three IIFE
+  globals, not two, and says outright that any script on the page can mint a
+  `forma` value through the Trusted Types registry, and which boundary the
+  directive does enforce (F12); `docs/STABILITY.md` no longer claims the
+  `FORMA_W_` codes are listed nowhere else; `CSP.md`'s sink row names
+  `templateMany()`, `mountMarkup()` and `srcdoc`, its code list gains
+  `FORMA_E_CALL_DENIED`, `FORMA_E_UNSUPPORTED` and the two grant codes, and
+  it describes the frame document's hash-allowed script (F10).
+
+### Tests
+
+- `src/expr/__tests__/string-growth.test.ts` > "converting a 4,096-character
+  numeric string charges at least PARSE a character" pins the rate an
+  operator's parse of a long string is charged at; a mutant charging a 256th
+  of it survived the suite in FORMA-179's runs (F15).
+
+### CI
+
+- `release.yml`'s `test` and `pack` jobs run `npm audit signatures` after
+  `npm ci`, so an installed package whose registry signature or attestation
+  does not verify fails the run before anything is built; the SR43
+  lint's new rule S1 requires the audit as the step after every `npm ci` in
+  the workflow and nowhere else, with eight seeds (F11). The packed bytes are unchanged.
+- The Playwright system-package retry in `e2e-engines.yml` and `ci.yml`
+  tolerates a failing `dpkg --configure -a` and waits out the dpkg lock (up to
+  60 s) before its second attempt; under errexit the failure ended the step
+  before the retry ran. The step's bound rises from 9 to 11 minutes for the
+  wait (F17a).
+
 ## [2.1.0] - 2026-10-14
 
 Release A2, the bridge to 3.0.0: additive, with deprecations. Every 2.0.3 call
@@ -52,7 +87,11 @@ each change. Rollback: pin 2.0.3.
   `a`, `script`, `style` or `font` that 2.0.3 created as HTML inside an SVG is
   now SVG, which changes what CSS and `instanceof` see.
 - **A reactive `dangerouslySetInnerHTML` is adopted as content** (Fixed,
-  FORMA-176), where 2.0.3 wrote it as an attribute.
+  FORMA-176), where 2.0.3 wrote it as an attribute. Children given beside the
+  prop (a function, or a value that is not `null`, `undefined` or `false`)
+  log `FORMA_W_INNER_HTML_CHILDREN` once in a development build, from h() and
+  from adoption, and adoption binds none of them where 2.0.3 adopted them:
+  give the element one or the other.
 - **Two type changes.** `RuntimeDiagnostic.kind`, which `getDiagnostics()`
   returns, gains `'grant-denied'`, so an exhaustive `switch` with a `never`
   check stops compiling under `strict` until it handles it. JSX's
