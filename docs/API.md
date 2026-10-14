@@ -416,6 +416,17 @@ const icon = svg(() =>
 );
 ```
 
+Without `svg()`, `h()` still creates the SVG tags it knows by name (`svg`,
+`path`, `circle`, `clipPath`, …) in the SVG namespace, but a tag HTML also has
+(`title`, `a`, `script`, `style`, `font`) is created as HTML, because it is
+built before the `svg` it goes into. An icon with a `title` or a link
+belongs inside `svg()`; that is what the server's HTML parses to, and what
+adoption keeps (see [ISLANDS.md](ISLANDS.md)).
+
+Verified by `src/dom/__tests__/svg-namespace.test.ts` > "h() creates an svg and its SVG-only children in the SVG namespace without svg()"
+Verified by `src/dom/__tests__/svg-namespace.test.ts` > "h(a) with NO svg context stays HTML (no regression)"
+Verified by `src/dom/__tests__/svg-namespace.test.ts` > "an icon built in svg() has the namespaces and markup the parser gives the server HTML"
+
 ---
 
 ## Portals

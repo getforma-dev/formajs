@@ -9,7 +9,7 @@
 
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
 import { reportError } from '../reactive/dev.js';
-import { h, Fragment } from './element.js';
+import { h, Fragment, fillElement, SVG_NS } from './element.js';
 import {
   adoptFormControlProperty,
   adoptTextareaText,
@@ -25,6 +25,38 @@ import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../securit
 // Same symbol identity as element.ts — Symbol.for() guarantees cross-module
 // sharing so cleanup(el) in element.ts aborts controllers created here.
 const ABORT_SYM = Symbol.for('forma-abort');
+
+const MATHML_NS = 'http://www.w3.org/1998/Math/MathML';
+
+// ---------------------------------------------------------------------------
+// Tag names and namespaces
+// ---------------------------------------------------------------------------
+
+/**
+ * Whether the server's element `el` is the element `tag` names. The parser
+ * keeps the case of an SVG or MathML tag (`svg`, `clipPath`) and upper-cases
+ * only an HTML element's `tagName`: a foreign element matches its `localName`
+ * exactly, and an HTML element matches a tag in any case, as h() creates it.
+ *
+ * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "adopts a server-rendered inline SVG with no DOM write and no re-created node"
+ * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "adopts case-sensitive SVG tags such as clipPath and linearGradient in place"
+ */
+function sameTag(el: Element, tag: string): boolean {
+  return el.localName === tag || el.tagName === tag.toUpperCase();
+}
+
+/**
+ * The namespace of the content of `parent`, where adoption creates what the
+ * server did not render: SVG or MathML inside those elements, except a
+ * `foreignObject`'s content, which is HTML; null (HTML) anywhere else.
+ *
+ * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "rebuilds a mismatched SVG child in the SVG namespace, title and a included"
+ * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "creates the content of a foreignObject in the HTML namespace"
+ */
+function contentNs(parent: Node | null | undefined): string | null {
+  const ns = parent && (parent as Element).namespaceURI;
+  return (ns === SVG_NS && (parent as Element).localName !== 'foreignObject') || ns === MATHML_NS ? ns : null;
+}
 
 // ---------------------------------------------------------------------------
 // Hydration state — module-level boolean
@@ -356,6 +388,10 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
     // Reactive attribute binding (function, non-event). isUnsafeAttrWrite is the
     // same predicate h() and the SSR renderer use, so a payload the server
     // refused to emit is not re-added here at hydration.
+    // An attribute already holding the value is not written: adoption makes no
+    // DOM write where the server agrees (setting an iframe's `src` again would
+    // reload it), and an update writes only a change, as h()'s cache does.
+    // Verified by: src/dom/__tests__/hydrate-svg.test.ts > "writes nothing where the server already holds the value, and still writes every change"
     const fn = value as () => unknown;
     const tag = el.localName;
     internalEffect(() => {
@@ -363,7 +399,7 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
       if (v === false || v == null) {
         el.removeAttribute(attrKey);
       } else if (v === true) {
-        el.setAttribute(attrKey, '');
+        if (el.getAttribute(attrKey) !== '') el.setAttribute(attrKey, '');
       } else {
         const str = String(v);
         if (isUnsafeAttrWrite(tag, attrKey, str)) {
@@ -371,7 +407,7 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
           el.removeAttribute(attrKey);
           return;
         }
-        el.setAttribute(attrKey, str);
+        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, str);
       }
     });
   }
@@ -389,19 +425,20 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
  * the framework needs to create fresh DOM from captured descriptors.
  *
  * Temporarily exits hydration mode so h(), createShow(), createList()
- * create real elements with reactive bindings.
+ * create real elements with reactive bindings. `ns` is the namespace of the
+ * content the node goes into (see {@link descriptorToElement}).
  */
-export function ensureNode(value: unknown): Node | null {
+export function ensureNode(value: unknown, ns: string | null = null): Node | null {
   if (value instanceof Node) return value;
   if (value == null || value === false || value === true) return null;
   if (typeof value === 'string') return new Text(value);
   if (typeof value === 'number') return new Text(String(value));
-  if (isDescriptor(value)) return descriptorToElement(value);
+  if (isDescriptor(value)) return descriptorToElement(value, ns);
   if (isFragmentDescriptor(value)) {
     const prevH = hydrating;
     hydrating = false;
     try {
-      return h(Fragment, null, ...value.children.map(toLiveChild));
+      return h(Fragment, null, ...value.children.map((child) => toLiveChild(child, ns)));
     } finally {
       hydrating = prevH;
     }
@@ -440,23 +477,41 @@ export function ensureNode(value: unknown): Node | null {
  * Temporarily exits hydration mode so h() creates real elements.
  * Handles nested ShowDescriptor and ListDescriptor children by converting
  * them to real reactive primitives (createShow, createList).
+ *
+ * `ns` is the namespace of the content the element goes into (null: HTML), so
+ * the element lands where the parser would have put the server's: `svg` and
+ * `math` open SVG and MathML, and their descendants stay in it, except a
+ * `foreignObject`'s, which are HTML. An element in SVG or MathML is created
+ * with `createElementNS`, whatever its tag (h() alone would make a `title` or
+ * an `a` an HTML element); in HTML content h() creates it.
+ *
+ * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "rebuilds a mismatched SVG list row in the SVG namespace"
+ * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "creates the content of a foreignObject in the HTML namespace"
+ * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "creates MathML the server did not render in the MathML namespace"
  */
-export function descriptorToElement(desc: HydrationDescriptor): Element {
+export function descriptorToElement(desc: HydrationDescriptor, ns: string | null = null): Element {
+  const tag = desc.tag;
+  const own = ns ?? (tag === 'svg' ? SVG_NS : tag === 'math' ? MATHML_NS : null);
+  // An SVG or MathML element exists before its children, which take their
+  // namespace from it (contentNs); an HTML element's children are HTML content.
+  const el = own ? document.createElementNS(own, tag) : null;
+  const inner = contentNs(el);
   const prevHydrating = hydrating;
   hydrating = false;
 
   try {
     // Map children: recurse for nested descriptors, convert Show/List/Fragment
-    return h(desc.tag, desc.props, ...desc.children.map(toLiveChild));
+    const children = desc.children.map((child) => toLiveChild(child, inner));
+    return el ? fillElement(el, desc.props, children) : h(tag, desc.props, ...children);
   } finally {
     hydrating = prevHydrating;
   }
 }
 
 /** A descriptor child as the real node h() can append; anything else as is. */
-function toLiveChild(child: unknown): unknown {
-  if (isDescriptor(child)) return descriptorToElement(child);
-  if (isShowDescriptor(child) || isListDescriptor(child) || isFragmentDescriptor(child)) return ensureNode(child);
+function toLiveChild(child: unknown, ns: string | null): unknown {
+  if (isDescriptor(child)) return descriptorToElement(child, ns);
+  if (isShowDescriptor(child) || isListDescriptor(child) || isFragmentDescriptor(child)) return ensureNode(child, ns);
   return child;
 }
 
@@ -752,10 +807,14 @@ function adoptRow(
 
   if (!isDescriptor(rendered)) return rowEl;
 
-  if (rowEl.tagName !== rendered.tag.toUpperCase()) {
+  // A row inside an SVG keeps its tag's case (sameTag), so it is adopted.
+  // Verified by: src/dom/__tests__/hydrate-svg.test.ts > "adopts a list of 40 SVG rows without re-creating one, and keeps them through updates"
+  if (!sameTag(rowEl, rendered.tag)) {
     // Tag drift: adoptNode would replaceWith() and we would lose track of the
-    // live node, so do the replacement here where the caller sees the result.
-    const fresh = descriptorToElement(rendered) as HTMLElement;
+    // live node, so do the replacement here where the caller sees the result,
+    // in the namespace of the row's parent.
+    // Verified by: src/dom/__tests__/hydrate-svg.test.ts > "rebuilds a mismatched SVG list row in the SVG namespace"
+    const fresh = descriptorToElement(rendered, contentNs(rowEl.parentNode)) as HTMLElement;
     rowEl.replaceWith(fresh);
     return fresh;
   }
@@ -1049,9 +1108,9 @@ export function adoptNode(
   ssrEl: Element | undefined,
 ): void {
   // Mismatch check
-  if (!ssrEl || ssrEl.tagName !== desc.tag.toUpperCase()) {
-    if (__DEV__) console.warn(`Hydration mismatch: expected <${desc.tag}>, got <${ssrEl?.tagName?.toLowerCase() ?? 'nothing'}>`);
-    const fresh = descriptorToElement(desc);
+  if (!ssrEl || !sameTag(ssrEl, desc.tag)) {
+    if (__DEV__) console.warn(`Hydration mismatch: expected <${desc.tag}>, got <${ssrEl?.localName ?? 'nothing'}>`);
+    const fresh = descriptorToElement(desc, contentNs(ssrEl?.parentNode));
     if (ssrEl) ssrEl.replaceWith(fresh);
     return;
   }
@@ -1139,7 +1198,7 @@ function adoptChildren(
 
       if (!cursor) {
         // No more DOM nodes — append fresh
-        insert(descriptorToElement(child));
+        insert(descriptorToElement(child, contentNs(parent)));
         continue;
       }
 
@@ -1165,7 +1224,7 @@ function adoptChildren(
         if (shell && end) {
           cursor = within(end.nextSibling);
         } else {
-          const fresh = descriptorToElement(child);
+          const fresh = descriptorToElement(child, contentNs(parent));
           if (end) {
             end.parentNode!.insertBefore(fresh, end);
             cursor = within(end.nextSibling);
@@ -1176,7 +1235,7 @@ function adoptChildren(
         }
       } else {
         // Unexpected node — create fresh and append
-        insert(descriptorToElement(child));
+        insert(descriptorToElement(child, contentNs(parent)));
       }
 
     } else if (isFragmentDescriptor(child)) {

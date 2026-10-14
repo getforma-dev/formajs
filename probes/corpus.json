@@ -234,6 +234,28 @@
   "note": "history entries alias live objects — undo/redo returns mutated state"
  },
  {
+  "id": "hydrate/attr-equal-value-rewritten",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness",
+   "contract"
+  ],
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, str);",
+  "replace": "        el.setAttribute(attrKey, str);",
+  "note": "adoption rewrites every reactive attribute the server already holds: a DOM write per binding, and an iframe's src reloads (FORMA-020, DR-5)"
+ },
+ {
+  "id": "hydrate/attr-true-rewritten",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness",
+   "contract"
+  ],
+  "find": "        if (el.getAttribute(attrKey) !== '') el.setAttribute(attrKey, '');",
+  "replace": "        el.setAttribute(attrKey, '');",
+  "note": "adoption rewrites a boolean attribute the server already rendered (FORMA-020, DR-5)"
+ },
+ {
   "id": "hydrate/detached-node-adopted-silently",
   "file": "src/dom/hydrate.ts",
   "tags": [
@@ -264,6 +286,46 @@
   "note": "hydration writes ONCLICK as an inline handler"
  },
  {
+  "id": "hydrate/fallback-children-html",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  const inner = contentNs(el);",
+  "replace": "  const inner = null;",
+  "note": "the children of an element adoption rebuilds in SVG or MathML are created as HTML elements (FORMA-020)"
+ },
+ {
+  "id": "hydrate/fallback-ignores-parent-namespace",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  return (ns === SVG_NS && (parent as Element).localName !== 'foreignObject') || ns === MATHML_NS ? ns : null;",
+  "replace": "  return null;",
+  "note": "what adoption creates inside an adopted SVG ignores its parent: a title or an a it adds is an HTML element (FORMA-020)"
+ },
+ {
+  "id": "hydrate/fallback-no-mathml",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "tag === 'math' ? MATHML_NS : null",
+  "replace": "null",
+  "note": "MathML that adoption must create is built as HTML unknown elements (FORMA-020)"
+ },
+ {
+  "id": "hydrate/fallback-through-h-only",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    return el ? fillElement(el, desc.props, children) : h(tag, desc.props, ...children);",
+  "replace": "    return h(tag, desc.props, ...children);",
+  "note": "adoption rebuilds through h() alone, which makes a title or an a inside SVG, and all MathML, HTML elements (FORMA-020)"
+ },
+ {
   "id": "hydrate/false-not-removed",
   "file": "src/dom/hydrate.ts",
   "tags": [
@@ -272,6 +334,16 @@
   "find": "      if (v === false || v == null) {\n        el.removeAttribute(attrKey);",
   "replace": "      if (v == null) {\n        el.removeAttribute(attrKey);",
   "note": "adoption leaves disabled=\"false\" on the element"
+ },
+ {
+  "id": "hydrate/foreignObject-content-in-svg",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "(ns === SVG_NS && (parent as Element).localName !== 'foreignObject')",
+  "replace": "(ns === SVG_NS)",
+  "note": "content adoption creates inside a foreignObject, server-rendered or created by adoption, lands in the SVG namespace instead of HTML (FORMA-020)"
  },
  {
   "id": "hydrate/form-updates-treated-as-adoption",
@@ -302,6 +374,27 @@
   "find": "  console.error(err.message + where);\n  reportError(err, 'hydration');",
   "replace": "  console.error(err.message + where);",
   "note": "FORMA_E_HYDRATE_NODE never reaches the documented onError hook, so production error reporting misses it (FORMA-003 S-a)"
+ },
+ {
+  "id": "hydrate/inserted-child-built-as-html",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "descriptorToElement(child, contentNs(parent))",
+  "replace": "descriptorToElement(child)",
+  "note": "content adoption adds where the server rendered nothing is created without its parent's namespace: an a appended to an SVG is HTML (FORMA-020)",
+  "all": true
+ },
+ {
+  "id": "hydrate/mismatch-rebuilt-as-html",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "descriptorToElement(desc, contentNs(ssrEl?.parentNode))",
+  "replace": "descriptorToElement(desc)",
+  "note": "an element adoption replaces on a tag mismatch inside an SVG is created without its parent's namespace: a title becomes HTML (FORMA-020)"
  },
  {
   "id": "hydrate/nested-fragment-skipped",
@@ -364,6 +457,46 @@
   "note": "a Fragment branch of createShow is not adopted: its server nodes keep no handlers until the branch is rebuilt"
  },
  {
+  "id": "hydrate/svg-row-rebuilt-as-html",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "descriptorToElement(rendered, contentNs(rowEl.parentNode))",
+  "replace": "descriptorToElement(rendered)",
+  "note": "a list row adoption must rebuild inside an SVG is created without its parent's namespace: an a or title row becomes HTML (FORMA-020)"
+ },
+ {
+  "id": "hydrate/svg-row-tag-uppercased",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (!sameTag(rowEl, rendered.tag)) {",
+  "replace": "  if (rowEl.tagName !== rendered.tag.toUpperCase()) {",
+  "note": "an adopted list row inside an SVG is taken for tag drift and re-created (FORMA-020, R7)"
+ },
+ {
+  "id": "hydrate/svg-tag-lowercased",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  return el.localName === tag || el.tagName === tag.toUpperCase();",
+  "replace": "  return el.localName === tag.toLowerCase();",
+  "note": "adoption lower-cases the tag: camelCase SVG tags (clipPath, linearGradient) are mismatches and are rebuilt (FORMA-020)"
+ },
+ {
+  "id": "hydrate/svg-tag-uppercased",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  return el.localName === tag || el.tagName === tag.toUpperCase();",
+  "replace": "  return el.tagName === tag.toUpperCase();",
+  "note": "adoption compares tagName with the tag upper-cased: every inline SVG is a mismatch and is rebuilt, its title as HTML (FORMA-020, R7)"
+ },
+ {
   "id": "hydrate/textarea-title-bound-by-node",
   "file": "src/dom/hydrate.ts",
   "tags": [
@@ -399,8 +532,8 @@
   "tags": [
    "contract"
   ],
-  "find": "      } else if (v === true) {\n        el.setAttribute(attrKey, '');",
-  "replace": "      } else if (v === true) {\n        el.setAttribute(attrKey, 'true');",
+  "find": "      } else if (v === true) {\n        if (el.getAttribute(attrKey) !== '') el.setAttribute(attrKey, '');",
+  "replace": "      } else if (v === true) {\n        if (el.getAttribute(attrKey) !== '') el.setAttribute(attrKey, 'true');",
   "note": "adoption writes name=\"true\" instead of a bare attribute"
  },
  {

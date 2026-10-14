@@ -33,7 +33,7 @@ export const Fragment: (props: { children?: unknown }) => DocumentFragment =
 // SVG namespace and tag detection
 // ---------------------------------------------------------------------------
 
-const SVG_NS = 'http://www.w3.org/2000/svg';
+export const SVG_NS = 'http://www.w3.org/2000/svg';
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 /**
@@ -938,6 +938,20 @@ export function h(
     el = getProto(tagName).cloneNode(false) as HTMLElement;
   }
 
+  return fillElement(el, props, children) as unknown as HTMLElement;
+}
+
+/**
+ * The half of h() that runs once the element exists: props, children, live
+ * form values, then the ref. Exported for adoption's fallback, which creates
+ * an element in the SVG or MathML namespace itself (`descriptorToElement` in
+ * hydrate.ts) and then builds it as h() would.
+ */
+export function fillElement<E extends Element>(
+  el: E,
+  props: Record<string, unknown> | null | undefined,
+  children: unknown[],
+): E {
   // Props are split into a static and a dynamic path. Static props
   // (string/number/boolean literals) are written once and never re-read, so
   // they skip the attribute cache entirely; only function-valued props need it,
@@ -1010,7 +1024,7 @@ export function h(
     (props['ref'] as (el: Element) => void)(el);
   }
 
-  return el as unknown as HTMLElement;
+  return el;
 }
 
 /**
