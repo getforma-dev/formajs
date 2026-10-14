@@ -267,6 +267,67 @@ describe('list adoption row-count check', () => {
     expect(clicks).toEqual([]);
   });
 
+  // Round 2 of the review: the failing island's own code can write a shared
+  // signal mid-walk, and another island then builds nodes synchronously. Those
+  // nodes are that island's, and keep their listeners.
+  it("a failing island's ref that writes a shared signal does not detach another island's new list row", () => {
+    document.body.innerHTML =
+      `<div data-forma-island="0" data-forma-component="A"><ul><!--f:l0--><li>r0</li><!--/f:l0--></ul></div>` +
+      `<div data-forma-island="1" data-forma-component="B"><div>x</div>${serverList(['a', 'b'])}</div>`;
+    const [rows, setRows] = createSignal(['r0']);
+    const clicks: string[] = [];
+    captureErrors(() => {
+      activateIslands({
+        A: () => h('div', null, h('ul', null, createList(rows, (r) => r, (r) => h('li', { onClick: () => clicks.push(r) }, r)))),
+        B: () => h('div', null,
+          h('div', { ref: () => setRows(['r0', 'r1']) }, 'x'),
+          h('ul', null, createList(() => ['a'], (x) => x, (x) => h('li', null, x)))),
+      });
+    });
+    const statuses = Array.from(document.querySelectorAll('[data-forma-island]'), (el) => el.getAttribute('data-forma-status'));
+    expect(statuses).toEqual(['active', 'error']);
+    const aRows = Array.from(document.querySelectorAll<HTMLElement>('[data-forma-island="0"] li'));
+    expect(aRows.map((li) => li.textContent)).toEqual(['r0', 'r1']);
+    for (const li of aRows) li.click();
+    expect(clicks).toEqual(['r0', 'r1']);
+  });
+
+  it("a failing island's ref that writes a shared signal does not detach another island's new show branch", () => {
+    document.body.innerHTML =
+      `<div data-forma-island="0" data-forma-component="A"><section><!--f:s0--><!--/f:s0--></section></div>` +
+      `<div data-forma-island="1" data-forma-component="B"><div>x</div>${serverList(['a', 'b'])}</div>`;
+    const [open, setOpen] = createSignal(false);
+    const clicks: string[] = [];
+    captureErrors(() => {
+      activateIslands({
+        A: () => h('div', null, h('section', null, createShow(open, () => h('button', { id: 'a-btn', onClick: () => clicks.push('a') }, 'a')))),
+        B: () => h('div', null,
+          h('div', { ref: () => setOpen(true) }, 'x'),
+          h('ul', null, createList(() => ['a'], (x) => x, (x) => h('li', null, x)))),
+      });
+    });
+    const statuses = Array.from(document.querySelectorAll('[data-forma-island]'), (el) => el.getAttribute('data-forma-status'));
+    expect(statuses).toEqual(['active', 'error']);
+    document.getElementById('a-btn')!.click();
+    expect(clicks).toEqual(['a']);
+  });
+
+  it('a node the failing island builds outside every island during the walk (a portal of its own) is detached with it', () => {
+    document.body.innerHTML =
+      `<div id="outside"></div><div data-forma-island="0" data-forma-component="B"><div>x</div>${serverList(['a', 'b'])}</div>`;
+    const clicks: string[] = [];
+    captureErrors(() => {
+      activateIslands({
+        B: () => h('div', null,
+          h('div', { ref: () => document.getElementById('outside')!.appendChild(h('button', { id: 'out', onClick: () => clicks.push('out') }, 'o')) }, 'x'),
+          h('ul', null, createList(() => ['a'], (x) => x, (x) => h('li', null, x)))),
+      });
+    });
+    expect(document.querySelector('[data-forma-island="0"]')!.getAttribute('data-forma-status')).toBe('error');
+    document.getElementById('out')!.click();
+    expect(clicks).toEqual([]);
+  });
+
   it('hydrateIsland() called directly keeps no binding it adopted before the list failed', () => {
     document.body.innerHTML = `<div id="direct" data-forma-ssr><div><span>idle</span>${serverList(['a', 'b'])}</div></div>`;
     const target = document.getElementById('direct')!;

@@ -19,7 +19,9 @@ All notable changes to this project will be documented in this file.
   during adoption are removed, on the server's elements and on any adoption
   built through `h()` before the failure, and the bindings it adopted are
   disposed, also for a direct `hydrateIsland()` caller whose root lives on.
-  This holds for any adoption that fails part-way. Nodes adoption replaced or
+  This holds for any adoption that fails part-way, and touches only that
+  island: nodes another island builds during it (the failing island's code
+  writing a shared signal) keep their listeners. Nodes adoption replaced or
   added before the failing list (a tag mismatch, a fresh keyed row) stay as it
   left them. `mount()` and `hydrateIsland()` keep `data-forma-ssr` and do not
   throw, as for `FORMA_E_HYDRATE_NODE`. Equal counts adopt as before, and rows

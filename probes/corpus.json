@@ -741,8 +741,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    for (const el of attached) cleanup(el);",
-  "replace": "",
+  "find": "      if (!island || island === home) cleanup(el);",
+  "replace": "      if (false) cleanup(el);",
   "note": "an island whose adoption failed part-way stays error but still answers clicks on the elements adopted before the failure. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"an island failed by the row count keeps no handler or binding that adoption attached before the list\""
  },
  {
@@ -754,6 +754,26 @@
   "find": "    disposeWalk?.();\n",
   "replace": "",
   "note": "a binding adopted before a failing list stays live while a hydrateIsland() caller's root lives, writing into the server's DOM. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"hydrateIsland() called directly keeps no binding it adopted before the list failed\""
+ },
+ {
+  "id": "hydrate/failed-walk-detaches-other-islands",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      if (!island || island === home) cleanup(el);",
+  "replace": "      cleanup(el);",
+  "note": "a failing island whose code writes a shared signal mid-walk detaches the listeners of nodes another, active island built in response. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"a failing island's ref that writes a shared signal does not detach another island's new list row\""
+ },
+ {
+  "id": "hydrate/failed-walk-keeps-outside-nodes",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      if (!island || island === home) cleanup(el);",
+  "replace": "      if (island === home) cleanup(el);",
+  "note": "a node the failing island built outside every island during its walk keeps its click handler. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"a node the failing island builds outside every island during the walk (a portal of its own) is detached with it\""
  },
  {
   "id": "hydrate/fallback-children-html",

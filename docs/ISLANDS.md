@@ -185,7 +185,10 @@ is logged in every build and passed to `onError` handlers with the source
 `'hydration'`. An island in `error` is inert. The listeners attached during
 adoption are removed, on the server's elements and on those adoption built
 through `h()` before the failure. The bindings it adopted are disposed, also
-when you call `hydrateIsland()` yourself and your root lives on. This holds
+when you call `hydrateIsland()` yourself and your root lives on. Only this
+island's nodes are touched: if its code writes a shared signal during adoption
+(in a `ref`, say) and another island builds nodes in response, those keep
+their listeners. This holds
 for any adoption that fails part-way. Nodes adoption had already replaced or
 added before the failing list (a tag mismatch, a keyed row the server did not
 render) stay as it left them. `mount()` and `hydrateIsland()` keep
@@ -209,6 +212,8 @@ Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "rows that carry d
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "an island failed by the row count keeps no handler or binding that adoption attached before the list"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "an island failed by the row count answers no click on the nodes adoption built fresh before the list"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "hydrateIsland() called directly keeps no binding it adopted before the list failed"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "a failing island's ref that writes a shared signal does not detach another island's new list row"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "a failing island's ref that writes a shared signal does not detach another island's new show branch"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "the migration: an empty server region adopts an empty array, and rows filled after activation render"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "an island whose only server content is an empty list region is rendered in the browser, not checked"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "onError receives FORMA_E_HYDRATE_LIST_COUNT from activateIslands, mount() and hydrateIsland(), and each keeps the server rows"

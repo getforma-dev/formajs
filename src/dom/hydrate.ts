@@ -1376,6 +1376,9 @@ export const HYDRATE_NODE_ERROR = 'FORMA_E_HYDRATE_NODE';
 /** The code of a list whose rows, matched by index, differ in count from the client's array. */
 export const HYDRATE_LIST_COUNT_ERROR = 'FORMA_E_HYDRATE_LIST_COUNT';
 
+/** An island root, as activateIslands finds it. */
+const ISLAND_SELECTOR = '[data-forma-island]';
+
 /** `n` and `noun`, plural unless `n` is 1. */
 const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
 
@@ -1516,7 +1519,21 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
     });
   } catch (err) {
     disposeWalk?.();
-    for (const el of attached) cleanup(el);
+    // Detach only what this walk's island holds. The recording sees every
+    // listener controller created during the walk, and the walk can make
+    // another island build nodes (its own code writing a shared signal, from
+    // a ref, a reactive child's first run or a row's render). An element
+    // inside an island other than the one `target` belongs to (another island,
+    // or a nested island within `target`) is that island's and keeps its
+    // listeners; one inside this island, or outside every island (a portal the
+    // walk opened), is detached.
+    // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a failing island's ref that writes a shared signal does not detach another island's new list row"
+    // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a failing island's ref that writes a shared signal does not detach another island's new show branch"
+    const home = target.closest(ISLAND_SELECTOR);
+    for (const el of attached) {
+      const island = el.closest(ISLAND_SELECTOR);
+      if (!island || island === home) cleanup(el);
+    }
     throw err;
   } finally {
     recordListeners(outer);
