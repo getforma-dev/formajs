@@ -435,6 +435,7 @@ test('a list whose client array differs in count from the server rows leaves the
   });
   expect(await page.evaluate(() => [0, 1].map((i) => document.querySelector(`[data-forma-island="${i}"]`)!.innerHTML))).toEqual(served.slice(0, 2));
   await expect(page.locator('[data-forma-island="2"] li')).toHaveText(['row 2', 'row 1', 'row 0', 'row 3']);
+});
 
 // FORMA-026 (decision brief DR-9): the shared namespace vectors through each
 // engine's parser. src/__tests__/renderer-contract.test.ts runs the same file
