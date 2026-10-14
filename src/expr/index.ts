@@ -24,7 +24,8 @@ import { charge, enter, evalExpr, leave, makeCtx, runProgram, type Meter, type S
 
 export { LIMITS } from './ast';
 export { isExprError, type FormaExprError, type ExprErrorCode } from './errors';
-export { hostFn, hostObject, isHost, type Host } from './host';
+export { hostFn, hostObject, isHost, type Bound, type ExprGrant, type Host } from './host';
+export { isLocalSelector } from './selector';
 export { allowlistSnapshot, SAFE_GLOBALS } from './allowlist';
 export { GROW, weigh } from './cost';
 export { safeKey, safeRead, setStepBudget, getStepBudget, type Meter, type ScopeLike } from './interp';

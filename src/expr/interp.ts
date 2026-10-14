@@ -38,8 +38,10 @@ import {
   DENY_KEYS,
   ELEMENT_HOST_PROPS,
   ELEMENT_METHODS,
+  ELEMENT_METHOD_GRANT,
   ELEMENT_METHOD_RESULT,
   ELEMENT_READ_PROPS,
+  ELEMENT_SELECTOR_METHODS,
   ELEMENT_WRITE_PROPS,
   EVENT_HOST_PROPS,
   EVENT_METHODS,
@@ -53,12 +55,19 @@ import {
   STYLE_DENY_PROPS,
   STYLE_METHODS,
 } from './allowlist';
-import { hostObject, isHost, type Host } from './host';
+import { hostObject, isHost, type Bound, type Host } from './host';
+import { isLocalSelector } from './selector';
 import { COSTS, DATA_ARGS, FLAT, GROW, PARSE, READ, weigh } from './cost';
 
 export interface ScopeLike {
   getters: Record<string, () => unknown>;
   setters: Record<string, (v: unknown) => void>;
+  /**
+   * The step budget its evaluations count to, when the scope's mount names
+   * one (FORMA-128: a tiered mount takes its configuration only from its
+   * call); else the page's, `setStepBudget`'s.
+   */
+  budget?: number;
 }
 
 interface Frame {
@@ -111,13 +120,15 @@ let cur: EvalCtx | null = null;
  * when one is nested in another (a `data-computed` read by a binding, a
  * handler `$el.click()` dispatches), else the task's `meter`, else nothing.
  * So a chain of computeds, or of handlers, spends one budget between them.
+ * Its budget is its scope's, if the scope's mount set one, else the page's.
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "a chain of computeds spends one budget between them"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a tiered mount takes its step budget from its call, never from a script tag"
  */
 export function makeCtx(scope: ScopeLike, meter?: Meter | null): EvalCtx {
   const base = cur ?? meter;
   const steps = base ? base.steps : 0;
   const cost = base ? base.cost : 0;
-  return { scope, frame: null, steps, budget: stepBudget, cost, defer: steps + cost > 0 };
+  return { scope, frame: null, steps, budget: scope.budget ?? stepBudget, cost, defer: steps + cost > 0 };
 }
 
 /** Make `ctx` the running evaluation; returns the one it was nested in. */
@@ -405,8 +416,27 @@ function ownDataValue(recv: object, key: string, at: number): unknown {
   return desc.value;
 }
 
-function wrapElement(v: unknown, label: string): unknown {
-  return v === null || v === undefined ? undefined : hostObject('element', v, label);
+/**
+ * Hand back, as an element host, an element a host reached: through a
+ * property, a method's result, an event or `$refs`. Every hop that yields an
+ * element comes through here, so the wrapper survives it, and so does the
+ * mount's bound (L-36): under a tiered mount an element that is not a
+ * descendant of the mount root is refused with `FORMA_E_GRANT_DOM`, unless
+ * the mount grants `dom`, when the use is recorded for the development report.
+ * The mount root itself is the application's element, not the mount's.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "no hop from $el reaches past the mount root: %s"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "$el.closest('body') reaches nothing without dom"
+ */
+function reach(from: Host, v: unknown, label: string, at: number): unknown {
+  if (v === null || v === undefined) return undefined;
+  const bound = from.bound;
+  if (bound && (v === bound.root || !bound.root.contains(v as Node))) {
+    if (!bound.dom) {
+      throw exprError('FORMA_E_GRANT_DOM', `${label} is outside the mount root (no dom grant)`, at);
+    }
+    bound.use('dom');
+  }
+  return hostObject('element', v, label, bound);
 }
 
 function hostRead(host: Host, key: string, at: number): unknown {
@@ -416,11 +446,11 @@ function hostRead(host: Host, key: string, at: number): unknown {
       if (Object.hasOwn(ELEMENT_HOST_PROPS, key)) {
         const as = ELEMENT_HOST_PROPS[key]!;
         const value = Reflect.get(target, key);
-        if (as === 'element') return wrapElement(value, `${host.label}.${key}`);
-        if (as === 'elementList') return toElementList(value, `${host.label}.${key}`);
+        if (as === 'element') return reach(host, value, `${host.label}.${key}`, at);
+        if (as === 'elementList') return toElementList(host, value, `${host.label}.${key}`, at);
         return value === null || value === undefined
           ? undefined
-          : hostObject(as, value, `${host.label}.${key}`);
+          : hostObject(as, value, `${host.label}.${key}`, host.bound);
       }
       if (ELEMENT_READ_PROPS.has(key)) return Reflect.get(target, key);
       if (ELEMENT_METHODS.has(key)) {
@@ -429,7 +459,7 @@ function hostRead(host: Host, key: string, at: number): unknown {
       throw exprError('FORMA_E_PROPERTY_DENIED', `${host.label}.${key} is not on the element allowlist`, at);
     }
     case 'event': {
-      if (EVENT_HOST_PROPS.has(key)) return wrapElement(Reflect.get(target, key), `${host.label}.${key}`);
+      if (EVENT_HOST_PROPS.has(key)) return reach(host, Reflect.get(target, key), `${host.label}.${key}`, at);
       if (EVENT_READ_PROPS.has(key)) return Reflect.get(target, key);
       if (EVENT_METHODS.has(key)) {
         throw exprError('FORMA_E_PROPERTY_DENIED', `${host.label}.${key} is a method, not a value — call it`, at);
@@ -459,7 +489,7 @@ function hostRead(host: Host, key: string, at: number): unknown {
     }
     case 'refs': {
       const el = (target as unknown as Map<string, unknown>).get(key);
-      return el === undefined ? undefined : hostObject('element', el, `$refs.${key}`);
+      return reach(host, el, `$refs.${key}`, at);
     }
     case 'namespace':
     case 'fn': {
@@ -480,13 +510,13 @@ function hostRead(host: Host, key: string, at: number): unknown {
   }
 }
 
-/** Convert an HTMLCollection/NodeList into a bounded array of element hosts. */
-function toElementList(value: unknown, label: string): unknown {
+/** Convert an HTMLCollection/NodeList into a bounded array of element hosts, each through `reach`. */
+function toElementList(from: Host, value: unknown, label: string, at: number): unknown {
   const list = value as ArrayLike<unknown> | null | undefined;
   if (!list || typeof list.length !== 'number') return [];
   const n = Math.min(list.length, LIMITS.MAX_ARRAY_LENGTH);
   const out: unknown[] = [];
-  for (let i = 0; i < n; i++) out.push(hostObject('element', list[i], `${label}[${i}]`));
+  for (let i = 0; i < n; i++) out.push(reach(from, list[i], `${label}[${i}]`, at));
   return out;
 }
 
@@ -696,6 +726,32 @@ function guardAttrWrite(host: Host, method: string, args: unknown[], at: number)
   }
 }
 
+/**
+ * The grants an element method needs under a tiered mount, checked before it
+ * runs (FORMA-128): `click()` needs `navigate`, and a selector that reads
+ * past the element it is tested against needs `dom`. Without the grant the
+ * call is refused with a `FORMA_E_GRANT_*` code and never made; with it, the
+ * use is recorded for the development report.
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "$el.click() is denied without navigate and runs with it"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a selector that reads past the element needs dom: %s"
+ */
+function guardGrants(host: Host, bound: Bound, method: string, args: unknown[], at: number): void {
+  if (Object.hasOwn(ELEMENT_METHOD_GRANT, method)) {
+    const grant = ELEMENT_METHOD_GRANT[method]!;
+    if (!(grant === 'navigate' ? bound.navigate : bound.dom)) {
+      const code = grant === 'navigate' ? 'FORMA_E_GRANT_NAVIGATE' : 'FORMA_E_GRANT_DOM';
+      throw exprError(code, `${host.label}.${method}() (no ${grant} grant)`, at);
+    }
+    bound.use(grant);
+  }
+  if (ELEMENT_SELECTOR_METHODS.has(method) && !isLocalSelector(String(args[0] ?? ''))) {
+    if (!bound.dom) {
+      throw exprError('FORMA_E_GRANT_DOM', `${host.label}.${method}() reads past the element (no dom grant)`, at);
+    }
+    bound.use('dom');
+  }
+}
+
 function callHostMethod(host: Host, method: string, argNodes: Expr[], ctx: EvalCtx, at: number): unknown {
   const args = argNodes.map((a) => evalArg(a, ctx));
 
@@ -730,6 +786,7 @@ function callHostMethod(host: Host, method: string, argNodes: Expr[], ctx: EvalC
   if (host.kind === 'element' && ATTR_WRITE_METHODS.has(method)) {
     guardAttrWrite(host, method, args, at);
   }
+  if (host.kind === 'element' && host.bound) guardGrants(host, host.bound, method, args, at);
 
   const target = host.target as Record<string, unknown>;
   const fn = Reflect.get(target, method);
@@ -740,8 +797,8 @@ function callHostMethod(host: Host, method: string, argNodes: Expr[], ctx: EvalC
 
   if (host.kind === 'element' && Object.hasOwn(ELEMENT_METHOD_RESULT, method)) {
     const as = ELEMENT_METHOD_RESULT[method]!;
-    if (as === 'element') return wrapElement(result, `${host.label}.${method}()`);
-    if (as === 'elementList') return toElementList(result, `${host.label}.${method}()`);
+    if (as === 'element') return reach(host, result, `${host.label}.${method}()`, at);
+    if (as === 'elementList') return toElementList(host, result, `${host.label}.${method}()`, at);
     const rect = result as Record<string, unknown> | null;
     const plain: Record<string, number> = {};
     for (const k of RECT_KEYS) plain[k] = Number(rect?.[k] ?? 0);

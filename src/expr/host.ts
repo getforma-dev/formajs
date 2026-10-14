@@ -47,6 +47,34 @@ export interface Host {
   readonly members?: Readonly<Record<string, unknown>>;
   /** Maximum arguments forwarded to a `fn` target. */
   readonly maxArgs: number;
+  /**
+   * The tiered mount this host was made under, if any (FORMA-128). Every host
+   * derived from it carries the same bound, so the wrapper survives every hop.
+   */
+  readonly bound?: Bound;
+}
+
+/** A grant an expression can need; the runtime checks `fetch` itself. */
+export type ExprGrant = 'dom' | 'navigate';
+
+/**
+ * What an element host made under a tiered mount may reach (L-36): only the
+ * mount root's descendants, unless the mount grants `dom`, and `click()` only
+ * with `navigate`. The runtime makes one per mount; the interpreter checks it
+ * on every hop that yields an element and on every call that needs a grant.
+ */
+export interface Bound {
+  /** The mount root. Not itself inside the mount: it is the application's element. */
+  readonly root: Node;
+  /** Whether the mount grants `dom`, the page beyond its root. */
+  readonly dom: boolean;
+  /** Whether the mount grants `navigate`. */
+  readonly navigate: boolean;
+  /**
+   * Called when an operation needed a grant and the mount had it, for the
+   * development report of the grants each mount used. A no-op in production.
+   */
+  readonly use: (grant: ExprGrant) => void;
 }
 
 interface BrandedHost extends Host {
@@ -73,9 +101,17 @@ function sealedTable(members: Record<string, unknown>): Readonly<Record<string, 
   );
 }
 
-/** Wrap a DOM-side object. `target` is never exposed to expressions directly. */
-export function hostObject(kind: Exclude<HostKind, 'namespace' | 'fn'>, target: unknown, label: string): Host {
-  return brand({ kind, label, target, maxArgs: 0 });
+/**
+ * Wrap a DOM-side object. `target` is never exposed to expressions directly.
+ * `bound` is the tiered mount it was made under, if any.
+ */
+export function hostObject(
+  kind: Exclude<HostKind, 'namespace' | 'fn'>,
+  target: unknown,
+  label: string,
+  bound?: Bound,
+): Host {
+  return brand(bound ? { kind, label, target, maxArgs: 0, bound } : { kind, label, target, maxArgs: 0 });
 }
 
 /** Wrap a frozen, null-prototype table of captured intrinsics. */

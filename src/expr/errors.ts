@@ -33,7 +33,15 @@ export type ExprErrorCode =
   /** The assignment target is unknown or not writable. */
   | 'FORMA_E_ASSIGN_DENIED'
   /** An evaluation-time budget (steps, array/string size) was exceeded. */
-  | 'FORMA_E_BUDGET';
+  | 'FORMA_E_BUDGET'
+  /**
+   * Under a tiered mount (FORMA-128), an element host would have reached past
+   * the mount root, or read the page outside it through a selector, and the
+   * mount grants no `dom`.
+   */
+  | 'FORMA_E_GRANT_DOM'
+  /** Under a tiered mount, `click()` (which can follow a link or submit a form) without `navigate`. */
+  | 'FORMA_E_GRANT_NAVIGATE';
 
 const EXPR_ERROR = Symbol.for('forma.expr.error');
 

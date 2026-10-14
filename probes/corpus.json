@@ -1450,8 +1450,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "fetch(url, { method, signal: ctrl.signal })",
-  "replace": "fetch(url, { method })",
+  "find": "const init: RequestInit = { method, signal: ctrl.signal };",
+  "replace": "const init: RequestInit = { method };",
   "note": "a data-fetch to a stalled endpoint is never aborted: its loading: target stays true and its error: target never hears of it (L-46). Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch to a stalled endpoint aborts at 30 s into its error: target\""
  },
  {
@@ -1470,7 +1470,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "ctrl.signal.aborted ? `data-fetch timed out after ${FETCH_TIMEOUT_MS} ms` : err.message",
+  "find": "ctrl.signal.aborted ? `data-fetch timed out after ${timeoutMs} ms` : err.message",
   "replace": "err.message",
   "note": "a timed-out data-fetch writes the engine's own abort text to its error: target (WebKit's is \"Fetch is aborted\"), which does not say it timed out. Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch to a stalled endpoint aborts at 30 s into its error: target\""
  },
@@ -2090,8 +2090,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "        if (err.defer) later();\n        else reportExprFailure(el, stripBraces(expression), err);",
-  "replace": "        reportExprFailure(el, stripBraces(expression), err);",
+  "find": "        if (err.defer) later();\n        else reportExprFailure(el, stripBraces(expression), err, scope.mount);",
+  "replace": "        reportExprFailure(el, stripBraces(expression), err, scope.mount);",
   "note": "a binding refused only because its task's budget was spent is reported and left unrendered instead of retried (FORMA-028). Verified by: src/__tests__/runtime-task-budget.test.ts > \"ten bindings at the cap spend one budget per task and all of them render\""
  },
  {
@@ -2173,5 +2173,445 @@
   "find": "const REACH = LIMITS.ALLOC_BUDGET;",
   "replace": "const REACH = LIMITS.ALLOC_BUDGET / 4;",
   "note": "a cost is counted only part of the way to the budget, so an argument heavier than any task can hold reads as one that might fit: `s.includes(list)` with a 300,000-unit list is answered (FORMA-028 review, S2). Verified by: src/expr/__tests__/string-growth.test.ts > \"a string method reads a string argument for a thirty-second of a unit a character\""
+ },
+ {
+  "id": "tiered/reach-unchecked",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (bound && (v === bound.root || !bound.root.contains(v as Node))) {",
+  "replace": "  if (false) {",
+  "note": "every hop from a tiered mount's $el, $event or $refs reaches past the mount root without the dom grant (L-36). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"no hop from $el reaches past the mount root: %s\""
+ },
+ {
+  "id": "tiered/reach-root-inside",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (bound && (v === bound.root || !bound.root.contains(v as Node))) {",
+  "replace": "  if (bound && !bound.root.contains(v as Node)) {",
+  "note": "the mount root, the application's own element, counts as inside the mount: its attributes and its siblings become reachable. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"the mount root itself is outside the mount\""
+ },
+ {
+  "id": "tiered/reach-drops-bound",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return hostObject('element', v, label, bound);",
+  "replace": "  return hostObject('element', v, label);",
+  "note": "an element one hop from $el is wrapped without the mount's bound, so the next hop reaches the whole page. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"no hop from $el reaches past the mount root: %s\""
+ },
+ {
+  "id": "tiered/grants-unchecked",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (host.kind === 'element' && host.bound) guardGrants(host, host.bound, method, args, at);",
+  "replace": "",
+  "note": "a tiered mount's $el.click() runs without navigate and its selectors read the page without dom (DR-15, SR31). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$el.click() is denied without navigate and runs with it\""
+ },
+ {
+  "id": "tiered/navigate-unchecked",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (!(grant === 'navigate' ? bound.navigate : bound.dom)) {",
+  "replace": "    if (false) {",
+  "note": "$el.click() follows a link or submits a form in the user's session from a mount granted no navigate (SR31). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$el.click() is denied without navigate and runs with it\""
+ },
+ {
+  "id": "tiered/selector-unchecked",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (ELEMENT_SELECTOR_METHODS.has(method) && !isLocalSelector(String(args[0] ?? ''))) {",
+  "replace": "  if (false) {",
+  "note": "a selector asks about the page outside the mount root (matches('[data-email^=\"a\"] *')) from a mount granted no dom: an attribute value read one character at a time. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a selector that reads past the element needs dom: %s\""
+ },
+ {
+  "id": "tiered/scope-budget-ignored",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "budget: scope.budget ?? stepBudget,",
+  "replace": "budget: stepBudget,",
+  "note": "a tiered mount takes its step budget from any script tag's data-forma-expr-budget, up to 100 times the default (TH11), not from its call. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a tiered mount takes its step budget from its call, never from a script tag\""
+ },
+ {
+  "id": "selector/combinator-accepted",
+  "file": "src/expr/selector.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const NOT_LOCAL = /::|:host\\b|[^\\w\\-#.*:,\\u0001)\\u0080-\\uffff]/i;",
+  "replace": "const NOT_LOCAL = /::|:host\\b|[^\\s>+~\\w\\-#.*:,\\u0001)\\u0080-\\uffff]/i;",
+  "note": "a selector with a descendant, child or sibling combinator counts as local, so it asks about an ancestor or a sibling outside the mount. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
+ },
+ {
+  "id": "selector/function-args-unchecked",
+  "file": "src/expr/selector.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const NTH = /:nth-(?:last-)?(?:child|of-type)\\(\\s*(?:odd|even|[+-]?\\d*n(?:\\s*[+-]\\s*\\d+)?|[+-]?\\d+)\\s*\\)/gi;",
+  "replace": "const NTH = /:nth-(?:last-)?(?:child|of-type)\\([^)]*\\)/gi;",
+  "note": ":nth-child(2 of .x) and its family pass whatever they hold, so `of <selector>` filters siblings by a selector. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
+ },
+ {
+  "id": "selector/any-function",
+  "file": "src/expr/selector.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const LIST_OPEN = /:(?:not|is|where)\\(/gi;",
+  "replace": "const LIST_OPEN = /:[\\w-]+\\(/gi;",
+  "note": "any functional pseudo-class counts as local: :has(+ .x) asks about a sibling and :lang() about an ancestor. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
+ },
+ {
+  "id": "tiered/el-unbound",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    $el: hostObject('element', el, '$el', scope.mount?.bound),",
+  "replace": "    $el: hostObject('element', el, '$el'),",
+  "note": "a tiered mount's $el is the tierless wrapper: $el.closest('body') reaches the page (SR16, L-36). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$el.closest('body') reaches nothing without dom\""
+ },
+ {
+  "id": "tiered/event-unbound",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    const wrapped = hostObject('event', e, '$event', scope.mount?.bound);",
+  "replace": "    const wrapped = hostObject('event', e, '$event');",
+  "note": "$event in a tiered mount's handler is the tierless wrapper, so $event.target reaches the page. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an element reached through $event or $refs carries the mount's bound\""
+ },
+ {
+  "id": "tiered/refs-unbound",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  const refsHost = hostObject('refs', refsMap, '$refs', mount?.bound);",
+  "replace": "  const refsHost = hostObject('refs', refsMap, '$refs');",
+  "note": "$refs in a tiered mount is the tierless wrapper, so $refs.x.closest('section') reaches the page. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an element reached through $event or $refs carries the mount's bound\""
+ },
+ {
+  "id": "tiered/child-scope-drops-mount",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (parent.mount) {\n    child.mount = parent.mount;\n    child.budget = parent.budget;\n  }",
+  "replace": "",
+  "note": "a child scope (each element's, each handler's, each list row's) loses its mount, so its data-fetch is sent as a tierless one and its failures are reported without the mount. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"with explicit empty grants a generated tree binds neither data-fetch nor $el.click()\""
+ },
+ {
+  "id": "tiered/fetch-denial-sent",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (verdict && !verdict.ok) {",
+  "replace": "      if (false) {",
+  "note": "a data-fetch the mount's grants do not cover is sent anyway (SR31). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"with explicit empty grants a generated tree binds neither data-fetch nor $el.click()\""
+ },
+ {
+  "id": "tiered/no-fetch-grant-allows",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (!rule) return { ok: false, reason: 'the mount grants no fetch' };",
+  "replace": "  if (!rule) return { ok: true, credentials: 'same-origin', timeoutMs: FETCH_TIMEOUT_MS, path: raw, cookies: true };",
+  "note": "a mount with no fetch grant sends every data-fetch with the user's cookies (SR31). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"with explicit empty grants a generated tree binds neither data-fetch nor $el.click()\""
+ },
+ {
+  "id": "tiered/fetch-method-unchecked",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (!rule.methods.has(method)) return",
+  "replace": "  if (false) return",
+  "note": "a fetch grant for GET also sends POST, PUT, PATCH and DELETE. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a fetch grant admits only its methods and path prefixes: %j %s\""
+ },
+ {
+  "id": "tiered/fetch-prefix-sibling",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return path === prefix || path.startsWith(prefix + '/');",
+  "replace": "  return path.startsWith(prefix);",
+  "note": "a fetch grant for /api/widgets also covers /api/widgets-admin. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a fetch grant admits only its methods and path prefixes: %j %s\""
+ },
+ {
+  "id": "tiered/fetch-escaped-separator",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (/%2f|%5c|\\\\/i.test(url.pathname)) {",
+  "replace": "  if (false) {",
+  "note": "a path that hides a slash in an escape (/api/widgets/a%2Fb) passes a prefix a server may decode it out of. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a fetch grant admits only its methods and path prefixes: %j %s\""
+ },
+ {
+  "id": "tiered/fetch-prefix-any-origin",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "(p.origin === null ? sameOrigin : url!.origin === p.origin)",
+  "replace": "(p.origin === null ? true : url!.origin === p.origin)",
+  "note": "a same-origin path prefix also covers that path on any other origin: https://evil.example/api/widgets/1. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a fetch grant admits only its methods and path prefixes: %j %s\""
+ },
+ {
+  "id": "tiered/fetch-cookies-always",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "credentials: rule.cookies ? 'same-origin' : 'omit',",
+  "replace": "credentials: 'same-origin',",
+  "note": "a fetch grant without cookies sends the user's cookies anyway (DR-15). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a fetch grant's cookies decide the request's credentials\""
+ },
+ {
+  "id": "tiered/non-2xx-as-data",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "            if (verdict && !r.ok) throw new Error(`data-fetch answered HTTP ${r.status}`);",
+  "replace": "",
+  "note": "a tiered mount's data-fetch answered 404 parses the error body into the data target (SR31). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a 404 with a JSON body lands in the error: target, not the data target\""
+ },
+ {
+  "id": "tiered/fetch-timeout-ignored",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      const timeoutMs = verdict ? verdict.timeoutMs : FETCH_TIMEOUT_MS;",
+  "replace": "      const timeoutMs = FETCH_TIMEOUT_MS;",
+  "note": "a fetch grant's shorter timeout is ignored: the request waits 30 s (L-46). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a fetch grant's timeout shortens the abort\""
+ },
+ {
+  "id": "tiered/refetch-shared-registry",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  const registry = mount ? mount.refetch : _refetchRegistry;\n  const refetchHost",
+  "replace": "  const registry = _refetchRegistry;\n  const refetchHost",
+  "note": "a tiered mount's $refetch reaches the page's data-fetch ids. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$refetch reaches only the fetches of its own mount\""
+ },
+ {
+  "id": "tiered/refetch-registers-on-page",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "          const registry = mount ? mount.refetch : _refetchRegistry;",
+  "replace": "          const registry = _refetchRegistry;",
+  "note": "a tiered mount's data-fetch-id registers on the page, where the page's $refetch reaches it. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$refetch reaches only the fetches of its own mount\""
+ },
+ {
+  "id": "tiered/tierless-binds-under-root",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (ownerOf(root) !== mount) return;\n  // Idempotency guard",
+  "replace": "  // Idempotency guard",
+  "note": "a tierless path (the observer, mount(), the DOMContentLoaded scan) binds markup under a tiered root with every power. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"no tierless path binds markup under a tiered root\""
+ },
+ {
+  "id": "tiered/outer-scope-binds-mount",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (ownedBelow(el, root)) continue;\n    bindElement(el, scope, disposers);",
+  "replace": "    bindElement(el, scope, disposers);",
+  "note": "a tierless scope around a tiered root binds the mount's elements against its own scope, with every power. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"no tierless path binds markup under a tiered root\""
+ },
+ {
+  "id": "tiered/outer-refs-into-mount",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (ownedBelow(el, root)) continue;\n    const name = el.getAttribute('data-ref');",
+  "replace": "    const name = el.getAttribute('data-ref');",
+  "note": "a scope around a tiered root gets $refs to the mount's elements. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"no tierless path binds markup under a tiered root\""
+ },
+ {
+  "id": "tiered/tierless-disposes-mount",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (ownerOf(root) !== mount) return;\n  const disposers",
+  "replace": "  const disposers",
+  "note": "the tierless unmount() and destroyRuntime() dispose a tiered mount's bindings, which its handle owns. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"no tierless path binds markup under a tiered root\""
+ },
+ {
+  "id": "tiered/denial-silenced",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (kind !== 'grant-denied' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
+  "replace": "  if (!(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
+  "note": "a denied grant is silent when the mount's diagnostics are off: SR37's coded diagnostic for every denial is lost. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a mount takes its diagnostics switch from its call, not the page\""
+ },
+ {
+  "id": "tiered/denials-shared-across-mounts",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  const key = mount ? `${kind}|${mount.id}|${reason}|${expr}` : `${kind}|${reason}|${expr}`;",
+  "replace": "  const key = `${kind}|${reason}|${expr}`;",
+  "note": "two mounts denied the same thing raise one diagnostic between them, so an application counting denials per mount undercounts. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a seeded denial raises one coded diagnostic, whatever the page's diagnostics switch says\""
+ },
+ {
+  "id": "tiered/unreviewed-any-origin",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (tier === 'unreviewed' && (globalThis as { origin?: unknown }).origin !== 'null') {",
+  "replace": "  if (false) {",
+  "note": "content nobody reviewed mounts on the application's own origin, not only in an opaque-origin frame (DR-14). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount refuses any origin but an opaque one, and any grant\""
+ },
+ {
+  "id": "tiered/unreviewed-takes-grants",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    if (grants !== undefined) {\n      throw mountError('FORMA_E_MOUNT_ARGS', 'an unreviewed mount takes no grants');\n    }\n",
+  "replace": "",
+  "note": "an unreviewed mount accepts grants and silently drops them, so a host that passed some believes they apply. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount refuses any origin but an opaque one, and any grant\""
+ },
+ {
+  "id": "tiered/explicit-dom-ignored",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return { fetch: fetchRule, dom: grants.dom === true, navigate: grants.navigate === true };",
+  "replace": "  return { fetch: fetchRule, dom: true, navigate: grants.navigate === true };",
+  "note": "a mount whose grants leave out dom reaches the page anyway. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$el.closest('body') reaches nothing without dom\""
+ },
+ {
+  "id": "tiered/default-none",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      dom: true,\n      navigate: true,\n    };",
+  "replace": "      dom: false,\n      navigate: false,\n    };",
+  "note": "A2's bridge default of every grant becomes none, a 3.0.0 change shipped in a minor (DR-15, FORMA-108). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"$el.closest('body') reaches nothing without dom\""
+ },
+ {
+  "id": "tiered/prior-bindings-kept",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  for (const scope of Array.from(root.querySelectorAll('[data-forma-state]'))) unmountScope(scope);\n  tieredRoots.set(root, ctx);",
+  "replace": "  tieredRoots.set(root, ctx);",
+  "note": "bindings a tierless path made under the root before it was handed over keep running, with every power, on nodes the mount has removed. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"bindings a tierless path made under the root go first, with what they rendered\""
+ },
+ {
+  "id": "tiered/report-fetch-unrecorded",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "            mount!.used.methods.add(method);",
+  "replace": "",
+  "note": "the development report leaves out a mount's data-fetch methods, so a grant written from it denies the widget's own requests (DR-15). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"the development report lists exactly the grants a fixture widget used\""
+ },
+ {
+  "id": "tiered/report-uses-unrecorded",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      use: used ? (grant: ExprGrant) => { used[grant] = true; } : noUse,",
+  "replace": "      use: noUse,",
+  "note": "the development report leaves out dom and navigate. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"the development report lists exactly the grants a fixture widget used\""
+ },
+ {
+  "id": "tiered/directive-map-read",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  const known = scope.mount ? null : getDirectives(el);",
+  "replace": "  const known = getDirectives(el);",
+  "note": "a tiered mount reads the page's directive map, configuration not from its call. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a tiered mount ignores the page directive map\""
+ },
+ {
+  "id": "tiered/directive-selector-read",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  const selector = mount ? null : buildDirectiveSelector();",
+  "replace": "  const selector = buildDirectiveSelector();",
+  "note": "a tiered mount binds only the elements the page's directive map names. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"a tiered mount ignores the page directive map\""
+ },
+ {
+  "id": "runtime/reconcile-no-deprecation",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    warnDeprecated('FORMA_W_DEPRECATED_RECONCILE');",
+  "replace": "",
+  "note": "the tierless reconcile() says nothing in development about its removal in 3.0.0 (DR-14's bridge). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"reconcile behaves as at 2.0.x and warns once in development\""
+ },
+ {
+  "id": "selector/pseudo-element",
+  "file": "src/expr/selector.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const NOT_LOCAL = /::|:host\\b|",
+  "replace": "const NOT_LOCAL = /:host\\b|",
+  "note": "a pseudo-element (p::before) counts as local. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
+ },
+ {
+  "id": "selector/host",
+  "file": "src/expr/selector.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const NOT_LOCAL = /::|:host\\b|",
+  "replace": "const NOT_LOCAL = /::|",
+  "note": ":host, which names the shadow host outside the mount, counts as local. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
+ },
+ {
+  "id": "selector/unbalanced",
+  "file": "src/expr/selector.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    else if (c === ')' && --depth < 0) return false;",
+  "replace": "    else if (c === ')') --depth;",
+  "note": "a selector that closes what it did not open (.x)) counts as local, a malformed selector not failing closed. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
  }
 ]

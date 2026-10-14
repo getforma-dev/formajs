@@ -30,12 +30,13 @@ Verified by: `src/__tests__/index-surface.test.ts` > "%s exports exactly the doc
 
 ### Unsanitized HTML sinks
 
-`h()` builds DOM with `document.createElement` and writes text with `textContent`; the library never parses a markup string of its own. Four APIs deliberately opt out. **None of them sanitizes**, and all four should be treated as first-party-content-only:
+`h()` builds DOM with `document.createElement` and writes text with `textContent`; the library never parses a markup string of its own. Five APIs deliberately opt out. **None of them sanitizes**; the first four should be treated as first-party-content-only, and the fifth bounds what the markup's expressions may do, not what the markup is:
 
 - `dangerouslySetInnerHTML={{ __html }}` — prop on `h()` / JSX; assigns `innerHTML`.
 - `setHTMLUnsafe(el, html)` — exported from `@getforma/core`; assigns `innerHTML`.
 - `reconcile(container, html)` — exported from `@getforma/core/runtime`; parses an HTML string into a `<template>` and diffs it into the live page.
 - The `srcdoc` attribute — the browser parses the *attribute value* as a document, so attribute escaping does not neutralize it. It is emitted (a sandboxed `<iframe srcdoc>` is legitimate) with a dev-mode warning.
+- `mountMarkup(root, markup, { tier, grants })` — exported from `@getforma/core/runtime`; parses markup under `root` as `reconcile` does, then binds it with the grants it names (see *Tiered mounts* below). Its markup is still parsed as HTML: a `<form action>` a user submits, or a `<style>` that restyles the page, is the application's admission to refuse, and unreviewed markup belongs in the opaque-origin preview frame.
 
 Verified by: `src/dom/__tests__/element-url-safety.test.ts` > "emits srcdoc but warns that escaping does not neutralize it"
 
@@ -118,6 +119,28 @@ Before this, `$refs` returned the **raw** element, and `data-text="{$refs.r.owne
 Verified by: `src/expr/__tests__/adversarial.test.ts` > "$refs.r.ownerDocument.location.href is denied"
 Verified by: `src/dom/__tests__/el-magic-safety.test.ts` > "$refs hands back a wrapped element, not the live node"
 
+### Tiered mounts: roots handed in, grants, a bound on `$el` (2.1.0)
+
+T1 above is why the script-tag runtime is a risk for markup a generator wrote: it binds whatever reaches the document, and an expression can reach any element `closest()` and `querySelector()` reach and send `data-fetch` with the user's cookies (v2 TH11). `mountMarkup(root, markup, { tier, grants, config })` is the path for such markup (decision brief DR-14, DR-15, L-36, L-47; the full reference is `docs/HTML-RUNTIME.md`, *Mounting markup you did not write*):
+
+- **It binds only under the root it is handed**, never by watching `body`, and none of the tierless paths (the auto-mount, the `body` observer, `mount()`, `unmount()`, `destroyRuntime()`, `reconcile()`) binds or disposes anything under that root.
+- **Its configuration comes only from its call.** A script tag's `data-forma-expr-budget`, which may raise the step budget a hundredfold, does not reach it.
+- **The wrapper is bounded by the root.** Every hop from `$el`, `$event` or `$refs` that yields an element is checked against the root, and one past it is refused with `FORMA_E_GRANT_DOM` unless the mount grants `dom`; so is a selector that asks about an ancestor or a sibling (`$el.matches('[data-email^="a"] *')` would read an attribute of the page one character at a time).
+- **`data-fetch` sends only what the `fetch` grant names** (methods, path prefixes checked after the URL parser normalises the path, cookies or not, a timeout up to 30 s), and **`click()` needs `navigate`**. A status outside 200-299 is an error, never data.
+- **Every denial is a coded `formajs:diagnostic`**, whatever any diagnostics switch says, counted per mount.
+- **An `unreviewed` mount** refuses every origin but an opaque one, and takes no grants.
+
+Leaving out `grants` gives every grant in 2.1.0 (the bridge: a development build reports what each mount used, so grants are written from observed use); 3.0.0 gives none. The application chooses the tier and passes grants only for content whose hash matches what was reviewed (L-47); Forma enforces what the mount grants and cannot check which tier content deserves.
+
+Verified by: `src/__tests__/runtime-tiered-mount.test.ts` > "binds only under the root it is handed: markup injected outside it stays unbound"
+Verified by: `src/__tests__/runtime-tiered-mount.test.ts` > "no tierless path binds markup under a tiered root"
+Verified by: `src/__tests__/runtime-tiered-mount.test.ts` > "no hop from $el reaches past the mount root: %s"
+Verified by: `src/__tests__/runtime-tiered-mount.test.ts` > "a selector that reads past the element needs dom: %s"
+Verified by: `src/__tests__/runtime-tiered-mount.test.ts` > "with explicit empty grants a generated tree binds neither data-fetch nor $el.click()"
+Verified by: `src/__tests__/runtime-tiered-mount.test.ts` > "a 404 with a JSON body lands in the error: target, not the data target"
+Verified by: `src/__tests__/runtime-tiered-mount.test.ts` > "a seeded denial raises one coded diagnostic, whatever the page's diagnostics switch says"
+Verified by: `src/__tests__/runtime-tiered-mount.test.ts` > "an unreviewed mount refuses any origin but an opaque one, and any grant"
+
 ### Termination and budgets
 
 The language has no loops, no recursion, no generators and no way to name or store a function, so **every expression terminates by construction** — an arrow is legal only in the callback slot of nine allowlisted array methods, and cannot be assigned, stored, returned or re-invoked. Budgets therefore bound *cost*, not hanging: 4,096 source characters, 512 AST nodes, depth 32, arrow nesting 2, four call arguments, and a 100,000-step evaluation budget configurable per page with `data-forma-expr-budget` on the script tag. The step budget counts interpreter nodes, not the work inside a built-in, so **every built-in call is also charged before it runs** against an allocation budget (DR-16): 250,000 units, where a unit is about the cost of one `Array.from` slot. A call pays a unit for each array slot or string character it produces or converts; string calls that amplify nothing (case mapping, searching, trimming, slicing) pay their measured cost per character. Case mapping is tiered by the costliest character of the text: Latin-1, and the general punctuation, currency signs and letterlike symbols that map to themselves (U+2000 to U+20CF, U+2100 to U+2125: curly quotes, dashes, `…`, `€`, `™`), lowercase at 1/32 of a unit a character; text whose first character above those is in a script whose ordinary text measured 4 to 19 ns a character (Latin Extended, Greek, Cyrillic, Armenian, Hebrew, Arabic, the Indic scripts, Thai, Vietnamese, CJK, kana, Hangul, emoji) at 1/16; anything else (Georgian, Cherokee, Greek Extended, fullwidth Latin) at 1/2. Turkish `İ` (U+0130) is a Latin Extended-A letter, so text with it is priced 1/16 too, though it lowercases to two characters and measured 27 to 30 ns. Lowercasing 260 characters of English therefore costs about 8 units, and of Greek about 16. A case-mapping call on more than 1,048,576 characters, the result cap it would pass anyway, is refused before it runs. Each call is charged the weight of its arguments as text (most built-ins convert an array argument with `join`; the few that read arguments as data, such as `Object.keys` and `Array.from`, are charged their element count instead, and a string method reads a string argument for a thirty-second of a unit a character), then its row in `src/expr/cost.ts` (`map` the receiver's length, `repeat` the receiver's length times the count, `Array.from` the length it is asked for, a default `sort` the comparisons and the length of each string element it compares, …). Converting an array or object with an operator (`'' + list`, `` `${list}` ``, `list < 1`, `x += list`) is charged the same way; `===`, and `==` against `null` or between two objects, convert nothing and are not charged.
@@ -165,7 +188,8 @@ Verified by: `src/__tests__/failure-semantics.test.ts` > "a genuine runtime bug 
 
 - **`toString` coercion.** Rendering a value as text, interpolating it into a template literal, or `Array#join`-ing it calls that value's `toString`. JSON data cannot supply one; an app that puts class instances into state can. The method is then the app's own code, not the attacker's, under T2.
 - **An expression is still code.** Under T1 the grammar bounds what an injected expression can *do* — no globals, no network, no DOM outside the allowlist, no non-termination — but it can still read and write the declared state of the scope it was injected into, and call the DOM methods on the allowlist. Never build a `data-*` attribute from user input.
-- **`data-forma-expr-budget`** is read from the script tag. Anyone who can add that attribute can already run script on the page, so it grants no new capability.
+- **`data-forma-expr-budget`** is read from the script tag. Anyone who can add that attribute can already run script on the page, so it grants no new capability. It does not reach a tiered mount.
+- **What a tiered mount does not bound.** `$dispatch` events bubble out of the root to the host's listeners, which is how a widget talks to its host: a listener treats their `detail` as the widget's data. `focus()` and `scrollIntoView()` act on elements inside the root but move the page's focus and scroll. `data-persist` reads and writes the origin's `localStorage` under `forma:<key>`, shared with every other mount and page that persists the same key. A local selector can learn a bounded number of bits about the page around its element through state the element inherits (`:disabled` under a disabled `fieldset`, `:read-write` under `contenteditable`) or its position among its siblings, never a value. A granted `data-fetch` follows redirects the server sends. In 2.x the tierless paths still bind markup injected outside a tiered root wherever a page loads `@getforma/core/runtime`; 3.0.0 removes them (FORMA-108).
 
 ### `fetch` in the HTTP module
 
