@@ -288,8 +288,11 @@ const PROP_TO_ATTR: Record<string, string> = {
 
 /**
  * Attach event handlers and reactive attribute bindings to an existing
- * SSR element. Static (non-function) props are skipped because they are
- * already baked into the server HTML.
+ * SSR element. Static (non-function) attribute props are skipped because they
+ * are already baked into the server HTML; two kinds of prop are adopted
+ * whether static or not: form-control properties, which are live DOM state,
+ * and `dangerouslySetInnerHTML`, which is the element's content (a walker
+ * ships it empty).
  *
  * Adoption applies the same three rules as h() and the SSR renderers, so this
  * path cannot drift from the other two:
@@ -327,8 +330,11 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
     // is not written again (FORMA-176).
     // Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "an adopted reactive dangerouslySetInnerHTML shows its content, follows its signal through null and back, and matches client rendering ($name)"
     // Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "a static dangerouslySetInnerHTML is adopted as h() renders it, from either server output ($name)"
+    // A static `null`, `undefined` or `false` is no prop, as h() and ./ssr
+    // treat it: the children are the content (formajs#32's review, B1).
+    // Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "a falsy static dangerouslySetInnerHTML is no prop: the server's children are adopted and bound (%s)"
     if (key === 'dangerouslySetInnerHTML') {
-      bindInnerHTML(el, value, true);
+      if (typeof value === 'function' || (value != null && value !== false)) bindInnerHTML(el, value, true);
       continue;
     }
 
@@ -1125,14 +1131,17 @@ export function adoptNode(
     return;
   }
 
+  // A `null`, `undefined` or `false` dangerouslySetInnerHTML is no prop, as
+  // in h() and ./ssr: the children are the content (formajs#32's review, B1).
+  // Otherwise the content is the prop's (applyDynamicProps below), and the
+  // server's nodes are not adopted as children.
+  const inner = desc.props?.dangerouslySetInnerHTML;
+
   if ((ssrEl.localName === 'textarea' || ssrEl.localName === 'title') && isReactiveTextOnly(desc.children)) {
     bindElementText(ssrEl, desc.children);
-  } else if (desc.props?.dangerouslySetInnerHTML === undefined) {
+  } else if (inner == null || inner === false) {
     adoptChildren(desc.children, ssrEl, ssrEl.firstChild, null);
   }
-  // Otherwise the content is the prop's (applyDynamicProps below): the
-  // server's nodes are its markup, not children to adopt, as the SSR
-  // renderers render no children beside it (FORMA-176).
 
   // Options/children must be adopted before binding a select's live value.
   // Refs also observe the fully bound child tree, just as they do in h().

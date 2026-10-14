@@ -136,6 +136,26 @@ describe('dangerouslySetInnerHTML in adoption', () => {
     expect(linesWith('Hydration mismatch')).toEqual([]);
   });
 
+  it.each([undefined, null, false])("a falsy static dangerouslySetInnerHTML is no prop: the server's children are adopted and bound (%s)", (value) => {
+    // formajs#32's review (B1): h() and ./ssr treat a null, undefined or false
+    // prop as absent (the `cond && { __html }` pattern among them), so the
+    // children are the content; adoption threw, or wiped them, instead.
+    const props = { id: 'doc', dangerouslySetInnerHTML: value };
+    const server = renderToString(sh('article', props, sh('button', { id: 'b' }, 'go')));
+    expect(server).toBe('<article id="doc"><button id="b">go</button></article>');
+    let clicks = 0;
+    const client = h('article', props, h('button', null, 'go'));
+    const adopted = adopt(server, () => h('article', props, h('button', { id: 'b', onClick: () => { clicks++; } }, 'go')));
+    const button = document.getElementById('b')!;
+    expect(button.parentElement).toBe(adopted);
+    button.click();
+    button.click();
+    expect(clicks).toBe(2);
+    expect(adopted.innerHTML).toBe('<button id="b">go</button>');
+    expect(client.innerHTML).toBe('<button>go</button>');
+    expect(adopted.hasAttribute('dangerouslysetinnerhtml')).toBe(false);
+  });
+
   it('adoption writes a string through the raw sink with its development warning, and trustedHtml() with none', () => {
     const [inner, setInner] = createSignal<Inner>({ __html: trustedHtml('<b>typed</b>') });
     const adopted = adopt('<article id="doc"></article>', () => h('article', { id: 'doc', dangerouslySetInnerHTML: () => inner() }));

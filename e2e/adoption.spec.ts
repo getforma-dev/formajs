@@ -589,3 +589,25 @@ test('a reactive dangerouslySetInnerHTML is adopted as content, follows its sign
     ['<u>C</u>', '<u>C</u>', null],
   ]);
 });
+
+test('a falsy static dangerouslySetInnerHTML is no prop: the server\'s children are adopted and their handlers work', async ({ page }) => {
+  // formajs#32's review (B1): undefined, null and false (`cond && { __html }`)
+  // are no prop to h() and ./ssr, which renders the children; adoption threw
+  // on false and wiped the children for the others.
+  await serve(page, [0, 1, 2].map((i) => `<div id="app${i}" data-forma-ssr><article><button id="b${i}">go</button></article></div>`).join(''));
+  const errors: string[] = [];
+  page.on('pageerror', (err) => errors.push(String(err)));
+  await page.evaluate(async () => {
+    const { h, mount } = await import('/adoption-core.mjs' as string);
+    const clicks = [0, 0, 0];
+    (window as any).clicks = clicks;
+    [undefined, null, false].forEach((value, i) => {
+      mount(() => h('article', { dangerouslySetInnerHTML: value }, h('button', { id: `b${i}`, onClick: () => { clicks[i]++; } }, 'go')), `#app${i}`);
+    });
+  });
+  for (const i of [0, 1, 2]) await page.locator(`#b${i}`).click();
+  expect(await page.evaluate(() => (window as any).clicks)).toEqual([1, 1, 1]);
+  await expect(page.locator('article button')).toHaveCount(3);
+  await expect(page.locator('[dangerouslysetinnerhtml]')).toHaveCount(0);
+  expect(errors).toEqual([]);
+});

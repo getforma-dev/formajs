@@ -2470,7 +2470,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "    if (key === 'dangerouslySetInnerHTML') {\n      bindInnerHTML(el, value, true);\n      continue;\n    }\n",
+  "find": "    if (key === 'dangerouslySetInnerHTML') {\n      if (typeof value === 'function' || (value != null && value !== false)) bindInnerHTML(el, value, true);\n      continue;\n    }\n",
   "replace": "",
   "note": "adoption writes a reactive dangerouslySetInnerHTML as an attribute (\"[object Object]\") and never the content (FORMA-176). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"an adopted reactive dangerouslySetInnerHTML shows its content, follows its signal through null and back, and matches client rendering ($name)\""
  },
@@ -2500,8 +2500,28 @@
   "tags": [
    "correctness"
   ],
-  "find": "  } else if (desc.props?.dangerouslySetInnerHTML === undefined) {",
+  "find": "  } else if (inner == null || inner === false) {",
   "replace": "  } else {",
   "note": "adoption walks a dangerouslySetInnerHTML element's markup as the descriptor's children, replacing server nodes (FORMA-176). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"the server's markup is the prop's content, not children to adopt: no mismatch and no write\""
+ },
+ {
+  "id": "adopt/inner-html-falsy-bound",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      if (typeof value === 'function' || (value != null && value !== false)) bindInnerHTML(el, value, true);",
+  "replace": "      bindInnerHTML(el, value, true);",
+  "note": "adoption binds a static null, undefined or false dangerouslySetInnerHTML: false throws and null wipes the server's children, where h() and ./ssr treat it as no prop (formajs#32 review B1). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"a falsy static dangerouslySetInnerHTML is no prop: the server's children are adopted and bound (%s)\""
+ },
+ {
+  "id": "adopt/inner-html-falsy-skips-children",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  } else if (inner == null || inner === false) {",
+  "replace": "  } else if (inner === undefined) {",
+  "note": "adoption skips the children of an element whose dangerouslySetInnerHTML is null or false, so their bindings never attach (formajs#32 review B1). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"a falsy static dangerouslySetInnerHTML is no prop: the server's children are adopted and bound (%s)\""
  }
 ]
