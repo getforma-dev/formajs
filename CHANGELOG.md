@@ -128,10 +128,11 @@ All notable changes to this project will be documented in this file.
 
   More is answered than in 2.0.3, too: the non-Latin search, and a string
   method given a long string argument. Rollback: pin 2.0.3.
-- **Size** (L-51): the CDN runtime grows by 1,450 B gzipped (33,861 to
-  35,311 B) and the hardened runtime by 1,434 B (32,873 to 34,307 B); their
-  gates rise from 34,000 to 35,500 B and from 33,000 to 34,500 B. This change
-  leaves the core entry and the browser ESM bundle as they were.
+- **Size** (L-51): measured on `main` with FORMA-132, the CDN runtime grows
+  by 1,458 B gzipped (34,061 to 35,519 B) and the hardened runtime by 1,448 B
+  (33,072 to 34,520 B); their gates rise from 34,500 to 36,000 B and from
+  33,500 to 35,000 B. This change leaves the core entry and the browser ESM
+  bundle as they were.
 
 ### Added
 
@@ -146,6 +147,32 @@ All notable changes to this project will be documented in this file.
   with no document it renders nothing. Additive: no existing export changes.
   The core entry grows 103 B gzipped (27,703 to 27,806 B of its 30,000 B gate)
   and the browser ESM bundle 99 B; the CDN runtimes do not change.
+
+### Changed
+
+- **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
+  reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
+  deploy every client of a server reconnected in the same instant. The delay is
+  now drawn uniformly between 0 and that cap, still for at most
+  `maxReconnects` (5) attempts, and a successful open still restarts the count.
+  A new option, `random`, replaces `Math.random` as the source of the draw (a
+  test passes a seeded one); a value that is not a function, or a draw outside
+  [0, 1), falls back to `Math.random`.
+- **`data-fetch` aborts a request after 30 seconds** (FORMA-132, L-46),
+  `createFetch`'s default timeout. Before, a request the server never answered
+  held its `loading:` target true forever. Now the abort lands in the `error:`
+  target as `data-fetch timed out after 30000 ms` in every engine (WebKit
+  rejects an aborted fetch with its own message, so the runtime writes this
+  one; `createFetch` reports no error on its timeout), and `loading:` turns
+  false. Each request of a `poll:` fetch has its own 30 seconds. Tearing a
+  scope down (`unmount()`, or removing its element) clears each in-flight
+  request's timer and aborts it. A shorter timeout
+  granted per mount comes with the tiered mount (FORMA-128).
+  **Size (L-51):** the CDN runtime grows by 200 B gzipped (33,861 to 34,061 B)
+  and the hardened runtime by 199 B (32,873 to 33,072 B). Both passed their
+  gates, which rise to the measured size rounded up to the next 500 B: 34,000
+  to 34,500 B and 33,000 to 33,500 B (`scripts/check-size.mjs`, the README's
+  size table).
 
 ### Documentation
 
