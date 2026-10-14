@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+## [2.0.3] - 2026-10-14
+
 ### Security
 
 - **A built-in call in an expression is charged before it runs** (FORMA-004,
