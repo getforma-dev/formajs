@@ -1006,6 +1006,135 @@ describe('tiers and configuration', () => {
     expect(root.querySelectorAll('link')).toHaveLength(1);
   });
 
+  it("an unreviewed mount parses its markup once, in the root's context, and writes no string to the root", async () => {
+    // formajs#35's review, B1: the strip ran in an inert <template> and the
+    // reconciler wrote its serialisation to the root through innerHTML, a
+    // second parse in another insertion mode, which re-created a <link> the
+    // first had not seen (nested <form>, <math>, <mglyph>, <style>). Now the
+    // markup is parsed once, in the root's own context, stripped on those
+    // nodes, and written as nodes.
+    vi.stubGlobal('origin', 'null');
+    const root = page();
+    const written = vi.spyOn(Element.prototype, 'innerHTML', 'set');
+    const toRoot = (): number => written.mock.contexts.filter((el) => el === root).length;
+    const payload = (p: string): string =>
+      `<link rel="icon" href="/decoy"><form><math><mtext></form><form><mglyph><style></math>` +
+      `<link rel="preconnect" href="http://127.0.0.1:3900/${p}"></style></mglyph></form></mtext></math></form><p id="p">${p}</p>`;
+    const handle = mountOn(root, runtime.trustedHtml(payload('first')), { tier: 'unreviewed' });
+    expect(text('p')).toBe('first');
+    expect(root.querySelectorAll('link')).toHaveLength(0);
+    expect(toRoot()).toBe(0);
+
+    // An update takes the reconciler's diff path: the same one parse, and
+    // the root is patched from its nodes.
+    handle.update(runtime.trustedHtml(payload('second') + '<span id="added">added</span>'));
+    expect(text('p')).toBe('second');
+    expect(text('added')).toBe('added');
+    expect(root.querySelectorAll('link')).toHaveLength(0);
+    expect(toRoot()).toBe(0);
+
+    // The parse is the root's own: a <tr> the root would not have parsed is
+    // not there, on the first render and on an update alike (a <template>
+    // would have kept it, and the diff would have cloned it in).
+    handle.update('<tr><td>cell</td></tr><p id="p">third</p>');
+    expect(text('p')).toBe('third');
+    expect(root.querySelector('tr')).toBeNull();
+    expect(toRoot()).toBe(0);
+    written.mockRestore();
+  });
+
+  it('an unreviewed mount renders no srcdoc: the attribute is removed, a binding that would write one is refused, and each is reported', async () => {
+    // formajs#35's review, S2: a <link> inside an <iframe srcdoc> was out of
+    // the strip's reach, and WebKit connected for it.
+    vi.stubGlobal('origin', 'null');
+    const root = page();
+    const doc = '<link rel=preconnect href=http://127.0.0.1:3900/>';
+    const markup =
+      `<iframe id="written" srcdoc="${doc}" title="kept"></iframe>` +
+      `<div data-forma-state='{"d":"${doc}"}'><iframe id="bound" data-bind:srcdoc="d" data-bind:title="d"></iframe></div>` +
+      `<template><iframe srcdoc="${doc}"></iframe></template>` +
+      `<div data-forma-state='{"rows":["${doc}"]}'><ul data-list="{rows}"><li><iframe class="row" srcdoc="{item}" title="{item}"></iframe></li></ul></div>` +
+      `<p id="kept">kept</p>`;
+    const handle = mountOn(root, runtime.trustedHtml(markup), { tier: 'unreviewed' });
+    await settle();
+    expect(text('kept')).toBe('kept');
+    expect(root.querySelectorAll('[srcdoc]')).toHaveLength(0);
+    expect(root.querySelector('template')!.content.querySelectorAll('[srcdoc]')).toHaveLength(0);
+    // The elements stay, without the attribute; their other bindings run.
+    expect(document.getElementById('written')!.getAttribute('title')).toBe('kept');
+    expect(document.getElementById('bound')!.getAttribute('title')).toBe(doc);
+    expect(root.querySelectorAll('iframe.row')).toHaveLength(1);
+    expect(root.querySelector('iframe.row')!.getAttribute('title')).toBe(doc);
+    const refused = runtime.getDiagnostics().filter((d) => d.code === 'FORMA_E_UNREVIEWED_SRCDOC');
+    expect(refused.map((d) => [d.kind, d.tier])).toEqual([
+      ['markup-refused', 'unreviewed'], ['markup-refused', 'unreviewed'],
+      ['markup-refused', 'unreviewed'], ['markup-refused', 'unreviewed'],
+    ]);
+    expect(refused.filter((d) => /binding is refused/.test(d.reason))).toHaveLength(1);
+
+    // An update is treated the same way, written or bound.
+    handle.update(`<iframe id="again" srcdoc="${doc}"></iframe><div data-forma-state='{"d":"${doc}"}'><iframe data-bind:srcdoc="d"></iframe></div><p id="kept">again</p>`);
+    await settle();
+    expect(text('kept')).toBe('again');
+    expect(root.querySelectorAll('[srcdoc]')).toHaveLength(0);
+    handles.pop()!.unmount();
+
+    // The control: a reviewed mount writes srcdoc, written and bound.
+    mountOn(root, `<iframe id="w" srcdoc="${doc}"></iframe><div data-forma-state='{"d":"${doc}"}'><iframe id="b" data-bind:srcdoc="d"></iframe></div>`, { tier: 'reviewed' });
+    expect(document.getElementById('w')!.getAttribute('srcdoc')).toBe(doc);
+    expect(document.getElementById('b')!.getAttribute('srcdoc')).toBe(doc);
+  });
+
+  it('an unreviewed mount fails closed: a <link> that reaches the root after the strip is removed, reported, and the markup refused', async () => {
+    // Defence in depth for formajs#35's review, B1: the strip runs on the
+    // nodes that are written, so nothing should reach the root; a <link>
+    // that does, here planted by the DOM between the strip and the write,
+    // is removed, reported as having reached the document, and the render
+    // refused with the root cleared.
+    vi.stubGlobal('origin', 'null');
+    const root = page();
+    const plant = (el: Element): void => { el.appendChild(document.createElement('link')).setAttribute('rel', 'preconnect'); };
+
+    // On an update, through the diff path's clone of a new element.
+    const handle = mountOn(root, '<p id="k">1</p>', { tier: 'unreviewed' });
+    expect(text('k')).toBe('1');
+    const clone = Node.prototype.cloneNode;
+    const cloning = vi.spyOn(Node.prototype, 'cloneNode').mockImplementation(function (this: Node, deep?: boolean) {
+      const copy = clone.call(this, deep);
+      if ((this as Element).localName === 'span') plant(copy as Element);
+      return copy;
+    });
+    let thrown: (Error & { code?: string }) | null = null;
+    try { handle.update('<p id="k">2</p><span id="s">s</span>'); } catch (err) { thrown = err as Error; }
+    cloning.mockRestore();
+    expect(thrown?.code).toBe('FORMA_E_UNREVIEWED_LINK');
+    expect(root.childNodes).toHaveLength(0);
+    expect(document.querySelectorAll('link')).toHaveLength(0);
+    const reached = runtime.getDiagnostics().filter((d) => d.code === 'FORMA_E_UNREVIEWED_LINK');
+    expect(reached).toHaveLength(1);
+    expect(reached[0]!.reason).toMatch(/reached the document/);
+    expect(reached[0]!.kind).toBe('markup-refused');
+    // The mount lives on, and renders what is clean.
+    handle.update('<p id="k">3</p>');
+    expect(text('k')).toBe('3');
+    handles.pop()!.unmount();
+
+    // On a first render, through the write itself: the root is left free.
+    const replace = Element.prototype.replaceChildren;
+    const replacing = vi.spyOn(Element.prototype, 'replaceChildren').mockImplementation(function (this: Element, ...nodes: (Node | string)[]) {
+      replace.apply(this, nodes);
+      if (nodes.length > 0 && this === root) plant(this);
+    });
+    thrown = null;
+    try { mountOn(root, '<p id="k">4</p>', { tier: 'unreviewed' }); } catch (err) { thrown = err as Error; }
+    replacing.mockRestore();
+    expect(thrown?.code).toBe('FORMA_E_UNREVIEWED_LINK');
+    expect(root.childNodes).toHaveLength(0);
+    handles.pop();
+    mountOn(root, '<p id="k">5</p>', { tier: 'unreviewed' });
+    expect(text('k')).toBe('5');
+  });
+
   it('a mount call names a known tier, an element and markup, and mounts a root once', () => {
     const root = page();
     for (const bad of [

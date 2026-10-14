@@ -3320,9 +3320,9 @@
   "tags": [
    "security"
   ],
-  "find": "    const html = tier === 'unreviewed' ? withoutLinks(given, ctx) : given;",
-  "replace": "    const html = given;",
-  "note": "unreviewed markup keeps its <link> elements, so a previewed module's <link rel=\"preconnect\"> opens a connection to any host from inside the frame in WebKit (the A2 audit, S1). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no <link>: each is removed before the markup reaches the document\""
+  "find": "    strip: tier === 'unreviewed' ? (fragment) => { refuseUnreviewed(fragment, ctx, false); } : undefined,\n",
+  "replace": "    strip: undefined,\n",
+  "note": "unreviewed markup is written as a string, unstripped, so a previewed module's <link rel=\"preconnect\"> opens a connection to any host from inside the frame in WebKit (the A2 audit, S1); the live check then refuses every render that carried one, so nothing of the module renders. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no <link>: each is removed before the markup reaches the document\""
  },
  {
   "id": "frame-link/nested-template-kept",
@@ -3330,7 +3330,7 @@
   "tags": [
    "security"
   ],
-  "find": "    for (const nested of Array.from(content.querySelectorAll('template'))) strip(nested.content);\n",
+  "find": "  for (const nested of Array.from(content.querySelectorAll('template'))) {\n    code = refuseUnreviewed(nested.content, mount, live) ?? code;\n  }\n",
   "replace": "",
   "note": "a <link> inside a nested <template> of unreviewed markup survives, ready for anything that stamps the template. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no <link>: each is removed before the markup reaches the document\""
  },
@@ -3343,5 +3343,55 @@
   "find": "  if (kind !== 'grant-denied' && kind !== 'markup-refused' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
   "replace": "  if (kind !== 'grant-denied' && !(mount ? mount.diagnostics : _diagnosticsEnabled)) return;",
   "note": "a removed <link> goes unreported when the mount's diagnostics are off, so the host never learns the module carried one. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no <link>: each is removed before the markup reaches the document\""
+ },
+ {
+  "id": "frame-link/reparsed",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (strip) container.replaceChildren(parse());\n      else container.innerHTML = markup;\n",
+  "replace": "      container.innerHTML = markup;\n",
+  "note": "the reconciler writes unreviewed markup to the root as a string again, a second parse in the root's insertion mode, which re-creates a <link> the strip in the first parse did not see (formajs#35's review, B1: nested <form>, <math>, <mglyph>, <style>; WebKit connected). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount parses its markup once, in the root's context, and writes no string to the root\""
+ },
+ {
+  "id": "frame-link/live-check-skipped",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      const reached = refuseUnreviewed(root, ctx, true);\n",
+  "replace": "      const reached: string | null = null;\n",
+  "note": "the live check after the write is gone: a <link> that reaches the root by any path the strip did not see stays in the document and the render stands (formajs#35's review, B1's defence in depth). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount fails closed: a <link> that reaches the root after the strip is removed, reported, and the markup refused\""
+ },
+ {
+  "id": "frame-link/reached-but-kept",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (reached) {\n        clear();\n        throw mountError(reached,",
+  "replace": "      if (reached) {\n        throw mountError(reached,",
+  "note": "a render that carried a <link> past the strip is refused but not cleared: the rest of the module stays in the document after the <link> is removed, so the fail-closed path fails open. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount fails closed: a <link> that reaches the root after the strip is removed, reported, and the markup refused\""
+ },
+ {
+  "id": "frame-srcdoc/not-stripped",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  for (const el of Array.from(content.querySelectorAll('[srcdoc]'))) {\n    refuse(el, 'srcdoc', 'FORMA_E_UNREVIEWED_SRCDOC');\n    el.removeAttribute('srcdoc');\n  }\n",
+  "replace": "",
+  "note": "an <iframe srcdoc> in unreviewed markup keeps its document, and a <link rel=\"preconnect\"> inside it, out of the strip's reach, connects in WebKit (formajs#35's review, S2). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no srcdoc: the attribute is removed, a binding that would write one is refused, and each is reported\""
+ },
+ {
+  "id": "frame-srcdoc/binding-kept",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (scope.mount?.tier === 'unreviewed' && isRawHtmlAttr(attrName)) {\n",
+  "replace": "      if (scope.mount?.tier === 'unreviewed' && isRawHtmlAttr(attrName) && attrName === 'never') {\n",
+  "note": "data-bind:srcdoc runs in an unreviewed mount and writes a document the strip never saw, from a value the module chose (formajs#35's review, S2). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"an unreviewed mount renders no srcdoc: the attribute is removed, a binding that would write one is refused, and each is reported\""
  }
 ]

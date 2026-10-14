@@ -26,6 +26,17 @@ export interface ReconcilerConfig {
   disconnectObserver: () => void;
   reconnectObserver: () => void;
   batch: (fn: () => void) => void;
+  /**
+   * Set by an unreviewed mount (runtime.ts, tier (c)): the markup is parsed
+   * once, in the container's own context, into a fragment this hook strips,
+   * and only those nodes are then written, compared and patched. The
+   * container is never given a string: a strip done in one parse and written
+   * through another (an inert `<template>`, then `innerHTML` on the container)
+   * let foreign content and foster parenting re-create in the second parse a
+   * `<link>` the first had not seen (formajs#35's review, B1).
+   * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount parses its markup once, in the root's context, and writes no string to the root"
+   */
+  strip?: (fragment: DocumentFragment) => void;
 }
 
 type ScopeMode = 'PRESERVE' | 'RESET' | 'REPLACE';
@@ -95,7 +106,14 @@ function determineScopeMode(liveEl: Element, newEl: Element): ScopeMode {
 /** Reused template element — avoids creating a new one per reconcile call. */
 let _parseTemplate: HTMLTemplateElement | null = null;
 
-function parseHTML(html: string): DocumentFragment {
+function parseHTML(html: string, context?: Element): DocumentFragment {
+  if (context) {
+    // In the context element's own insertion mode (`innerHTML`'s parse), so
+    // the nodes written are the ones that parse would have produced.
+    const range = context.ownerDocument.createRange();
+    range.selectNodeContents(context);
+    return range.createContextualFragment(html);
+  }
   if (!_parseTemplate) _parseTemplate = document.createElement('template');
   // A string, as reconcile() was given it: trusted markup is parsed by its
   // RuntimeParser instead (see below).
@@ -482,6 +500,18 @@ export function createReconciler(config: ReconcilerConfig) {
     // Verified by: src/dom/__tests__/trusted-html.test.ts > "a reconcile the page refused is not recorded, so the same markup as trustedHtml() is written"
     if (lastHtmlByContainer.get(container) === trimmed && container.hasChildNodes()) return;
     const markup = parser ? parser.html : trimmed;
+    // With `strip`, the one parse: in the container's context, stripped, and
+    // written as nodes wherever a string would have been written below.
+    const strip = config.strip;
+    const parse = (): DocumentFragment => {
+      const fragment = parser ? parser.parse(strip ? container : undefined) : parseHTML(markup, strip ? container : undefined);
+      if (strip) strip(fragment);
+      return fragment;
+    };
+    const write = (): void => {
+      if (strip) container.replaceChildren(parse());
+      else container.innerHTML = markup;
+    };
 
     // Disconnect observer to prevent double-mount during patching
     config.disconnectObserver();
@@ -489,7 +519,7 @@ export function createReconciler(config: ReconcilerConfig) {
     try {
       // ── Fast path: empty container ──
       if (!container.hasChildNodes() || container.children.length === 0) {
-        container.innerHTML = markup;
+        write();
         lastHtmlByContainer.set(container, trimmed);
 
         // Mount all data-forma-state scopes
@@ -504,9 +534,9 @@ export function createReconciler(config: ReconcilerConfig) {
       }
 
       // ── Parse new HTML into a DocumentFragment ──
-      const fragment = parser ? parser.parse() : parseHTML(trimmed);
+      const fragment = parse();
       const templateContainer = document.createElement('div');
-      templateContainer.appendChild(fragment);
+      for (const child of Array.from(fragment.childNodes)) templateContainer.appendChild(child);
 
       // ── Full-replacement fast path ──
       // When there is zero data-forma-id overlap between live and new children,
@@ -534,7 +564,8 @@ export function createReconciler(config: ReconcilerConfig) {
           for (const scope of Array.from(liveScopes)) {
             config.unmountScope(scope);
           }
-          container.innerHTML = markup;
+          if (strip) container.replaceChildren(...Array.from(templateContainer.childNodes));
+          else container.innerHTML = markup;
           lastHtmlByContainer.set(container, trimmed);
           const newScopes = container.querySelectorAll('[data-forma-state]');
           for (const scope of Array.from(newScopes)) {
