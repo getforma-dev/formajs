@@ -141,7 +141,7 @@
  *   Configuration (on <script> tag):
  *     data-forma-diagnostics="true"      Enable expression diagnostics
  *     data-forma-auto-containment="true" Enable CSS containment hints
- *     data-forma-expr-budget="100000"    Per-evaluation interpreter step budget
+ *     data-forma-expr-budget="100000"    Interpreter step budget, one per task
  *
  * ── MAGIC VARIABLES ──────────────────────────────────────────────────
  *
@@ -160,7 +160,6 @@ import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 import {
-  chargeText,
   clearExpressionCache,
   compileExpression,
   compileHandler,
@@ -256,7 +255,7 @@ function dbg(...args: unknown[]): void {
 interface RuntimeConfig {
   diagnostics?: boolean;
   autoContainment?: boolean;
-  /** Per-evaluation interpreter step budget (`data-forma-expr-budget`). */
+  /** Interpreter step budget, one per task (`data-forma-expr-budget`). */
   exprBudget?: number;
 }
 
@@ -1172,7 +1171,8 @@ const EXPR_FAILED = Symbol('forma-expression-failed');
  * not reported: it re-runs in the next task, where it starts first (`later`).
  * One that is over the budget on its own, in a task it started, is reported
  * as before. The meter is zeroed by a timer armed when a task first spends
- * from it, and when a handler runs for an event it has not seen.
+ * from it, and when an event it has not seen reaches a handler or a
+ * `data-model` input (`begin`).
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "ten bindings at the cap spend one budget per task and all of them render"
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding over the budget on its own is reported, not retried"
  */
@@ -1242,10 +1242,10 @@ const asText: TextCost = (v, room) => (typeof v === 'object' && v !== null && !i
  * False when refused: reported, or retried in the next task.
  * Verified by: src/__tests__/runtime-text-cost.test.ts > "every other conversion of a result to text is refused before it runs"
  */
-function converts(el: Element, what: string, value: unknown): boolean {
+function converts(el: Element, scope: Scope, what: string, value: unknown): boolean {
   try {
     spend();
-    chargeText(value, asText, meter);
+    evaluateExpression(NOTHING, scope, meter, (_, room) => asText(value, room));
     return true;
   } catch (err) {
     if (!isExprError(err)) throw err;
@@ -1254,6 +1254,9 @@ function converts(el: Element, what: string, value: unknown): boolean {
     return false;
   }
 }
+
+/** An expression that does nothing, for pricing a value no expression returned. */
+const NOTHING = compileExpression('0');
 
 /** A value a `data-list` row template places in text, once per row it appears in. */
 const placed = (v: unknown, room: number): number => (typeof v === 'string' ? v.length * GROW : asText(v, room));
@@ -1698,7 +1701,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       const tag = input.tagName;
       const dispose = internalEffect(() => {
         const val = getter();
-        if (val === EXPR_FAILED || !converts(el, prop, val)) return;
+        if (val === EXPR_FAILED || !converts(el, scope, prop, val)) return;
         const type = input.type;
         if (type === 'checkbox') {
           input.checked = !!val;
@@ -1844,7 +1847,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       } catch { /* ignore parse errors */ }
       const dispose = internalEffect(() => {
         const value = getter();
-        if (!converts(el, prop, value)) return;
+        if (!converts(el, scope, prop, value)) return;
         try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* quota */ }
       });
       disposers.push(dispose);

@@ -38,6 +38,13 @@ const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
  * handler statements; the shipped engine has all three, and it is twice the
  * prototype's size. A loose gate on top of that is how the next 5 KB arrives
  * unremarked, so these two are set close to the measurement on purpose.
+ *
+ * Until 3.0.0 they are regression ratchets, not the size target (decision
+ * brief L-51: N2 is, gated at 3.0.0): a change that passes one raises it to its
+ * new measured size rounded up to the next 500 B and states the growth in its
+ * CHANGELOG entry. FORMA-028 and FORMA-025 (core 2.0.4) raised the runtime
+ * from 34,000 to 35,500 B (33,861 to 35,304 B measured) and the hardened
+ * runtime from 33,000 to 34,500 B (32,873 to 34,300 B).
  * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
 export const GATES = [
@@ -48,7 +55,7 @@ export const GATES = [
   },
   {
     entry: 'dist/formajs-runtime.global.js',
-    limit: 34000,
+    limit: 35500,
     note: 'CDN runtime bundle (single self-contained IIFE)',
   },
   {
@@ -61,7 +68,7 @@ export const GATES = [
     // release.yml — while being the build the docs pointed CSP-strict users at
     // and the target of the `runtime-csp` exports subpath.
     entry: 'dist/formajs-runtime-hardened.global.js',
-    limit: 33000,
+    limit: 34500,
     note: 'CDN hardened runtime bundle (single self-contained IIFE)',
   },
 ];

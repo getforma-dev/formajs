@@ -122,22 +122,6 @@ export function evaluateExpression(node: Expr, scope: ScopeLike, meter?: Meter |
   }
 }
 
-const NO_SCOPE: ScopeLike = { getters: Object.create(null), setters: Object.create(null) };
-
-/**
- * Charge a conversion the runtime makes of a value no expression returned (a
- * state key a directive reads directly), against the task's meter (FORMA-025).
- */
-export function chargeText(value: unknown, text: TextCost, meter?: Meter | null): void {
-  const ctx = makeCtx(NO_SCOPE, meter);
-  const outer = enter(ctx);
-  try {
-    charge(ctx, text(value, LIMITS.ALLOC_BUDGET - ctx.cost), 'converting the result to text', -1);
-  } finally {
-    leave(ctx, outer, meter);
-  }
-}
-
 /** Run a compiled handler against a scope, counting on from `meter` if given. */
 export function runHandler(stmts: Stmt[], scope: ScopeLike, meter?: Meter | null): void {
   const ctx = makeCtx(scope, meter);

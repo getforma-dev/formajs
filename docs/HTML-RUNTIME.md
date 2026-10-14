@@ -101,11 +101,15 @@ Four properties, each mechanical:
   same case.
 - **No loops, no recursion, no function values that escape their callback
   slot.** Every expression terminates by construction; budgets bound cost. A
-  built-in call is charged before it runs, against 250,000 units (one unit is
-  about the cost of an array slot) per evaluation, so
-  `Array.from({length: 12000000})` is refused with `FORMA_E_BUDGET` without
-  building anything, while a search that lowercases 9,000 records of ASCII
-  text is answered (SECURITY.md, "Termination and budgets").
+  built-in call, and an operator that builds or reads a long string, is
+  charged before it runs, against 250,000 units (one unit is about the cost of
+  an array slot), so `Array.from({length: 12000000})` is refused with
+  `FORMA_E_BUDGET` without building anything, while a search that lowercases
+  9,000 records is answered, in Greek, Cyrillic or CJK as in ASCII. The
+  budget, and the 100,000 steps, are **one per task**: the bindings evaluated
+  in one task share them, and a binding that finds them spent by the bindings
+  before it renders in the next task instead (SECURITY.md, "Termination and
+  budgets").
 
 **Value expressions** — `data-text`, `data-show`, `data-if`, `data-list`,
 `data-bind:*`, `data-class:*`, and the right-hand side of `data-computed` —

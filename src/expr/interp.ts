@@ -94,7 +94,7 @@ const OBJECT_PROTO = Object.getPrototypeOf({}) as object;
 
 let stepBudget: number = LIMITS.STEP_BUDGET;
 
-/** Override the per-evaluation step budget (`data-forma-expr-budget`). */
+/** Override the step budget (`data-forma-expr-budget`): one per task in the runtime, per evaluation without a meter. */
 export function setStepBudget(n: number): void {
   stepBudget = Number.isFinite(n) && n > 0 ? Math.min(n, 10_000_000) : LIMITS.STEP_BUDGET;
 }

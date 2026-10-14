@@ -1900,7 +1900,7 @@
   "tags": [
    "security"
   ],
-  "find": "        if (!converts(el, prop, value)) return;\n",
+  "find": "        if (!converts(el, scope, prop, value)) return;\n",
   "replace": "\n",
   "note": "data-persist JSON-stringifies a state value heavier than the budget (FORMA-025). Verified by: src/__tests__/runtime-text-cost.test.ts > \"every other conversion of a result to text is refused before it runs\""
  },

@@ -1,7 +1,7 @@
 /**
  * THE COST TABLE (DR-16). What each allowlisted native may cost, read from its
  * receiver and arguments BEFORE it runs, and charged to one allocation budget
- * per evaluation (`LIMITS.ALLOC_BUDGET`).
+ * (`LIMITS.ALLOC_BUDGET`), one per task in the runtime (FORMA-028).
  *
  * The step budget counts interpreter nodes, not the work inside a native, so a
  * single `Array.from({length: 12000000})` used to build a 139 MB array in a
@@ -12,8 +12,12 @@
  * one-sixteenth per element it only scans or shares. Every call is charged, in
  * order: the text weight of each argument (most natives convert an argument to
  * a string or a number, and an array becomes text through `join`), unless the
- * native is in `DATA_ARGS`; then its row below, if it has one. A native with no
- * row costs only the text of its arguments.
+ * native is in `DATA_ARGS`, or is a string method, which reads a string
+ * argument for a 32nd of a unit a character; then its row below, if it has
+ * one. A native with no row costs only the text of its arguments.
+ *
+ * The operators that build or read strings are charged with the weights below
+ * (`GROW`, `READ`, `PARSE`, `FLAT`), in interp.ts (FORMA-028).
  *
  * Verified by: src/expr/__tests__/native-cost.test.ts > "every allowlisted native refuses an argument heavier than the budget before it runs"
  * Verified by: src/expr/__tests__/native-cost.test.ts > "every size-driven cost refuses a hostile size before the native runs"
@@ -210,12 +214,16 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *
  * - `array.sort` charges n log n comparisons. The default order converts both
  *   elements to text at every comparison, so an element that is an array adds
- *   its text weight each time.
+ *   its text weight each time, and a string element its length at `READ`: two
+ *   strings that share a long prefix are read that far (FORMA-028; round 2
+ *   sorted 2,000 such strings for 1.5 s at 4x).
  * - `every`, `some` and `reduce` skip holes without calling back, so on a
  *   sparse array the step budget does not bound them. A hole measured about
  *   the cost of an array slot, so they cost the receiver's length.
  * - `includes`, `indexOf` and `lastIndexOf` compare the search value without
  *   converting it, but convert `fromIndex` to a number: that is weighed as text.
+ *   A search value that is a long string is compared whole with every element
+ *   of the same length (`alike`).
  * - `Array.from` converts an array-like's `length` to a number, so the
  *   array-like is weighed as text before that conversion.
  * - `Object.keys` / `values` / `entries` charge 16 per element or key: listing
@@ -225,9 +233,18 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *   constant times the receiver) are weighted by their measured cost per
  *   character against an `Array.from` slot (about 110 ns at 4x CPU
  *   throttling), by `node scripts/measure-alloc-budget.mjs --chars`. Case
- *   mapping is tiered by the costliest character (`costly`, then `nonAscii`):
- *   lowercasing a string stored one byte a character measured at most 2.1 ns,
- *   and anything costly up to about 43 ns (Turkish `İ`); uppercasing ASCII 1.3 ns,
+ *   mapping is refused before the call past the 1 MiB result cap, which it
+ *   would pass anyway, and tiered by the costliest character (`costly`, then
+ *   `nonAscii`): lowercasing a string stored one byte a character measured at
+ *   most 2.1 ns. Lowercasing two-byte text measured 4 to 19 ns a character in
+ *   the scripts `middle` names (most for all-capital Greek, least for text that
+ *   changes little, such as CJK) and 17 to 40 ns beyond them (Georgian,
+ *   Cherokee, Greek Extended, fullwidth Latin): such text costs 1/16 when its
+ *   first character above Latin-1 is in a `middle` script, else 1/2 (FORMA-028;
+ *   in 2.0.3 all of it cost 1/2, refusing a search over 1,716 records of Greek).
+ *   The first character decides because a full scan of two-byte text measured
+ *   6 to 7 ns a character, most of the cost of lowercasing it; SECURITY.md says
+ *   what that leaves open. Uppercasing ASCII 1.3 ns,
  *   Latin-1 up to 32 ns (`ß` and `ÿ` widen), and costly text up to 64 ns (`ΐ`
  *   becomes three characters). The cheap tier also takes text stored two bytes
  *   a character whose characters above U+00FF are only those self-mapping
