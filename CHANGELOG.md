@@ -30,10 +30,20 @@ All notable changes to this project will be documented in this file.
   over 9,000 records with a curly apostrophe in each; 48.0 ms at most over 81
   runs with a dash), and an evaluation that spends the budget and then exhausts
   the step budget 23.7 ms. These figures hold for strings stored one byte a
-  character, and for that search's two-byte records; one long string stored two
-  bytes a character can take up to about four times its charge
-  (`toLowerCase` of 8 million such characters: up to 81 ms), listed under
-  FORMA-028. The bound is **per evaluation** (one
+  character, and for that search's two-byte records. A string stored two bytes
+  a character costs about four times its charge: one `toLowerCase` of 8 million
+  such characters took 108 ms median and 115 ms at most, refused only
+  afterwards by the 1 MiB result cap, and seven calls on 1 million characters
+  in one evaluation 92 ms, answered. This is listed under FORMA-028. The cost
+  check itself takes time: the repository's expression benchmarks
+  (`scripts/bench.mjs --file expression`, 5 runs against 2.0.2) are within
+  noise, but a string-heavy filter pays for it. The text search over 9,000
+  records, in Chromium at 4x, went from 22.4 to 29.5 ms median for ASCII
+  (+32%), and from about 28 to 42 or 43 ms median (49 ms at most) with one `’`
+  in each record (about +50%). Its 9,100-record form, refused by the step
+  budget as in 2.0.2, runs 43 ms median and 65 ms at most before the refusal.
+  About half the added time is the two-byte tier scan, the rest the per-call
+  check (about 0.4 µs a call at 4x). The bound is **per evaluation** (one
   binding or one handler run), not per task: a widget with many bindings can
   spend one budget in each; a per-task (per-widget) budget is a design change,
   left to a follow-up ticket. Not yet bounded (FORMA-028; SECURITY.md,
@@ -57,8 +67,8 @@ All notable changes to this project will be documented in this file.
       when each record holds any other character above U+00FF: a Greek,
       Cyrillic or CJK character, a Latin Extended letter such as `č`, `ł` or
       `ő`, Turkish `İ` or `ı`, an emoji, or a symbol with a case mapping such as
-      the Ohm sign (U+2126). Such text measured up to 34 ns a character to
-      lowercase, against 2 ns for Latin-1.
+      the Ohm sign (U+2126). Such text measured up to about 43 ns a character
+      to lowercase, against 2 ns for Latin-1.
   - A default `sort()` of more than about 6,400 strings or numbers, counting
     everything else the evaluation does (2.0.2 had no limit).
   - `rows.map(r => r.name).join(', ')` past about 18,000 rows (2.0.2: about

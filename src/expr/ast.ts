@@ -55,9 +55,11 @@ export type Stmt =
  * evaluation that spends the budget and then exhausts the step budget 23.7 ms.
  * In the first sizing, at 300,000, the slowest row plus a full step budget came
  * to 52.1 ms. These hold for strings stored one byte a character, and for the
- * search's two-byte records. A long string stored two bytes a character costs
- * up to about four times what its case-mapping tier charges: `toLowerCase` of
- * 8 million such characters took up to 81 ms (SECURITY.md, FORMA-028).
+ * search's two-byte records. A string stored two bytes a character costs about
+ * four times what its case-mapping tier charges: through the runtime at 4x,
+ * one `toLowerCase` of 8 million such characters took 108 ms median and 115 ms
+ * at most, refused only afterwards by the 1 MiB result cap, and seven calls on
+ * 1 million in one evaluation 92 ms, answered (SECURITY.md, FORMA-028).
  * `node scripts/measure-alloc-budget.mjs [--cap=N] [--gc] [--chars]`
  * re-measures it. The budget is per evaluation (one binding or one handler
  * run), not per task. Comments inside this object literal would ship in the

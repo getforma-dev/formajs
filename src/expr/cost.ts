@@ -172,7 +172,7 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *   throttling), by `node scripts/measure-alloc-budget.mjs --chars`. Case
  *   mapping is tiered by the costliest character (`costly`, then `nonAscii`):
  *   lowercasing a string stored one byte a character measured at most 2.1 ns,
- *   and anything costly up to 34 ns (Turkish `İ`); uppercasing ASCII 1.3 ns,
+ *   and anything costly up to about 43 ns (Turkish `İ`); uppercasing ASCII 1.3 ns,
  *   Latin-1 up to 32 ns (`ß` and `ÿ` widen), and costly text up to 64 ns (`ΐ`
  *   becomes three characters). The cheap tier also takes text stored two bytes
  *   a character whose characters above U+00FF are only those self-mapping

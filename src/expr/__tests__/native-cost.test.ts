@@ -417,7 +417,7 @@ describe('the cost preflight, native by native (DR-16)', () => {
     for (const ch of ['’', '—', '€', '™', '…']) {
       expect(outcome(search, { rows: withOne(ch), q: 'needle' }), `one ${ch} per record`).toEqual({ value: 900 });
     }
-    // Two-sided: costlier text measured up to 34 ns a character to lowercase,
+    // Two-sided: costlier text measured up to about 43 ns a character to lowercase,
     // so the same search over it is refused, as N3 requires; one Greek letter
     // or a case-mapped letterlike symbol (the Ohm sign U+2126, the Kelvin sign
     // U+212A) is enough.
