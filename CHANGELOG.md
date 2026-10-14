@@ -4,6 +4,103 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Security
+
+- **A built-in call in an expression is charged before it runs** (FORMA-004,
+  DR-16). `Array.from({length: 12000000})` used to build a 139 MB array in a
+  300 ms task and only then be refused; it now costs nothing. Every allowlisted
+  native is charged, against one budget per evaluation (`LIMITS.ALLOC_BUDGET`,
+  250,000 units, one unit being about an `Array.from` slot), the weight of its
+  arguments as text (or, for the natives that read arguments as data, such as
+  `Object.keys`, `Array.from` and `concat`, their element count) and then its
+  row in `src/expr/cost.ts`, and is refused with `FORMA_E_BUDGET` before it runs
+  once the evaluation would pass the budget. Rows that copy or produce cost a
+  unit per element; string rows that amplify nothing are weighted by their
+  measured cost per character, tiered by the costliest character of the text:
+  lowercasing Latin-1 and the self-mapping punctuation, currency and
+  letterlike symbols costs 1/32 of a unit a character and any other text 1/2;
+  uppercasing ASCII 1/16, Latin-1 and those symbols 1/2, any other text 1; a
+  string search 1/32; `slice` 1/64.
+  An operator that converts an array or object to text (`'' + list`,
+  `` `${list}` ``, `list < 1`, `x += list`, a write to `$el`) is charged the
+  same way; `x != null` and object-to-object `==` convert nothing and are not.
+  The budget is sized from the tail of measurements at 4x CPU throttling with
+  garbage collection counted (`scripts/measure-alloc-budget.mjs`): the slowest
+  of 41 runs of the largest call any row allows took 46.6 ms (a text search
+  over 9,000 records with a curly apostrophe in each; 48.0 ms at most over 81
+  runs with a dash), and an evaluation that spends the budget and then exhausts
+  the step budget 23.7 ms. These figures hold for strings stored one byte a
+  character, and for that search's two-byte records. A string stored two bytes
+  a character costs about four times its charge: one `toLowerCase` of 8 million
+  such characters took 108 ms median and 115 ms at most, refused only
+  afterwards by the 1 MiB result cap, and seven calls on 1 million characters
+  in one evaluation 92 ms, answered. This is listed under FORMA-028. The cost
+  check itself takes time: the repository's expression benchmarks
+  (`scripts/bench.mjs --file expression`, 5 runs against 2.0.2) are within
+  noise, but a string-heavy filter pays for it. The text search over 9,000
+  records, in Chromium at 4x, went from 22.4 to 29.5 ms median for ASCII
+  (+32%), and from about 28 to 42 or 43 ms median (49 ms at most) with one `’`
+  in each record (about +50%). Its 9,100-record form, refused by the step
+  budget as in 2.0.2, runs 43 ms median and 65 ms at most before the refusal.
+  About half the added time is the two-byte tier scan, the rest the per-call
+  check (about 0.4 µs a call at 4x). The bound is **per evaluation** (one
+  binding or one handler run), not per task: a widget with many bindings can
+  spend one budget in each; a per-task (per-widget) budget is a design change,
+  left to a follow-up ticket. Not yet bounded (FORMA-028; SECURITY.md,
+  "Termination and budgets"): string `+`, template literals, reads of a long
+  concatenated string, and a string search whose pattern's first characters
+  fill the text (`'ab'` in `'aaaa…'`, 39 ns a character where ordinary text
+  takes under 1).
+- **Behaviour change: what one binding or handler can no longer compute.** As
+  DR-16 accepts, the budget refuses, with `FORMA_E_BUDGET`, some evaluations
+  2.0.2 answered. Measured with this release's engine and 2.0.2's on the same
+  data:
+  - **String work per record in a callback counts toward the one budget.** The
+    text filter `rows.filter(r => (r.title + ' ' + r.body).toLowerCase().includes(q))`
+    over records of about 260 characters:
+    - is answered as in 2.0.2, up to about 9,090 records (where the step
+      budget stops both releases), when every character of the records is
+      Latin-1 or one of the punctuation, currency and letterlike symbols that
+      map to themselves (U+2000 to U+20CF, U+2100 to U+2125): ASCII, `é`, curly
+      quotes `’ “ ”`, dashes `– —`, `…`, `€`, `™`, `№`;
+    - is refused past about 1,716 records, where 2.0.2 answered about 9,090,
+      when each record holds any other character above U+00FF: a Greek,
+      Cyrillic or CJK character, a Latin Extended letter such as `č`, `ł` or
+      `ő`, Turkish `İ` or `ı`, an emoji, or a symbol with a case mapping such as
+      the Ohm sign (U+2126). Such text measured up to about 43 ns a character
+      to lowercase, against 2 ns for Latin-1.
+  - A default `sort()` of more than about 6,400 strings or numbers, counting
+    everything else the evaluation does (2.0.2 had no limit).
+  - `rows.map(r => r.name).join(', ')` past about 18,000 rows (2.0.2: about
+    33,000, where the step budget stops it).
+  - `Object.keys`, `values` or `entries` of more than about 15,600 keys or
+    characters.
+  - `every`, `some` or `reduce` over more than 250,000 elements, even when the
+    callback would stop at the first.
+  - A built-in that produces a string or array longer than 250,000, such as
+    `Array.from({length: 300000})` (the 1 MiB and 1,000,000-element result caps
+    still apply to `+` and template literals).
+  - A handler write that would grow an array past 250,000 elements, such as
+    `items[999999] = x`.
+  - `padStart` / `padEnd` with a negative or non-numeric length now return the
+    string unpadded, as JavaScript does, instead of `FORMA_E_BUDGET`.
+
+  Rollback: pin 2.0.2.
+- **Island props are stripped of `__proto__`, `constructor` and `prototype` at
+  every depth while they are parsed** (FORMA-004, DR-21), inline and shared,
+  with no opt-out. 2.0.1 stripped the top level only, so a nested key reached
+  any island that deep-merged its props. The pass is iterative (a JSON reviver
+  would overflow the stack near 5,000 levels); `sanitizePropsDeep` stays
+  exported. The strip also drops legitimate nested fields named `constructor`
+  or `prototype` (a standings table keyed `constructor`, say): DR-21 accepts
+  this; rename such fields on the server. Props that are valid JSON but
+  neither an object nor an array (`null`, a number, a string, a boolean),
+  inline or in the shared block, mark the island `error` as they did in 2.0.1,
+  now with the coded message
+  `FORMA_E_ISLAND_PROPS` logged in every build (2.0.1 threw an uncoded
+  `TypeError`, logged in development builds only). An array reaches the island,
+  as before, stripped at every depth. Rollback: pin 2.0.2.
+
 ## [2.0.2] - 2026-10-14
 
 ### Changed

@@ -95,28 +95,26 @@ hydration for the whole page.
 
 Verified by `src/dom/__tests__/activate-isolation.test.ts` > "a malformed __forma_islands block does not stop islands from hydrating"
 
-**Prop sanitization is shallow by default.** Both channels delete top-level
-`__proto__` / `constructor` / `prototype` keys before your island sees the
-props. Keys nested inside child objects **pass through** — a deliberate trade,
-because a deep walk of every payload on every hydration is a cost no island
-should pay by default. If you hand props to anything that merges them into
-another object — `createStore`, a deep-merge helper, an `Object.assign` chain —
-sanitize them yourself:
+**Props are stripped at every depth while they are parsed.** Both channels
+delete `__proto__` / `constructor` / `prototype` keys at every depth, in
+objects and in array elements, before your island sees the props, and there is
+no opt-out (DR-21). Handing props to anything that merges them into another
+object — `createStore`, a deep-merge helper, an `Object.assign` chain — cannot
+carry a nested pollution key into a prototype. The pass is iterative with a
+`WeakSet`, so neither deeply nested nor cyclic props can overflow the stack or
+loop. A shared `__forma_islands` block is parsed and stripped once per
+`activateIslands` call.
+Props must be a JSON object or array: any other JSON value (`null`, a number, a
+string, a boolean) marks the island `error`, and `FORMA_E_ISLAND_PROPS` is
+logged in every build.
 
-```ts
-import { activateIslands, sanitizePropsDeep } from "@getforma/core";
+`sanitizePropsDeep` (the same pass) stays exported for props that reach an
+island some other way, and calling it on activation props is a harmless no-op.
+RPC arguments (`@getforma/core/server`) are stripped recursively too.
 
-activateIslands({
-  Cart: (el, props) => renderCart(el, sanitizePropsDeep(props)),
-});
-```
-
-`sanitizePropsDeep` walks iteratively with a `WeakSet`, so neither deeply
-nested nor cyclic props can overflow the stack or loop. RPC arguments
-(`@getforma/core/server`) are stripped recursively **without** an opt-in — the
-two paths are not equivalent, and this is the difference.
-
-Verified by `src/dom/__tests__/activate-isolation.test.ts` > "is opt-in: island activation still sanitizes only the top level"
+Verified by `src/dom/__tests__/activate-isolation.test.ts` > "island activation strips forbidden keys at every depth, inline and shared, with no opt-out"
+Verified by `src/dom/__tests__/activate-isolation.test.ts` > "island props nested 10,000 deep are parsed and stripped"
+Verified by `src/dom/__tests__/props-loading.test.ts` > "props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS"
 Verified by `src/dom/__tests__/activate-isolation.test.ts` > "sanitizePropsDeep strips forbidden keys at every depth"
 Verified by `src/server/__tests__/rpc-deep-strip.test.ts` > "strips forbidden keys at a depth that overflows a recursive walk"
 

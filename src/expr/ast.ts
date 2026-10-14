@@ -44,6 +44,26 @@ export type Stmt =
  * limits bound its COST. Neither bounds termination — with no loops and no
  * recursion the language is total by construction, so nothing here is load
  * bearing for "does it stop".
+ *
+ * `ALLOC_BUDGET` is the units (array slots and string characters, see cost.ts)
+ * that the native calls of ONE evaluation may cost, checked before each call
+ * (DR-16). It is sized to N3's 50 ms long task from the TAIL of the
+ * measurements, with garbage collection counted: in Chromium 151 at 4x CPU
+ * throttling on 2026-10-14, the slowest of 41 runs of the largest call any row
+ * allows at 250,000 took 46.6 ms (a text search over 9,000 records with a curly
+ * apostrophe in each; 48.0 ms at most over 81 runs with a dash), and of an
+ * evaluation that spends the budget and then exhausts the step budget 23.7 ms.
+ * In the first sizing, at 300,000, the slowest row plus a full step budget came
+ * to 52.1 ms. These hold for strings stored one byte a character, and for the
+ * search's two-byte records. A string stored two bytes a character costs about
+ * four times what its case-mapping tier charges: through the runtime at 4x,
+ * one `toLowerCase` of 8 million such characters took 108 ms median and 115 ms
+ * at most, refused only afterwards by the 1 MiB result cap, and seven calls on
+ * 1 million in one evaluation 92 ms, answered (SECURITY.md, FORMA-028).
+ * `node scripts/measure-alloc-budget.mjs [--cap=N] [--gc] [--chars]`
+ * re-measures it. The budget is per evaluation (one binding or one handler
+ * run), not per task. Comments inside this object literal would ship in the
+ * runtime bundles, so they live here.
  */
 export const LIMITS = Object.freeze({
   MAX_SOURCE_LENGTH: 4096,
@@ -55,6 +75,7 @@ export const LIMITS = Object.freeze({
   MAX_OBJECT_KEYS: 24,
   MAX_ARRAY_ELEMENTS: 64,
   STEP_BUDGET: 100_000,
+  ALLOC_BUDGET: 250_000,
   MAX_ARRAY_LENGTH: 1_000_000,
   MAX_STRING_LENGTH: 1_048_576,
   MAX_REPEAT_COUNT: 10_000,

@@ -76,35 +76,25 @@ export function hasScheduledOrActiveIslands(): boolean {
   return scheduledOrActiveIslands > 0;
 }
 
-function sanitizeProps(obj: Record<string, unknown>): Record<string, unknown> {
-  for (const key of FORBIDDEN_PROP_KEYS) {
-    if (key in obj) delete (obj as any)[key];
-  }
-  return obj;
-}
-
 /**
  * Strip `__proto__` / `constructor` / `prototype` keys from an island props
  * object **at every depth**, in place.
  *
- * Island activation deliberately only sanitizes the TOP level (see
- * `sanitizeProps`): a deep walk of every payload on every hydration is a cost no
- * island should pay by default, and it would silently mutate large server
- * payloads. Call this yourself before handing props to something that merges
- * them into another object — `createStore`, a deep-merge helper, an
- * `Object.assign` chain — where a nested pollution key would matter.
+ * Island activation applies this to every props payload as it parses it, inline
+ * and shared alike, with no opt-out (DR-21), so an island never receives a
+ * nested pollution key that a deep merge could carry into a prototype. It stays
+ * exported for props that reach an island some other way.
  *
- * Iterative with an explicit stack and a WeakSet, so neither deeply nested nor
- * cyclic props can overflow the stack or loop forever.
- *
- * ```ts
- * activateIslands({
- *   Cart: (el, props) => renderCart(el, sanitizePropsDeep(props)),
- * });
- * ```
+ * It runs after `JSON.parse` rather than as its reviver: V8 applies a reviver
+ * recursively and overflows the stack near 5,000 levels of nesting, where
+ * `JSON.parse` alone parses 100,000. This pass is iterative with an explicit
+ * stack and a WeakSet, so neither deeply nested nor cyclic props can overflow
+ * the stack or loop forever.
  *
  * Verified by: src/dom/__tests__/activate-isolation.test.ts > "sanitizePropsDeep strips forbidden keys at every depth"
  * Verified by: src/dom/__tests__/activate-isolation.test.ts > "sanitizePropsDeep terminates on cyclic props"
+ * Verified by: src/dom/__tests__/activate-isolation.test.ts > "island activation strips forbidden keys at every depth, inline and shared, with no opt-out"
+ * Verified by: src/dom/__tests__/activate-isolation.test.ts > "island props nested 10,000 deep are parsed and stripped"
  */
 export function sanitizePropsDeep<T>(props: T): T {
   const stack: unknown[] = [props];
@@ -132,6 +122,34 @@ export function sanitizePropsDeep<T>(props: T): T {
   return props;
 }
 
+/** The code of island props that are valid JSON but neither an object nor an array. */
+const ISLAND_PROPS_ERROR = 'FORMA_E_ISLAND_PROPS';
+
+function isIslandPropsError(err: unknown): err is Error {
+  return err instanceof Error && (err as { code?: unknown }).code === ISLAND_PROPS_ERROR;
+}
+
+/**
+ * Island props must be a JSON object or array. 2.0.1's shallow strip used `in`,
+ * which throws on `null`, a number, a string or a boolean, so such a payload
+ * marked the island `error` (an array passed). The deep strip throws on
+ * nothing, so the check is explicit, and coded: the island is marked `error`
+ * and `FORMA_E_ISLAND_PROPS` is logged in every build.
+ *
+ * Verified by: src/dom/__tests__/props-loading.test.ts > "props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS"
+ */
+function checkProps(props: unknown): Record<string, unknown> {
+  if (props === null || typeof props !== 'object') {
+    const err = new Error(
+      `[forma] ${ISLAND_PROPS_ERROR}: island props must be a JSON object or array, not ` +
+        (props === null ? 'null' : `a ${typeof props}`),
+    );
+    (err as Error & { code: string }).code = ISLAND_PROPS_ERROR;
+    throw err;
+  }
+  return props as Record<string, unknown>;
+}
+
 /**
  * Load props for an island from either inline attribute or shared script block.
  */
@@ -143,12 +161,12 @@ function loadIslandProps(
   // Mode 1: Inline (small props, < 1KB)
   const inline = root.getAttribute('data-forma-props');
   if (inline) {
-    return sanitizeProps(JSON.parse(inline));
+    return checkProps(sanitizePropsDeep(JSON.parse(inline)));
   }
 
-  // Mode 2: Script tag (1KB–50KB, pre-parsed)
+  // Mode 2: Script tag (1KB–50KB, parsed and stripped once per page)
   if (sharedProps && String(id) in sharedProps) {
-    return sanitizeProps((sharedProps as any)[String(id)] as Record<string, unknown>);
+    return checkProps((sharedProps as any)[String(id)]);
   }
 
   // No props — island creates its own state
@@ -180,7 +198,7 @@ function loadSharedProps(root: ParentNode): Record<string, unknown> | null {
   if (!scriptBlock) return null;
 
   try {
-    const parsed = JSON.parse(scriptBlock.textContent ?? '');
+    const parsed = sanitizePropsDeep(JSON.parse(scriptBlock.textContent ?? ''));
     return parsed !== null && typeof parsed === 'object' ? parsed as Record<string, unknown> : null;
   } catch (err) {
     if (__DEV__) console.error('[forma] Malformed __forma_islands props block — islands will hydrate without shared props:', err);
@@ -422,7 +440,8 @@ function hydrateIslandRoot(
     // A coded hydration error is logged in every build and passed to onError:
     // in production the island's `error` status would otherwise be its only trace.
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns a detached DOM node is marked error with its code, its sibling unaffected"
-    if (isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island "${componentName}", id=${id})`);
+    // Verified by: src/dom/__tests__/props-loading.test.ts > "props that are JSON but neither an object nor an array mark the island error with FORMA_E_ISLAND_PROPS"
+    if (isIslandPropsError(err) || isHydrateNodeError(err)) reportHydrateNodeError(err, ` (island "${componentName}", id=${id})`);
     else if (__DEV__) console.error(`[forma] Island "${componentName}" (id=${id}) failed:`, err);
     // Dispose whatever was built before the throw: a failed island must not
     // leave live effects writing into DOM nobody will hydrate again.

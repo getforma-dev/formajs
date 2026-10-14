@@ -36,7 +36,7 @@ describe('src/expr has no escape hatch', () => {
   it('the gate is looking at the modules it thinks it is', () => {
     // A gate that silently stops finding files passes forever.
     expect(modules()).toEqual([
-      'allowlist.ts', 'ast.ts', 'errors.ts', 'host.ts', 'index.ts',
+      'allowlist.ts', 'ast.ts', 'cost.ts', 'errors.ts', 'host.ts', 'index.ts',
       'interp.ts', 'lexer.ts', 'parser.ts', 'validate.ts',
     ]);
   });
@@ -88,7 +88,7 @@ describe('src/expr has no escape hatch', () => {
 
   /**
    * Base expressions that may be indexed with a computed key. Every one is a
-   * table this module owns — a frozen allowlist, an arrow-frame array, an AST
+   * table this module owns — a frozen allowlist or cost table, an arrow-frame array, an AST
    * child list, the scope's own getter/setter records, or a result object being
    * built. None is a value that arrived from state, JSON, an attribute or the
    * DOM.
@@ -98,7 +98,8 @@ describe('src/expr has no escape hatch', () => {
    * is the same mistake as widening dispatch, one file further out.
    */
   const OWNED_TABLES = new Set([
-    'ELEMENT_HOST_PROPS', 'ELEMENT_METHOD_RESULT', 'HOF_CALLBACK_PARAMS', 'SAFE_GLOBALS',
+    'COSTS', 'ELEMENT_HOST_PROPS', 'ELEMENT_METHOD_RESULT', 'HOF_CALLBACK_PARAMS', 'NAMES', 'SAFE_GLOBALS',
+    'names',
     'tbl', 'members', 'ctx.scope.getters', 'ctx.scope.setters',
     'f.values', 'node.exprs', 'node.quasis', 'node.values',
     'plain', 'list', 'out',
@@ -109,7 +110,7 @@ describe('src/expr has no escape hatch', () => {
     // being used is an entry that could quietly re-authorise a `recv[key]`
     // whose base happens to share its name.
     const seen = new Set<string>();
-    for (const file of ['interp.ts', 'host.ts']) {
+    for (const file of ['interp.ts', 'host.ts', 'cost.ts']) {
       for (const m of code(file).matchAll(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\[\s*([^\]\n]+)\]/g)) {
         const key = m[2]!;
         if (/^\s*$/.test(key) || /^\d+$/.test(key) || /^(HOST|Symbol\.\w+)$/.test(key.trim())) continue;
@@ -124,7 +125,7 @@ describe('src/expr has no escape hatch', () => {
     // work in the engine this replaces, so it does not appear at all: host
     // members go through Reflect.get on a wrapped DOM target, and plain data
     // goes through Object.getOwnPropertyDescriptor inside ownDataValue.
-    for (const file of ['interp.ts', 'host.ts']) {
+    for (const file of ['interp.ts', 'host.ts', 'cost.ts']) {
       const src = code(file);
       for (const m of src.matchAll(/([A-Za-z_$][\w$]*(?:\.[A-Za-z_$][\w$]*)*)\s*\[\s*([^\]\n]+)\]/g)) {
         const [, base, key] = m;

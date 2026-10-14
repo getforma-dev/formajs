@@ -100,7 +100,12 @@ Four properties, each mechanical:
   `['constructor']`, `[k]` from server JSON, `['cons' + 'tructor']` — is the
   same case.
 - **No loops, no recursion, no function values that escape their callback
-  slot.** Every expression terminates by construction; budgets bound cost.
+  slot.** Every expression terminates by construction; budgets bound cost. A
+  built-in call is charged before it runs, against 250,000 units (one unit is
+  about the cost of an array slot) per evaluation, so
+  `Array.from({length: 12000000})` is refused with `FORMA_E_BUDGET` without
+  building anything, while a search that lowercases 9,000 records of ASCII
+  text is answered (SECURITY.md, "Termination and budgets").
 
 **Value expressions** — `data-text`, `data-show`, `data-if`, `data-list`,
 `data-bind:*`, `data-class:*`, and the right-hand side of `data-computed` —
