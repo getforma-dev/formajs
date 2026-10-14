@@ -10,7 +10,7 @@
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
 import { reportError } from '../reactive/dev.js';
 import { openBatch, closeBatchWithoutRoot } from '../reactive/batch.js';
-import { h, Fragment, fillElement, cleanup, getAbortController, recordListeners } from './element.js';
+import { h, Fragment, fillElement, cleanup, getAbortController, recordListeners, bindInnerHTML } from './element.js';
 import { SVG_NS, contentNs, withNamespace } from './namespace.js';
 import {
   adoptFormControlProperty,
@@ -21,7 +21,7 @@ import {
   writeFormControlProperty,
 } from './form-control.js';
 import { reconcileList, createList } from './list.js';
-import { htmlOf, isTrustedHtml, warnRawAttr } from './trusted-html.js';
+import { htmlOf, isTrustedHtml, warnInnerHtmlChildren, warnRawAttr } from './trusted-html.js';
 import { createShow } from './show.js';
 import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
 
@@ -288,8 +288,11 @@ const PROP_TO_ATTR: Record<string, string> = {
 
 /**
  * Attach event handlers and reactive attribute bindings to an existing
- * SSR element. Static (non-function) props are skipped because they are
- * already baked into the server HTML.
+ * SSR element. Static (non-function) attribute props are skipped because they
+ * are already baked into the server HTML; two kinds of prop are adopted
+ * whether static or not: form-control properties, which are live DOM state,
+ * and `dangerouslySetInnerHTML`, which is the element's content (a walker
+ * ships it empty).
  *
  * Adoption applies the same three rules as h() and the SSR renderers, so this
  * path cannot drift from the other two:
@@ -317,6 +320,21 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
     // (h() does the same after it finishes building the element).
     if (key === 'ref') {
       if (typeof value === 'function') ref = value as (el: Element) => void;
+      continue;
+    }
+
+    // dangerouslySetInnerHTML is the element's content, as in h(): written
+    // through the raw sink (trustedHtml() typed, a string with its development
+    // warning), never as an attribute. A static value is adopted too, since
+    // the walker ships such an element empty; markup the server already holds
+    // is not written again (FORMA-176).
+    // Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "an adopted reactive dangerouslySetInnerHTML shows its content, follows its signal through null and back, and matches client rendering ($name)"
+    // Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "a static dangerouslySetInnerHTML is adopted as h() renders it, from either server output ($name)"
+    // A static `null`, `undefined` or `false` is no prop, as h() and ./ssr
+    // treat it: the children are the content (formajs#32's review, B1).
+    // Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "a falsy static dangerouslySetInnerHTML is no prop: the server's children are adopted and bound (%s)"
+    if (key === 'dangerouslySetInnerHTML') {
+      if (typeof value === 'function' || (value != null && value !== false)) bindInnerHTML(el, value, true);
       continue;
     }
 
@@ -1113,9 +1131,22 @@ export function adoptNode(
     return;
   }
 
+  // dangerouslySetInnerHTML owns the content when its value, or a function's
+  // first value, is markup: applyDynamicProps below binds it, and the
+  // server's nodes are not adopted as children. A `null`, `undefined` or
+  // `false` leaves the content to the children, as in h() (FORMA-176).
+  // Children beside markup are a mistake the renderers disagree on: ./ssr
+  // renders the markup only, the compiler's walker renders the children only,
+  // and h() both; adoption keeps the markup and binds none of the children,
+  // and says so once in development.
+  // Verified by: src/dom/__tests__/adopt-inner-html.test.ts > "a reactive prop whose first value is null keeps the server's fallback child, bound, until markup arrives"
+  const inner = desc.props?.dangerouslySetInnerHTML;
+  const markup = typeof inner === 'function' ? untrack(inner as () => unknown) : inner;
+  warnInnerHtmlChildren(desc.props, desc.children);
+
   if ((ssrEl.localName === 'textarea' || ssrEl.localName === 'title') && isReactiveTextOnly(desc.children)) {
     bindElementText(ssrEl, desc.children);
-  } else {
+  } else if (markup == null || markup === false) {
     adoptChildren(desc.children, ssrEl, ssrEl.firstChild, null);
   }
 

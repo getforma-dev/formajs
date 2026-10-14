@@ -238,14 +238,14 @@ for (const [entry, code] of [
 // the build flag itself, written out at the warning, so every production
 // artifact drops it, code-split chunks and the CDN bundles included; the
 // development twins keep it.
-const RAW_HTML_WARNING = /FORMA_W_(?:RAW_[A-Z_]+|SCRIPT_ELEMENT|TT_POLICY_REFUSED)/;
+const RAW_HTML_WARNING = /FORMA_W_(?:RAW_[A-Z_]+|SCRIPT_ELEMENT|TT_POLICY_REFUSED|INNER_HTML_CHILDREN)/;
 for (const rel of jsArtifacts()) {
   if (!isDevelopment(rel) && RAW_HTML_WARNING.test(read(rel))) {
     fail(`${rel} contains a raw-HTML development warning: the build flag did not fold it away`);
   }
 }
 for (const [entry, codes] of [
-  ['index', ['FORMA_W_RAW_INNER_HTML', 'FORMA_W_RAW_SET_HTML', 'FORMA_W_RAW_TEMPLATE', 'FORMA_W_RAW_SRCDOC', 'FORMA_W_SCRIPT_ELEMENT', 'FORMA_W_TT_POLICY_REFUSED']],
+  ['index', ['FORMA_W_RAW_INNER_HTML', 'FORMA_W_RAW_SET_HTML', 'FORMA_W_RAW_TEMPLATE', 'FORMA_W_RAW_SRCDOC', 'FORMA_W_SCRIPT_ELEMENT', 'FORMA_W_TT_POLICY_REFUSED', 'FORMA_W_INNER_HTML_CHILDREN']],
   ['runtime', ['FORMA_W_RAW_RECONCILE', 'FORMA_W_RAW_RUNTIME_SRCDOC', 'FORMA_W_TT_POLICY_REFUSED']],
   ['runtime-hardened', ['FORMA_W_RAW_RECONCILE', 'FORMA_W_RAW_RUNTIME_SRCDOC', 'FORMA_W_TT_POLICY_REFUSED']],
 ]) {
