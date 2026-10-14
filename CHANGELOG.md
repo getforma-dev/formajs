@@ -53,6 +53,14 @@ each change. Rollback: pin 2.0.3.
   now SVG, which changes what CSS and `instanceof` see.
 - **A reactive `dangerouslySetInnerHTML` is adopted as content** (Fixed,
   FORMA-176), where 2.0.3 wrote it as an attribute.
+- **Two type changes.** `RuntimeDiagnostic.kind`, which `getDiagnostics()`
+  returns, gains `'grant-denied'`, so an exhaustive `switch` with a `never`
+  check stops compiling under `strict` until it handles it. JSX's
+  `dangerouslySetInnerHTML.__html` and `srcdoc` are typed `RawMarkup`
+  (`string` or a `trustedHtml()` value), so a component that reads
+  `props.dangerouslySetInnerHTML.__html` or `props.srcdoc` as a `string` no
+  longer compiles; writing a string still does. Nothing is removed or
+  renamed.
 - **Bigger runtimes.** The CDN runtimes grow by about 6.5 KB gzipped, the core
   entry by about 1.8 KB (Size, below).
 
@@ -144,8 +152,8 @@ FORMA-127, FORMA-173, FORMA-128).
   $el.click()", "a 404 with a JSON body lands in the error: target, not the
   data target"; SR37: "a seeded denial raises one coded diagnostic, whatever
   the page's diagnostics switch says"), `src/expr/__tests__/selector.test.ts`,
-  and 44 new mutation probes (`probes/corpus.json`, `tiered/*`, `selector/*`,
-  `runtime/reconcile-no-deprecation`), all caught. The allowlist snapshot
+  and 55 new mutation probes (`probes/corpus.json`: 47 `tiered/*`, 7
+  `selector/*` and `runtime/reconcile-no-deprecation`), all caught. The allowlist snapshot
   gains `element:needs-navigate.click` and the four `element:selector.*`
   methods: a restriction recorded where the capabilities are, not a new one.
 - **Size** (L-51): measured on `main` with FORMA-126/127 and FORMA-173, the CDN
@@ -465,7 +473,7 @@ FORMA-127, FORMA-173, FORMA-128).
   runtime is one classic script a server can inline as it is" and its control,
   "two builds of the frame runtime are byte-identical"), `e2e/frame.spec.ts`
   (a sandboxed iframe under a hash-only `script-src` and `connect-src 'none'`,
-  in three engines), nine new probes (`frame/*`), all caught.
+  in three engines), ten new probes (`frame/*`), all caught.
 
 - **`browserOnly(component)`, the browser-only marker** (DR-1, L-1, FORMA-119).
   Wraps a component that renders in the browser alone; one name, so a search
@@ -698,7 +706,7 @@ Each keeps working through 2.x, warns in a development build, and goes in
   none, and `scripts/verify-dist.mjs` fails a build in which a production
   file holds one or a development entry lacks one. The CDN bundles have no
   development build, so a page loading the runtime from a CDN logs none.
-  - Tests: `src/dom/__tests__/trusted-html.test.ts` (twenty-one, under a
+  - Tests: `src/dom/__tests__/trusted-html.test.ts` (twenty-four, under a
     simulated Trusted Types engine where it matters, among them "a string to
     each raw sink still renders, and warns once with the sink's code in
     development", "core's own writes raise no Trusted Types violation: mount,

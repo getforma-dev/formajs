@@ -282,7 +282,6 @@ route in the application's Rust server ([STABILITY.md](docs/STABILITY.md#depreca
 Stated here rather than left for a reader to discover:
 
 - **Streaming SSR under strict CSP.** `renderToStream` / `getSwapScript` / `getSwapTag` emit Suspense swap scripts **without a `nonce`**, so a strict `script-src 'nonce-…'` policy blocks them and out-of-order content never swaps in. Use non-streaming SSR under strict CSP. Do not add `'unsafe-inline'` as a workaround.
-- **Island prop sanitization is shallow by default** — see above.
 - **An expression is still code under T1** — the grammar bounds what it can reach, not the fact that it runs. See *Residual risks* above.
 
 ## Supported Versions
