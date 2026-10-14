@@ -179,21 +179,38 @@ If **no** row carries `data-forma-key`, adoption matches rows by index, which is
 right only when the client array is the one the server rendered. So it first
 checks the count. When the number of server rows differs from the array's
 length (more items, fewer, or none at all, as before a signal is seeded), no
-row is adopted, removed or rendered. The island keeps the server's HTML and is
+row is adopted, removed or rendered. The island keeps the server's rows and is
 marked `error`, and the error `FORMA_E_HYDRATE_LIST_COUNT`, naming both counts,
 is logged in every build and passed to `onError` handlers with the source
-`'hydration'`. Listeners adoption attached before the failure are removed, so an
-island in `error` answers no click. `mount()` and `hydrateIsland()` keep
+`'hydration'`. An island in `error` is inert. The listeners attached during
+adoption are removed, on the server's elements and on those adoption built
+through `h()` before the failure. The bindings it adopted are disposed, also
+when you call `hydrateIsland()` yourself and your root lives on. This holds
+for any adoption that fails part-way. Nodes adoption had already replaced or
+added before the failing list (a tag mismatch, a keyed row the server did not
+render) stay as it left them. `mount()` and `hydrateIsland()` keep
 `data-forma-ssr` on the container and do not throw, as for
 `FORMA_E_HYDRATE_NODE` below. Equal counts adopt every row in place, and after
 adoption the list reconciles by key as usual. This check is the bridge until the
 server writes keys for every list (decision brief DR-8).
+
+The server writes an empty list region when the list's data is not an array.
+So a list the client computes for itself, inside a server-rendered island,
+leaves the island inert unless its array starts empty. Start that list's signal
+empty and fill it after activation, or render the list in the browser only. An
+island whose only server content is an empty list region (comments, no element
+or text) is rendered in the browser instead, like any island with no server
+content.
 
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "marks the island error with FORMA_E_HYDRATE_LIST_COUNT and removes or adds no row"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "a server region with no rows and a client array with items fails the island and inserts nothing"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "equal counts adopt 40 unkeyed rows in place by index, as before, and keep reconciling"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "rows that carry data-forma-key keep matching by key when the counts differ"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "an island failed by the row count keeps no handler or binding that adoption attached before the list"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "an island failed by the row count answers no click on the nodes adoption built fresh before the list"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "hydrateIsland() called directly keeps no binding it adopted before the list failed"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "the migration: an empty server region adopts an empty array, and rows filled after activation render"
+Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "an island whose only server content is an empty list region is rendered in the browser, not checked"
 Verified by `src/dom/__tests__/list-adoption-count.test.ts` > "onError receives FORMA_E_HYDRATE_LIST_COUNT from activateIslands, mount() and hydrateIsland(), and each keeps the server rows"
 
 ### Server data flow

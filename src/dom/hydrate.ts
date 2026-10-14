@@ -9,7 +9,7 @@
 
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
 import { reportError } from '../reactive/dev.js';
-import { h, Fragment, fillElement, SVG_NS, cleanup } from './element.js';
+import { h, Fragment, fillElement, SVG_NS, cleanup, getAbortController, recordListeners } from './element.js';
 import {
   adoptFormControlProperty,
   adoptTextareaText,
@@ -22,15 +22,6 @@ import { reconcileList, createList } from './list.js';
 import { createShow } from './show.js';
 import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
 
-// Same symbol identity as element.ts — Symbol.for() guarantees cross-module
-// sharing so cleanup(el) in element.ts aborts controllers created here.
-const ABORT_SYM = Symbol.for('forma-abort');
-
-/**
- * The elements the running adoption attached listeners to, so that an
- * adoption failing part-way can detach them (see hydrateIslandOrFail).
- */
-let listened: Element[] | null = null;
 
 const MATHML_NS = 'http://www.w3.org/1998/Math/MathML';
 
@@ -365,15 +356,9 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
     // Skip non-function values — they are static and already in the SSR HTML
     if (typeof value !== 'function') continue;
 
-    // Event handlers: onXxx — use AbortController so cleanup(el) removes them
+    // Event handlers: onXxx — on h()'s controller, so cleanup(el) removes them
     if (key.charCodeAt(0) === 111 /* o */ && key.charCodeAt(1) === 110 /* n */ && key.length > 2) {
-      let ac = (el as any)[ABORT_SYM] as AbortController | undefined;
-      if (!ac) {
-        ac = new AbortController();
-        (el as any)[ABORT_SYM] = ac;
-        listened?.push(el);
-      }
-      el.addEventListener(key.slice(2).toLowerCase(), value as EventListener, { signal: ac.signal });
+      el.addEventListener(key.slice(2).toLowerCase(), value as EventListener, { signal: getAbortController(el).signal });
       continue;
     }
 
@@ -894,8 +879,8 @@ function adoptListRegion(desc: ListDescriptor, start: Comment, end: Comment): vo
   if (useIndexFallback && ssrElements.length !== currentItems.length) {
     throw hydrateError(
       HYDRATE_LIST_COUNT_ERROR,
-      `the server rendered ${ssrElements.length} rows without data-forma-key, but the client's array has ` +
-      `${currentItems.length} items, so its rows were kept as served and nothing was activated. ` +
+      `the server rendered ${count(ssrElements.length, 'row')} without data-forma-key, but the client's array has ` +
+      `${count(currentItems.length, 'item')}, so its rows were kept as served and nothing was activated. ` +
       "Seed the list's signal from the server's data.",
     );
   }
@@ -1391,6 +1376,9 @@ export const HYDRATE_NODE_ERROR = 'FORMA_E_HYDRATE_NODE';
 /** The code of a list whose rows, matched by index, differ in count from the client's array. */
 export const HYDRATE_LIST_COUNT_ERROR = 'FORMA_E_HYDRATE_LIST_COUNT';
 
+/** `n` and `noun`, plural unless `n` is 1. */
+const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
 /** A coded adoption error, which the callers of hydrateIslandOrFail report. */
 function hydrateError(code: string, message: string): Error {
   const err = new Error(`[forma] ${code}: ${message}`);
@@ -1509,19 +1497,29 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
 
   // 4. Walk descriptor tree top-down against SSR DOM. Adoption that fails
   // part-way (a list's row count, or an effect that throws) leaves the island
-  // `error`, so the listeners it attached before the failure are detached with
-  // it: an island in `error` answers no click. Its effects die with the
-  // caller's root.
+  // `error` and inert: the listeners attached during the walk are detached,
+  // on the server's elements and on those it built through h() (a tag-drift
+  // replacement, a fresh keyed row, a show branch the server left empty), and
+  // the walk runs in its own root, disposed on failure, so no binding adopted
+  // before the failure stays live, even for a hydrateIsland() caller whose
+  // own root lives on. On success that root is owned by the caller's.
   // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "an island failed by the row count keeps no handler or binding that adoption attached before the list"
-  const outer = listened;
-  const attached: Element[] = (listened = []);
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "an island failed by the row count answers no click on the nodes adoption built fresh before the list"
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "hydrateIsland() called directly keeps no binding it adopted before the list failed"
+  const attached: Element[] = [];
+  const outer = recordListeners(attached);
+  let disposeWalk: (() => void) | undefined;
   try {
-    adopt(descriptor, target);
+    createRoot((dispose) => {
+      disposeWalk = dispose;
+      adopt(descriptor, target);
+    });
   } catch (err) {
+    disposeWalk?.();
     for (const el of attached) cleanup(el);
     throw err;
   } finally {
-    listened = outer;
+    recordListeners(outer);
   }
 
   // 5. Remove SSR marker

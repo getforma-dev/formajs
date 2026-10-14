@@ -176,6 +176,16 @@
   "note": "reactive xlink:href writes javascript: URLs"
  },
  {
+  "id": "element/fresh-adoption-listeners-unrecorded",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    (el as any)[ABORT_SYM] = controller;\n    listened?.push(el);",
+  "replace": "    (el as any)[ABORT_SYM] = controller;",
+  "note": "a node adoption builds through h() before a failing list (a tag-drift replacement, a fresh keyed row, a show branch) keeps its click handler on an island in error. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"an island failed by the row count answers no click on the nodes adoption built fresh before the list\""
+ },
+ {
   "id": "expr/array-index-write-unbounded",
   "file": "src/expr/interp.ts",
   "tags": [
@@ -734,6 +744,16 @@
   "find": "    for (const el of attached) cleanup(el);",
   "replace": "",
   "note": "an island whose adoption failed part-way stays error but still answers clicks on the elements adopted before the failure. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"an island failed by the row count keeps no handler or binding that adoption attached before the list\""
+ },
+ {
+  "id": "hydrate/failed-walk-bindings-live",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    disposeWalk?.();\n",
+  "replace": "",
+  "note": "a binding adopted before a failing list stays live while a hydrateIsland() caller's root lives, writing into the server's DOM. Verified by: src/dom/__tests__/list-adoption-count.test.ts > \"hydrateIsland() called directly keeps no binding it adopted before the list failed\""
  },
  {
   "id": "hydrate/fallback-children-html",

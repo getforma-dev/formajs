@@ -10,19 +10,29 @@ All notable changes to this project will be documented in this file.
   rows** (FORMA-123, DR-8). Server rows without `data-forma-key` are matched by
   index. Before, a client array shorter than the server's rows had the extra
   rows removed and a longer one had rows rendered fresh, silently (ksx's #5 lost
-  the server rows absent from a list's array before its state was seeded). Now, when the counts
-  differ (including an empty array, or an empty server region with items), no
-  row is adopted, removed or rendered: the island keeps the server's HTML and is
-  marked `error`, and `FORMA_E_HYDRATE_LIST_COUNT`, naming both counts, is
-  logged in every build and passed to `onError` handlers (source
-  `'hydration'`). Listeners adoption attached before the failure are removed,
-  so an island in `error` answers no click; this holds for any adoption that
-  fails part-way. `mount()` and `hydrateIsland()` keep `data-forma-ssr` and do
-  not throw, as for `FORMA_E_HYDRATE_NODE`. Equal counts adopt as before, and
-  rows that carry `data-forma-key` keep matching by key. Applications whose
-  state reaches the island from the server's data see no change. Core's ESM
-  entry grows by 192 B gzipped (27,895 B, gate 30,000 B unchanged); the CDN
-  runtimes do not include adoption and are unchanged.
+  the server rows absent from a list's array before its state was seeded). Now,
+  when the counts differ (including an empty array, or an empty server region
+  with items), no row is adopted, removed or rendered: the island keeps the
+  server's rows and is marked `error`, and `FORMA_E_HYDRATE_LIST_COUNT`, naming
+  both counts, is logged in every build and passed to `onError` handlers
+  (source `'hydration'`). An island in `error` is inert: the listeners attached
+  during adoption are removed, on the server's elements and on any adoption
+  built through `h()` before the failure, and the bindings it adopted are
+  disposed, also for a direct `hydrateIsland()` caller whose root lives on.
+  This holds for any adoption that fails part-way. Nodes adoption replaced or
+  added before the failing list (a tag mismatch, a fresh keyed row) stay as it
+  left them. `mount()` and `hydrateIsland()` keep `data-forma-ssr` and do not
+  throw, as for `FORMA_E_HYDRATE_NODE`. Equal counts adopt as before, and rows
+  that carry `data-forma-key` keep matching by key. Applications whose state
+  reaches the island from the server's data see no change.
+  **Migration:** the server writes an empty list region when the list's data
+  is not an array, so a list the client computes for itself inside a
+  server-rendered island was rendered fresh on 2.0.x and now leaves the island
+  inert. Start that list's signal empty and fill it after activation (an empty
+  array adopts the empty region), or render the list in the browser only.
+  Core's ESM entry grows by 254 B gzipped (27,957 B, gate 30,000 B unchanged)
+  and the CDN ESM bundle by 252 B (26,866 B, gate 29,000 B); the CDN runtimes do
+  not include adoption and are unchanged.
 
 ### CI
 

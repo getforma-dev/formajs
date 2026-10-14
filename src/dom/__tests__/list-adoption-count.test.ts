@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, afterEach, vi } from 'vitest';
-import { createSignal, onError } from 'forma/reactive';
+import { createSignal, createRoot, onError } from 'forma/reactive';
 import { h } from '../element';
 import { mount } from '../mount';
 import { activateIslands } from '../activate';
@@ -190,6 +190,105 @@ describe('list adoption row-count check', () => {
     expect(island.getAttribute('data-forma-status')).toBe('error');
     expect(island.innerHTML).toBe(before);
     expect(received).toEqual([[CODE, 'hydration']]);
+  });
+
+  it('the migration: an empty server region adopts an empty array, and rows filled after activation render', () => {
+    document.body.innerHTML =
+      `<div data-forma-island="0" data-forma-component="Later"><h2>Recent</h2>${serverList([])}</div>`;
+    const [items, setItems] = createSignal<string[]>([]);
+    const { received } = captureErrors(() => {
+      activateIslands({ Later: () => h('div', null, h('h2', null, 'Recent'), h('ul', null, createList(items, (x) => x, (x) => h('li', null, x)))) });
+    });
+    const island = document.querySelector('[data-forma-island="0"]')!;
+    expect(island.getAttribute('data-forma-status')).toBe('active');
+    expect(received).toEqual([]);
+    for (const next of [['a', 'b'], ['b'], ['c', 'b', 'a']]) {
+      setItems(next);
+      expect(Array.from(island.querySelectorAll('li'), (li) => li.textContent)).toEqual(next);
+    }
+  });
+
+  it('an island whose only server content is an empty list region is rendered in the browser, not checked', () => {
+    // No element and no text: hydrateIsland's no-SSR-content fallback renders the component.
+    document.body.innerHTML = '<div data-forma-island="0" data-forma-component="Bare"><!--f:l0--><!--/f:l0--></div>';
+    const { received } = captureErrors(() => {
+      activateIslands({ Bare: () => h('div', null, createList(() => ['a', 'b'], (x) => x, (x) => h('p', null, x))) });
+    });
+    const island = document.querySelector('[data-forma-island="0"]')!;
+    expect(island.getAttribute('data-forma-status')).toBe('active');
+    expect(received).toEqual([]);
+    expect(Array.from(island.querySelectorAll('p'), (p) => p.textContent)).toEqual(['a', 'b']);
+  });
+
+  it('the coded message counts a single row or item in the singular', () => {
+    document.body.innerHTML =
+      `<div data-forma-island="0" data-forma-component="One">${serverList(['a'])}</div>` +
+      `<div data-forma-island="1" data-forma-component="Two">${serverList(['a', 'b'])}</div>`;
+    const { logged } = captureErrors(() => {
+      activateIslands({ One: () => listIsland(() => []), Two: () => listIsland(() => ['a']) });
+    });
+    const coded = logged.filter((line) => line.includes(CODE));
+    expect(coded).toHaveLength(2);
+    expect(coded[0]).toContain('rendered 1 row without');
+    expect(coded[0]).toContain('has 0 items,');
+    expect(coded[1]).toContain('rendered 2 rows without');
+    expect(coded[1]).toContain('has 1 item,');
+  });
+
+  it('an island failed by the row count answers no click on the nodes adoption built fresh before the list', () => {
+    // Before the failing list, adoption builds three nodes through h(): a
+    // button replacing the server's span (tag drift), a keyed row the server
+    // did not render, and a show branch the server left empty.
+    document.body.innerHTML =
+      '<div data-forma-island="0" data-forma-component="Fresh"><span>go</span>' +
+      '<ol><!--f:l0--><li data-forma-key="a">a</li><!--/f:l0--></ol>' +
+      '<section><!--f:s0--><!--/f:s0--></section>' +
+      `${serverList(['x', 'y'])}</div>`;
+    const clicks: string[] = [];
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    captureErrors(() => {
+      activateIslands({
+        Fresh: () => h('div', null,
+          h('button', { id: 'drift', onClick: () => clicks.push('drift') }, 'go'),
+          h('ol', null, createList(() => ['a', 'b'], (k) => k, (k) => h('li', { id: `row-${k}`, onClick: () => clicks.push(k) }, k))),
+          h('section', null, createShow(() => true, () => h('button', { id: 'branch', onClick: () => clicks.push('branch') }, 'b'))),
+          h('ul', null, createList(() => ['x'], (k) => k, (k) => h('li', null, k)))),
+      });
+    });
+    warn.mockRestore();
+
+    const island = document.querySelector('[data-forma-island="0"]')!;
+    expect(island.getAttribute('data-forma-status')).toBe('error');
+    // The fresh nodes are in the island (adoption built them before the list
+    // failed), beside the adopted keyed row; none of them answers.
+    const nodes = ['#drift', '#row-b', '#branch', 'li[data-forma-key="a"]'].map((sel) => island.querySelector<HTMLElement>(sel));
+    expect(nodes.map((el) => el !== null)).toEqual([true, true, true, true]);
+    for (const el of nodes) el!.click();
+    expect(clicks).toEqual([]);
+  });
+
+  it('hydrateIsland() called directly keeps no binding it adopted before the list failed', () => {
+    document.body.innerHTML = `<div id="direct" data-forma-ssr><div><span>idle</span>${serverList(['a', 'b'])}</div></div>`;
+    const target = document.getElementById('direct')!;
+    const [label, setLabel] = createSignal('idle');
+    let dispose!: () => void;
+
+    captureErrors(() => {
+      createRoot((d) => {
+        dispose = d;
+        hydrateIsland(() => h('div', null,
+          h('span', null, () => label()),
+          h('ul', null, createList(() => ['a'], (x) => x, (x) => h('li', null, x)))), target);
+      });
+    });
+
+    // The caller's root is alive, yet nothing adopted before the failure writes.
+    for (const next of ['busy', 'done', 'idle again']) {
+      setLabel(next);
+      expect(target.querySelector('span')!.textContent).toBe('idle');
+    }
+    expect(target.hasAttribute('data-forma-ssr')).toBe(true);
+    dispose();
   });
 
   it('an island failed by the row count keeps no handler or binding that adoption attached before the list', () => {
