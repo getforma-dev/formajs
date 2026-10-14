@@ -141,7 +141,7 @@
  *   Configuration (on <script> tag):
  *     data-forma-diagnostics="true"      Enable expression diagnostics
  *     data-forma-auto-containment="true" Enable CSS containment hints
- *     data-forma-expr-budget="100000"    Per-evaluation interpreter step budget
+ *     data-forma-expr-budget="100000"    Interpreter step budget, one per task
  *
  * ── MAGIC VARIABLES ──────────────────────────────────────────────────
  *
@@ -164,12 +164,17 @@ import {
   compileExpression,
   compileHandler,
   evaluateExpression,
+  GROW,
   hostFn,
   hostObject,
   isExprError,
+  isHost,
   runHandler,
   setStepBudget,
+  weigh,
   type FormaExprError,
+  type Meter,
+  type TextCost,
 } from './expr';
 
 // ── Attribute safety & scope ──
@@ -257,7 +262,7 @@ function dbg(...args: unknown[]): void {
 interface RuntimeConfig {
   diagnostics?: boolean;
   autoContainment?: boolean;
-  /** Per-evaluation interpreter step budget (`data-forma-expr-budget`). */
+  /** Interpreter step budget, one per task (`data-forma-expr-budget`). */
   exprBudget?: number;
 }
 
@@ -529,7 +534,9 @@ interface HandlerBuildResult {
 // source text), but the CLOSURE that binds it to a scope is not, so it is
 // memoised per scope — one entry per (scope, expression) instead of one per
 // (scope, expression, evaluation).
-const scopeExpressionCache = new WeakMap<Scope, Map<string, () => unknown>>();
+/** A compiled expression bound to a scope; `text` prices what the caller will convert. */
+type Evaluate = (text?: TextCost) => unknown;
+const scopeExpressionCache = new WeakMap<Scope, Map<string, Evaluate>>();
 const scopeHandlerCache = new WeakMap<Scope, Map<string, HandlerBuildResult>>();
 
 // ── Compiled template cache ──
@@ -1161,6 +1168,106 @@ function getScopeCache<T>(cache: WeakMap<Scope, Map<string, T>>, scope: Scope): 
  */
 const EXPR_FAILED = Symbol('forma-expression-failed');
 
+/**
+ * THE TASK'S BUDGET (FORMA-028). Every binding evaluated in one task counts on
+ * from what the evaluations before it in that task spent, so the step and
+ * allocation budgets bound a task, not each binding in it: ten bindings at the
+ * cap in one widget ran 382 ms in one task when each had its own.
+ *
+ * A binding refused only because earlier work in its task spent the budget is
+ * not reported: it re-runs in the next task, where it starts first (`later`).
+ * One that is over the budget on its own, in a task it started, is reported
+ * as before. The meter is zeroed by a timer armed when a task first spends
+ * from it, and when an event it has not seen reaches a handler or a
+ * `data-model` input (`begin`).
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "ten bindings at the cap spend one budget per task and all of them render"
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding over the budget on its own is reported, not retried"
+ */
+const meter: Meter = { steps: 0, cost: 0 };
+let meterEvent: Event | null = null;
+let armed = false;
+let deferred = false;
+const [retries, setRetries] = createSignal(0);
+/** Computeds to evaluate first, at the top of the next task, before their readers. */
+const staleCells = new Set<() => unknown>();
+
+/**
+ * An event the runtime has not seen starts a task: the meter is zeroed, as the
+ * timer would have, in case the event ran first (input is scheduled ahead of
+ * timers). Handlers, and `data-model` writes, run under it.
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding a keystroke updates starts on a fresh budget"
+ */
+function begin(e: Event): void {
+  if (e !== meterEvent) {
+    meter.steps = meter.cost = 0;
+    meterEvent = e;
+  }
+  spend();
+}
+
+/** Arm the timer that zeroes the meter once this task is over. */
+function spend(): void {
+  if (!armed) {
+    armed = true;
+    setTimeout(nextTask);
+  }
+}
+
+function nextTask(): void {
+  armed = false;
+  meter.steps = meter.cost = 0;
+  meterEvent = null;
+  if (!deferred) return;
+  deferred = false;
+  const cells = [...staleCells];
+  staleCells.clear();
+  batch(() => {
+    setRetries((n) => n + 1);
+    for (const cell of cells) cell();
+  });
+}
+
+/** Re-run the binding (or computed) being evaluated in the next task. */
+function later(): void {
+  retries();
+  deferred = true;
+  spend();
+}
+
+/**
+ * What the runtime's own conversion of a result to text builds (FORMA-025):
+ * `String()` of an array or object joins every element, so a list of a
+ * thousand references to one long string is three hundred million
+ * characters. A string is written as it is; a host value renders as a label.
+ * Verified by: src/__tests__/runtime-text-cost.test.ts > "data-text of a value heavier than the budget is refused before it is converted"
+ */
+const asText: TextCost = (v, room) => (typeof v === 'object' && v !== null && !isHost(v) ? weigh(v, room) : 0);
+
+/**
+ * Charge a conversion of a value no expression returned (a `data-model` or
+ * `data-persist` state key read directly), as `evaluator` charges a result.
+ * False when refused: reported, or retried in the next task.
+ * Verified by: src/__tests__/runtime-text-cost.test.ts > "every other conversion of a result to text is refused before it runs"
+ */
+function converts(el: Element, scope: Scope, what: string, value: unknown): boolean {
+  try {
+    spend();
+    evaluateExpression(NOTHING, scope, meter, (_, room) => asText(value, room));
+    return true;
+  } catch (err) {
+    if (!isExprError(err)) throw err;
+    if (err.defer) later();
+    else reportExprFailure(el, what, err);
+    return false;
+  }
+}
+
+/** An expression that does nothing, for pricing a value no expression returned. */
+const NOTHING = compileExpression('0');
+
+/** A value a `data-list` row template places in text, once per row it appears in. */
+const placed = (v: unknown, room: number): number => (typeof v === 'string' ? v.length * GROW : asText(v, room));
+
 /** Strip one balanced `{ … }` wrapper, honouring string and template literals. */
 function stripBraces(raw: string): string {
   const trimmed = raw.trim();
@@ -1204,7 +1311,7 @@ function reportHandlerFailure(el: Element | null, expr: string, err: FormaExprEr
  * directive. The returned closure THROWS `FormaExprError` on an evaluation-time
  * denial; it never answers `undefined` to mean "failed".
  */
-function buildEvaluator(expr: string, scope: Scope, el: Element | null): (() => unknown) | null {
+function buildEvaluator(expr: string, scope: Scope, el: Element | null): Evaluate | null {
   const cleaned = stripBraces(expr);
   const cache = getScopeCache(scopeExpressionCache, scope);
   const cached = cache.get(cleaned);
@@ -1218,7 +1325,10 @@ function buildEvaluator(expr: string, scope: Scope, el: Element | null): (() => 
     reportExprFailure(el, cleaned, err);
     return null;
   }
-  const run = () => evaluateExpression(compiled, scope);
+  const run: Evaluate = (text) => {
+    spend();
+    return evaluateExpression(compiled, scope, meter, text);
+  };
   cache.set(cleaned, run);
   return run;
 }
@@ -1260,8 +1370,15 @@ function buildHandler(expr: string, scope: Scope, el: Element | null): HandlerBu
     const wrapped = hostObject('event', e, '$event');
     eventLocals.$event = wrapped;
     eventLocals.event = wrapped;
+    // A handler cannot be retried later, so an event it has not seen starts a
+    // task: the meter is zeroed. Every handler the same event reaches (one per
+    // element it bubbles through) shares what is left, and so do the bindings
+    // they update. A handler dispatched from inside an evaluation (`$el.click()`,
+    // `$dispatch`) spends that evaluation's budget whatever the meter holds.
+    // Verified by: src/__tests__/runtime-task-budget.test.ts > "the handlers one event reaches share one budget"
+    begin(e);
     try {
-      batch(() => runHandler(program, eventScope));
+      batch(() => runHandler(program, eventScope, meter));
     } catch (err) {
       if (!isExprError(err)) throw err;
       reportHandlerFailure((e.currentTarget as Element | null) ?? el, cleaned, err);
@@ -1397,15 +1514,19 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // DOM keeps whatever it had instead of being handed the string "undefined".
   // Verified by: src/__tests__/runtime-csp-default.test.ts > "marks the element with data-forma-expr-error when an expression cannot be compiled"
   // Verified by: src/__tests__/failure-semantics.test.ts > "a denied expression leaves the previous text in place and never renders undefined"
-  const evaluator = (expression: string): (() => unknown) => {
+  // A refusal marked `defer` (the task's budget was spent before this binding
+  // started) is not reported: the binding re-runs in the next task.
+  // `text` prices the conversion the directive makes of the result (FORMA-025).
+  const evaluator = (expression: string, text?: TextCost): (() => unknown) => {
     const fn = buildEvaluator(expression, scope, el);
     if (!fn) return () => EXPR_FAILED;
     return () => {
       try {
-        return fn();
+        return fn(text);
       } catch (err) {
         if (!isExprError(err)) throw err;
-        reportExprFailure(el, stripBraces(expression), err);
+        if (err.defer) later();
+        else reportExprFailure(el, stripBraces(expression), err);
         return EXPR_FAILED;
       }
     };
@@ -1443,11 +1564,19 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         // which makes every reader of it fail loudly with its own diagnostic.
         const evaluate = buildEvaluator(`{${expr}}`, scope, el);
         if (evaluate) {
-          const cell = createComputed((): { ok: true; v: unknown } | { ok: false; e: FormaExprError } => {
+          // Read inside a binding, a computed spends that binding's budget. If
+          // it is refused for what was spent before it, it is evaluated again
+          // at the top of the next task, before the bindings that read it.
+          // Verified by: src/__tests__/runtime-task-budget.test.ts > "a computed refused inside a heavy reader is evaluated again on its own"
+          const cell: () => { ok: true; v: unknown } | { ok: false; e: FormaExprError } = createComputed(() => {
             try {
               return { ok: true, v: evaluate() };
             } catch (err) {
               if (!isExprError(err)) throw err;
+              if (err.defer) {
+                later();
+                staleCells.add(cell);
+              }
               return { ok: false, e: err };
             }
           });
@@ -1469,7 +1598,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-text="{expr}"
   const textExpr = (!known || known.has('data-text')) ? el.getAttribute('data-text') : null;
   if (textExpr) {
-    const evaluate = evaluator(textExpr);
+    const evaluate = evaluator(textExpr, asText);
     const dispose = internalEffect(() => {
       const value = evaluate();
       if (value === EXPR_FAILED) return;
@@ -1579,7 +1708,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       const tag = input.tagName;
       const dispose = internalEffect(() => {
         const val = getter();
-        if (val === EXPR_FAILED) return;
+        if (val === EXPR_FAILED || !converts(el, scope, prop, val)) return;
         const type = input.type;
         if (type === 'checkbox') {
           input.checked = !!val;
@@ -1601,7 +1730,8 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       });
       disposers.push(dispose);
       const event = (input.type === 'checkbox' || input.type === 'radio' || tag === 'SELECT') ? 'change' : 'input';
-      const onModelInput = () => {
+      const onModelInput = (e: Event) => {
+        begin(e);
         const type = input.type;
         if (type === 'checkbox') {
           setter(input.checked);
@@ -1680,7 +1810,7 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       disposers.push(dispose);
     } else if (name.startsWith('data-bind:')) {
       const attrName = name.slice(10); // 'data-bind:'.length === 10
-      const evaluate = evaluator(attr.value);
+      const evaluate = evaluator(attr.value, asText);
       const dispose = internalEffect(() => {
         const val = evaluate();
         if (val === EXPR_FAILED) return;
@@ -1723,7 +1853,9 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         if (saved !== null) setter(JSON.parse(saved));
       } catch { /* ignore parse errors */ }
       const dispose = internalEffect(() => {
-        try { localStorage.setItem(key, JSON.stringify(getter())); } catch { /* quota */ }
+        const value = getter();
+        if (!converts(el, scope, prop, value)) return;
+        try { localStorage.setItem(key, JSON.stringify(value)); } catch { /* quota */ }
       });
       disposers.push(dispose);
     }
@@ -1732,7 +1864,6 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
   // data-list="{expr}" — keyed reconciliation with LIS
   const listExpr = (!known || known.has('data-list')) ? el.getAttribute('data-list') : null;
   if (listExpr) {
-    const evaluate = evaluator(listExpr);
     const templateEl = el.children[0] as Element | undefined;
     if (templateEl) {
       const template = templateEl.cloneNode(true) as Element;
@@ -1744,6 +1875,25 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
       const keyProp = keyAttr
         ? keyAttr.replace(RE_STRIP_ITEM_BRACES, '').trim()
         : null;
+
+      // Every row places its item's `{item.x}` values in text, and its key is
+      // converted with String(): priced with the list's evaluation, per row,
+      // before any row is built (FORMA-025).
+      // Verified by: src/__tests__/runtime-text-cost.test.ts > "every other conversion of a result to text is refused before it runs"
+      const fields = [...template.outerHTML.matchAll(/\{item\.?(\w*)\}/g)].map((m) => m[1]!);
+      if (keyProp) fields.push(keyProp);
+      const evaluate = evaluator(listExpr, (items, room) => {
+        let n = 0;
+        if (Array.isArray(items)) {
+          for (const item of items) {
+            for (const f of fields) {
+              if (n > room) return n;
+              n += placed(f ? (item as Record<string, unknown> | null)?.[f] : item, room);
+            }
+          }
+        }
+        return n;
+      });
 
       // Parse transition spec from the list container element
       const listTransition = parseTransitionSpec(el);
@@ -2308,6 +2458,9 @@ function destroyRuntime(): void {
     unmountScope(root);
   }
   clearExpressionCache();
+  // Nothing mounted is left to retry, and the next init starts a fresh task.
+  staleCells.clear();
+  meter.steps = meter.cost = 0;
 }
 
 /**

@@ -59,11 +59,19 @@ export type Stmt =
  * four times what its case-mapping tier charges: through the runtime at 4x,
  * one `toLowerCase` of 8 million such characters took 108 ms median and 115 ms
  * at most, refused only afterwards by the 1 MiB result cap, and seven calls on
- * 1 million in one evaluation 92 ms, answered (SECURITY.md, FORMA-028).
+ * 1 million in one evaluation 92 ms, answered (SECURITY.md). Since
+ * FORMA-028 a case-mapping call past `MAX_STRING_LENGTH` is refused before it
+ * runs, so that one call is gone; the seven calls remain.
  * `node scripts/measure-alloc-budget.mjs [--cap=N] [--gc] [--chars]`
- * re-measures it. The budget is per evaluation (one binding or one handler
- * run), not per task. Comments inside this object literal would ship in the
- * runtime bundles, so they live here.
+ * re-measures it, and `node scripts/measure-task-budget.mjs` the hostile and
+ * ordinary-search corpora.
+ *
+ * Both evaluation-time budgets are one per task in the runtime (FORMA-028):
+ * every evaluation it starts in a task counts on from what the task has spent
+ * (`Meter` in interp.ts), and one nested in another shares the running one's.
+ * Called without a meter, as the engine's own API is, they are one per
+ * evaluation. Comments inside this object literal would ship in the runtime
+ * bundles, so they live here.
  */
 export const LIMITS = Object.freeze({
   MAX_SOURCE_LENGTH: 4096,

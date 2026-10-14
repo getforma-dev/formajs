@@ -41,6 +41,12 @@ export interface FormaExprError extends Error {
   code: ExprErrorCode;
   /** 0-based column in the expression source, or -1 when not positional. */
   column: number;
+  /**
+   * Set on a `FORMA_E_BUDGET` refusal when the evaluation began with part of
+   * its task's budget already spent (FORMA-028): run first in a later task it
+   * may fit, so the runtime retries it there instead of reporting it.
+   */
+  defer?: boolean;
 }
 
 /** Build a reportable expression error. */
