@@ -8,6 +8,7 @@
  */
 
 import { createEffect } from 'forma/reactive';
+import { contentNs, withNamespace } from './namespace.js';
 
 /**
  * Render content into an external DOM container.
@@ -44,8 +45,11 @@ export function createPortal(
     mountedNode = null;
   };
 
+  // The content is built in the target's content namespace: SVG into an svg.
+  // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a portal into an svg, and mount() into an svg, create SVG elements"
+  const ns = contentNs(resolvedTarget);
   createEffect(() => {
-    const node = children();
+    const node = withNamespace(ns, children);
 
     mountedNode = node;
     resolvedTarget.appendChild(node);

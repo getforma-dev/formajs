@@ -14,6 +14,7 @@
  */
 
 import { internalEffect, untrack, createRoot, registerDisposer } from 'forma/reactive';
+import { getNamespace, insertNs, withNamespace } from './namespace.js';
 
 /** A single branch for {@link createSwitch}. */
 export interface SwitchCase<T> {
@@ -60,6 +61,11 @@ export function createSwitch<T>(
   const cache = new Map<T, CachedBranch>();
   let currentNode: Node | null = null;
   let currentMatch: T | typeof UNSET = UNSET;
+  // The namespace cases are built in: the parent's content namespace once the
+  // markers are in an element; for the first render, the one createSwitch was
+  // called in (SVG inside svg()). A cached case keeps the namespace it was
+  // built in.
+  let ns = getNamespace();
 
   const switchDispose = internalEffect(() => {
     const val = value();
@@ -75,6 +81,9 @@ export function createSwitch<T>(
       if (DEBUG) console.warn('[forma:switch] markers not in DOM yet, skipping');
       return;
     }
+    // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "createSwitch cases inside an svg are SVG, each rendered once, cached cases included"
+    const into = insertNs(parent);
+    if (into !== undefined) ns = into;
 
     // Remove current content between markers.
     // If currentNode was a DocumentFragment, its children transferred to the
@@ -115,7 +124,7 @@ export function createSwitch<T>(
         let branchDispose!: () => void;
         const node = createRoot((dispose) => {
           branchDispose = dispose;
-          return untrack(() => matchedCase.render());
+          return untrack(() => withNamespace(ns, matchedCase.render));
         });
         entry = { node, dispose: branchDispose };
         cache.set(val, entry);
@@ -127,7 +136,7 @@ export function createSwitch<T>(
     } else {
       // Fallback — not cached, effects are owned by the switch effect
       // and correctly torn down on next re-run.
-      currentNode = fallback?.() ?? null;
+      currentNode = fallback ? withNamespace(ns, fallback) : null;
       if (DEBUG) console.log('[forma:switch] no match, using fallback');
     }
 

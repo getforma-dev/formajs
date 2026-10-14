@@ -17,6 +17,7 @@
 import { createSignal, internalEffect, untrack, createRoot, registerDisposer, __DEV__ } from '../reactive';
 import { hydrating } from './hydrate.js';
 import { deactivateIsland, hasScheduledOrActiveIslands } from './activate.js';
+import { getNamespace, insertNs, withNamespace } from './namespace.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -534,6 +535,11 @@ export function createList<T>(
   fragment.appendChild(startMarker);
   fragment.appendChild(endMarker);
 
+  // The namespace rows are built in: the parent's content namespace once the
+  // markers are in an element; for the first render, into this fragment, the
+  // one being built in when createList was called (SVG inside svg()).
+  let ns = getNamespace();
+
   // Cache: key -> { element, item, setIndex }
   let cache = new Map<string | number, CachedItem<T>>();
   let currentNodes: Node[] = [];
@@ -550,7 +556,7 @@ export function createList<T>(
     const element = createRoot((stop) => {
       dispose = stop;
       try {
-        return untrack(() => renderFn(item, getIndex));
+        return untrack(() => withNamespace(ns, () => renderFn(item, getIndex)));
       } catch (error) {
         // Finish root setup before disposal so even a partially built row's
         // graph and user cleanups can be torn down.
@@ -577,6 +583,9 @@ export function createList<T>(
       // This can happen if the effect fires synchronously before mount.
       return;
     }
+    // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "list rows inside an svg are SVG when first rendered inside svg(), and when added or moved later without it"
+    const into = insertNs(parent);
+    if (into !== undefined) ns = into;
 
     // Edge case: non-array
     if (!Array.isArray(newItems)) {
