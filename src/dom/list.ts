@@ -17,7 +17,7 @@
 import { createSignal, internalEffect, untrack, createRoot, registerDisposer, __DEV__ } from '../reactive';
 import { hydrating } from './hydrate.js';
 import { deactivateIsland, hasScheduledOrActiveIslands } from './activate.js';
-import { NS_SYM, getNamespace, insertNs, withNamespace } from './namespace.js';
+import { getNamespace, insertNs, withNamespace } from './namespace.js';
 
 // ---------------------------------------------------------------------------
 // Types
@@ -536,7 +536,8 @@ export function createList<T>(
   fragment.appendChild(endMarker);
 
   // The namespace rows are built in: the parent's content namespace once the
-  // markers are in an element; until then the one createList was called in.
+  // markers are in an element; for the first render, into this fragment, the
+  // one being built in when createList was called (SVG inside svg()).
   let ns = getNamespace();
 
   // Cache: key -> { element, item, setIndex }
@@ -582,36 +583,10 @@ export function createList<T>(
       // This can happen if the effect fires synchronously before mount.
       return;
     }
+    // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "list rows inside an svg are SVG when first rendered inside svg(), and when added or moved later without it"
     const into = insertNs(parent);
     if (into !== undefined) ns = into;
-    update(newItems, parent);
-  });
 
-  // Inserted by h() into content of another namespace than the rows were
-  // built in (the first render happens in this fragment, before the parent is
-  // known): build every row again there.
-  // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "list rows inside an svg are SVG when first rendered, when added and when moved, 40 and more"
-  (startMarker as any)[NS_SYM] = (to: string | null): null => {
-    const parent = startMarker.parentNode;
-    if (to !== ns && parent) {
-      ns = to;
-      for (const node of currentNodes) {
-        if (node.parentNode === parent) {
-          deactivateIslandsIn(node);
-          parent.removeChild(node);
-        }
-      }
-      for (const cached of cache.values()) cached.dispose();
-      cache = new Map();
-      currentNodes = [];
-      currentItems = [];
-      update(untrack(items), parent);
-    }
-    return null;
-  };
-
-  /** Reconcile the rows between the markers with `newItems`. */
-  function update(newItems: T[], parent: Node): void {
     // Edge case: non-array
     if (!Array.isArray(newItems)) {
       if (__DEV__) {
@@ -719,7 +694,7 @@ export function createList<T>(
 
     currentNodes = result.nodes;
     currentItems = result.items;
-  }
+  });
 
   // Defense-in-depth: when the parent root is disposed, explicitly dispose
   // all cached item roots and clear references. Item roots are already

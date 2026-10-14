@@ -1,19 +1,20 @@
 /**
- * Client-rendered SVG and MathML get the parser's namespaces without `svg()`
- * (FORMA-026; decision brief DR-9).
+ * SVG and MathML namespaces in client rendering and adoption (FORMA-026;
+ * decision brief DR-9).
  *
- * `h()` builds a child before its parent exists, so a tag that is both HTML
- * and SVG (`a`, `title`, `script`, `style`, `font`) was created as HTML even
- * inside an `<svg>`, where the parser makes it SVG. Content built after
- * activation inside an SVG (a `createShow` branch, a list row, a switch case)
- * had the same defect. The namespace is now resolved from the parent: where
- * the parent is known the content is built in its namespace, and an element
- * built before it was known is rebuilt when it is inserted.
+ * A tag that is both HTML and SVG (`a`, `title`, `script`, `style`, `font`)
+ * takes the namespace of the content being built. Where the parent is known
+ * (a reactive child, a control-flow helper's renders once it is in the
+ * document, a portal, `mount()`, adoption) that is the parent's content
+ * namespace, as the parser gives it. A child passed to h() is built before its
+ * parent exists, so it is HTML unless the tree is built inside `svg()`; h()
+ * warns about it in development builds. SVG and MathML names are created in
+ * their namespace wherever they appear.
  */
 
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { createSignal, createRoot } from 'forma/reactive';
-import { h, svg, Fragment } from '../element';
+import { h, svg } from '../element';
 import { createShow } from '../show';
 import { createList } from '../list';
 import { createSwitch } from '../switch';
@@ -26,6 +27,7 @@ const MATHML = 'http://www.w3.org/1998/Math/MathML';
 
 afterEach(() => {
   document.body.innerHTML = '';
+  vi.restoreAllMocks();
 });
 
 /** `localName:namespace` for `root` and every element under it. */
@@ -39,73 +41,63 @@ function parsed(html: string): Element {
   return host.firstElementChild!;
 }
 
-describe('h() resolves a dual-use tag from its parent', () => {
-  it('builds a title and an a inside an svg in the SVG namespace without svg(), as the parser does', () => {
-    const built = h('svg', { viewBox: '0 0 10 10' },
+/** The development warnings h() gives while `build` runs. */
+function warnings(build: () => unknown): string[] {
+  const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+  try {
+    build();
+    return warn.mock.calls.map((call) => String(call[0]));
+  } finally {
+    warn.mockRestore();
+  }
+}
+
+describe('h() gives a dual-use tag the namespace of the content it is built in', () => {
+  it('a title or an a passed to h() before its svg parent exists stays HTML, warns in development, and is SVG inside svg()', () => {
+    const tree = () => h('svg', { viewBox: '0 0 10 10' },
       h('title', null, 'Close'),
-      h('a', { href: '#close' }, h('title', null, 'Link'), h('path', { d: 'M0 0L10 10' })),
+      h('a', { href: '#close' }, h('path', { d: 'M0 0L10 10' })),
     ) as unknown as Element;
-    const server = parsed('<svg viewBox="0 0 10 10"><title>Close</title><a href="#close"><title>Link</title><path d="M0 0L10 10"></path></a></svg>');
 
-    expect(namespaces(built)).toEqual(namespaces(server));
-    expect(namespaces(built).every((entry) => entry.endsWith(`:${SVG}`))).toBe(true);
-    expect(built.outerHTML).toBe(server.outerHTML);
+    let eager!: Element;
+    const warned = warnings(() => { eager = tree(); });
+    expect(namespaces(eager)).toEqual([`svg:${SVG}`, `title:${XHTML}`, `a:${XHTML}`, `path:${SVG}`]);
+    expect(warned).toHaveLength(2);
+    expect(warned[0]).toContain('<title>');
+    expect(warned[0]).toContain('svg()');
+
+    let wrapped!: Element;
+    expect(warnings(() => { wrapped = svg(tree); })).toEqual([]);
+    const server = parsed('<svg viewBox="0 0 10 10"><title>Close</title><a href="#close"><path d="M0 0L10 10"></path></a></svg>');
+    expect(namespaces(wrapped)).toEqual(namespaces(server));
+    expect(wrapped.outerHTML).toBe(server.outerHTML);
   });
 
-  it('a rebuilt element keeps its handlers, its reactive props and children, and its ref, and the discarded one stops updating', () => {
-    const [label, setLabel] = createSignal('Close');
-    const [target, setTarget] = createSignal('#close');
-    const clicks: string[] = [];
-    const refs: Element[] = [];
-    let labelReads = 0;
-
-    const dispose = createRoot((d) => {
-      const built = h('svg', null,
-        h('a', { href: () => target(), onClick: () => clicks.push('a'), ref: (el: Element) => refs.push(el) },
-          h('title', null, () => { labelReads++; return label(); })),
-      ) as unknown as Element;
-      document.body.appendChild(built);
-      return d;
-    });
-
-    const anchor = document.querySelector('a')!;
-    const title = document.querySelector('title')!;
-    expect([anchor.namespaceURI, title.namespaceURI]).toEqual([SVG, SVG]);
-    expect(refs.at(-1)).toBe(anchor);
-    anchor.dispatchEvent(new Event('click'));
-    expect(clicks).toEqual(['a']);
-
-    const readsBefore = labelReads;
-    for (const [n, next] of ['Open', 'Closed', 'Gone'].entries()) {
-      setLabel(next);
-      setTarget(`#${next}`);
-      expect(title.textContent).toBe(next);
-      expect(anchor.getAttribute('href')).toBe(`#${next}`);
-      // One read per update: the title's discarded HTML twin is not subscribed.
-      expect(labelReads - readsBefore).toBe(n + 1);
-    }
-    dispose();
-  });
-
-  it('keeps an a and a title in HTML outside an svg, and inside a foreignObject or a desc, even when built in svg()', () => {
+  it("a foreignObject's or desc's content is HTML when built there: an eager child, a reactive child, and content built outside svg()", () => {
     expect(h('a', { href: '#x' })).toBeInstanceOf(HTMLAnchorElement);
-    for (const build of [
-      () => h('svg', null, h('foreignObject', null, h('div', null, h('a', { href: '#more' }, 'more')), h('a', { href: '#top' }, 'top'))),
-      () => svg(() => h('svg', null, h('foreignObject', null, h('div', null, h('a', { href: '#more' }, 'more')), h('a', { href: '#top' }, 'top')))),
-    ]) {
-      const built = build() as unknown as Element;
-      expect(namespaces(built)).toEqual([`svg:${SVG}`, `foreignObject:${SVG}`, `div:${XHTML}`, `a:${XHTML}`, `a:${XHTML}`]);
-      expect(built.querySelectorAll('a')[1]).toBeInstanceOf(HTMLAnchorElement);
-    }
-    // A desc is an HTML integration point. (happy-dom's parser keeps an a there
-    // in SVG; browsers do not, which e2e/adoption.spec.ts checks.)
-    const desc = h('svg', null, h('desc', null, 'See ', h('a', { href: '#x' }, 'x'))) as unknown as Element;
-    expect(namespaces(desc)).toEqual([`svg:${SVG}`, `desc:${SVG}`, `a:${XHTML}`]);
-  });
+    const html = (el: Element) => Array.from(el.querySelectorAll('a'), (a) => a.namespaceURI);
 
-  it('an element inside a Fragment child of an svg is SVG', () => {
-    const built = h('svg', null, h(Fragment, null, h('title', null, 'T'), h('a', { href: '#a' }))) as unknown as Element;
-    expect(namespaces(built)).toEqual([`svg:${SVG}`, `title:${SVG}`, `a:${SVG}`]);
+    const eager = h('svg', null, h('foreignObject', null, h('div', null, h('a', { href: '#more' }, 'more'))), h('desc', null, h('a', { href: '#d' }, 'd'))) as unknown as Element;
+    expect(html(eager)).toEqual([XHTML, XHTML]);
+
+    // Built with the parent known (a reactive child), inside svg() or not.
+    for (const build of [(f: () => unknown) => f(), svg]) {
+      const reactive = build(() => h('svg', null,
+        h('foreignObject', null, () => h('a', { href: '#fo' }, 'fo')),
+        h('desc', null, () => h('a', { href: '#desc' }, 'desc')),
+        h('title', null, () => h('a', { href: '#title' }, 'title')),
+      )) as unknown as Element;
+      expect(html(reactive)).toEqual([XHTML, XHTML, XHTML]);
+    }
+
+    // Inside svg(), content for an integration point is built outside it, as documented.
+    const content = h('div', null, h('a', { href: '#out' }, 'out'));
+    const wrapped = svg(() => h('svg', null, h('foreignObject', null, content))) as unknown as Element;
+    expect(namespaces(wrapped)).toEqual([`svg:${SVG}`, `foreignObject:${SVG}`, `div:${XHTML}`, `a:${XHTML}`]);
+    // Built inside svg(), an eager a is SVG there, and development builds say so.
+    const warned = warnings(() => svg(() => h('svg', null, h('foreignObject', null, h('a', { href: '#in' }, 'in')))));
+    expect(warned).toHaveLength(1);
+    expect(warned[0]).toContain('<a>');
   });
 
   it('a function child inside an svg builds in the SVG namespace on every run', () => {
@@ -118,7 +110,6 @@ describe('h() resolves a dual-use tag from its parent', () => {
       setOn(next);
       expect(built.firstElementChild!.localName).toBe(next ? 'title' : 'a');
       expect(built.firstElementChild!.namespaceURI).toBe(SVG);
-      // Built in SVG from the start: one element, one ref call, no rebuild.
       expect(refs).toHaveLength(n + 2);
       expect(refs.at(-1)).toBe(built.firstElementChild);
     }
@@ -126,74 +117,118 @@ describe('h() resolves a dual-use tag from its parent', () => {
 });
 
 describe('control flow builds in the namespace of the element it inserts into', () => {
-  it('a createShow inside an svg creates SVG elements on its first render and on every toggle', () => {
+  it('a helper inside an svg renders its content once', () => {
+    // The review's B1: a helper inserted into an svg must not render twice.
+    const [items] = createSignal(['a', 'b', 'c']);
+    let rows = 0;
+    let refs = 0;
+    let branches = 0;
+    let cases = 0;
+    let nested = 0;
+    const built = h('svg', null,
+      h('g', null, createList(items, (k) => k, (k) => { rows++; return h('circle', { 'data-k': k, ref: () => refs++ }); })),
+      h('g', null, createShow(() => true, () => { branches++; return h('rect'); })),
+      h('g', null, createSwitch(() => 'x', [{ match: 'x', render: () => { cases++; return h('path'); } }])),
+      h('g', null, createList(() => [1, 2, 3, 4, 5], (k) => k, () => h('g', null, createShow(() => true, () => { nested++; return h('circle'); })))),
+    ) as unknown as Element;
+    document.body.appendChild(built);
+
+    expect({ rows, refs, branches, cases, nested }).toEqual({ rows: 3, refs: 3, branches: 1, cases: 1, nested: 5 });
+    expect(namespaces(built).every((entry) => entry.endsWith(`:${SVG}`))).toBe(true);
+  });
+
+  it('a createShow inside an svg renders each branch once, in SVG, inside svg() from its first render and on every toggle', () => {
     const [on, setOn] = createSignal(true);
     const [text, setText] = createSignal('On');
     let reads = 0;
-    const built = h('svg', null, createShow(on,
-      () => h('title', null, () => { reads++; return text(); }),
-      () => h('a', { href: '#off' }, h('circle', { r: '1' })),
-    )) as unknown as Element;
+    let renders = 0;
+    const built = svg(() => h('svg', null, createShow(on,
+      () => { renders++; return h('title', null, () => { reads++; return text(); }); },
+      () => { renders++; return h('a', { href: '#off' }, h('circle', { r: '1' })); },
+    ))) as unknown as Element;
     document.body.appendChild(built);
 
     const check = (tag: string) => {
-      const first = built.firstElementChild!;
-      expect(first.localName).toBe(tag);
+      expect(built.firstElementChild!.localName).toBe(tag);
       expect(namespaces(built).every((entry) => entry.endsWith(`:${SVG}`))).toBe(true);
       expect(built.children).toHaveLength(1);
     };
     check('title');
-    setText('Still on');
-    expect(built.querySelector('title')!.textContent).toBe('Still on');
-    for (const next of [false, true, false, true]) {
+    expect(renders).toBe(1);
+    for (const [n, next] of [false, true, false, true].entries()) {
       setOn(next);
       check(next ? 'title' : 'a');
+      expect(renders).toBe(n + 2);
       // A hidden branch's bindings are disposed with it: nothing reads the text.
       const before = reads;
       setText(`seen ${next}`);
       expect(reads - before).toBe(next ? 1 : 0);
     }
-    setText('Back');
-    expect(built.querySelector('title')!.textContent).toBe('Back');
   });
 
-  it('list rows inside an svg are SVG when first rendered, when added and when moved, 40 and more', () => {
+  it('without svg(), a createShow inside an svg renders its first branch, built before the svg existed, in HTML, and every later branch in SVG', () => {
+    const [on, setOn] = createSignal(true);
+    let built!: Element;
+    const warned = warnings(() => {
+      built = h('svg', null, createShow(on, () => h('title', null, 'On'), () => h('a', { href: '#off' }, 'Off'))) as unknown as Element;
+    });
+    expect(built.firstElementChild!.namespaceURI).toBe(XHTML);
+    expect(warned).toHaveLength(1);
+    for (const next of [false, true, false]) {
+      setOn(next);
+      expect(built.firstElementChild!.localName).toBe(next ? 'title' : 'a');
+      expect(built.firstElementChild!.namespaceURI).toBe(SVG);
+    }
+  });
+
+  it('list rows inside an svg are SVG when first rendered inside svg(), and when added or moved later without it', () => {
     const keys = (n: number) => Array.from({ length: n }, (_, i) => `k${i}`);
-    const [items, setItems] = createSignal(keys(2));
-    const built = h('svg', null, h('g', null,
-      createList(items, (k) => k, (k) => h('a', { href: `#${k}`, 'data-k': k }, h('title', null, k))),
-    )) as unknown as Element;
-    document.body.appendChild(built);
+    for (const wrap of [true, false]) {
+      const [items, setItems] = createSignal(keys(2));
+      let renders = 0;
+      const tree = () => h('svg', null, h('g', null,
+        createList(items, (k) => k, (k) => { renders++; return h('a', { href: `#${k}`, 'data-k': k }, h('title', null, k)); }),
+      )) as unknown as Element;
+      let built!: Element;
+      warnings(() => { built = wrap ? svg(tree) : tree(); });
+      document.body.appendChild(built);
 
-    const rows = () => Array.from(built.querySelectorAll('g > a'));
-    const allSvg = () => namespaces(built).every((entry) => entry.endsWith(`:${SVG}`));
-    expect(rows().map((a) => a.getAttribute('data-k'))).toEqual(['k0', 'k1']);
-    expect(allSvg()).toBe(true);
+      const rows = () => Array.from(built.querySelectorAll('g > a'));
+      const ns = () => rows().map((a) => a.namespaceURI);
+      // Rows built before the svg existed are HTML unless the tree is inside svg().
+      expect(ns()).toEqual(wrap ? [SVG, SVG] : [XHTML, XHTML]);
+      expect(renders).toBe(2);
 
-    setItems(keys(45));
-    expect(rows()).toHaveLength(45);
-    expect(allSvg()).toBe(true);
-    const k10 = rows()[10];
+      setItems(keys(45));
+      expect(rows()).toHaveLength(45);
+      expect(ns().slice(2).every((n) => n === SVG)).toBe(true);
+      expect(renders).toBe(45);
+      const k10 = rows()[10];
 
-    setItems(keys(45).reverse());
-    expect(rows().map((a) => a.getAttribute('data-k'))).toEqual(keys(45).reverse());
-    expect(rows()[34]).toBe(k10);
-    expect(allSvg()).toBe(true);
+      setItems(keys(45).reverse());
+      expect(rows().map((a) => a.getAttribute('data-k'))).toEqual(keys(45).reverse());
+      expect(rows()[34]).toBe(k10);
 
-    setItems(['k3', 'new', 'k1']);
-    expect(rows().map((a) => a.getAttribute('data-k'))).toEqual(['k3', 'new', 'k1']);
-    expect(allSvg()).toBe(true);
+      setItems(['k3', 'new', 'k1']);
+      expect(rows().map((a) => a.getAttribute('data-k'))).toEqual(['k3', 'new', 'k1']);
+      expect(rows()[1]!.namespaceURI).toBe(SVG);
+      expect(rows()[1]!.querySelector('title')!.namespaceURI).toBe(SVG);
+      expect(renders).toBe(46);
+      document.body.innerHTML = '';
+    }
   });
 
-  it('createSwitch cases inside an svg are SVG, cached cases included', () => {
+  it('createSwitch cases inside an svg are SVG, each rendered once, cached cases included', () => {
     const [tab, setTab] = createSignal('a');
-    const built = h('svg', null, createSwitch(tab, [
-      { match: 'a', render: () => h('a', { href: '#a' }, 'A') },
-      { match: 't', render: () => h('title', null, 'T') },
-    ], () => h('style', null, 'circle{}'))) as unknown as Element;
+    const renders: string[] = [];
+    const built = svg(() => h('svg', null, createSwitch(tab, [
+      { match: 'a', render: () => { renders.push('a'); return h('a', { href: '#a' }, 'A'); } },
+      { match: 't', render: () => { renders.push('t'); return h('title', null, 'T'); } },
+    ], () => { renders.push('fallback'); return h('style', null, 'circle{}'); }))) as unknown as Element;
     document.body.appendChild(built);
 
     const first = built.firstElementChild;
+    expect(first!.namespaceURI).toBe(SVG);
     for (const [next, tag] of [['a', 'a'], ['t', 'title'], ['other', 'style'], ['a', 'a'], ['t', 'title']] as const) {
       setTab(next);
       expect(built.firstElementChild!.localName).toBe(tag);
@@ -202,6 +237,7 @@ describe('control flow builds in the namespace of the element it inserts into', 
       // A case is cached: switching back re-inserts the node first shown.
       if (next === 'a') expect(built.firstElementChild).toBe(first);
     }
+    expect(renders).toEqual(['a', 't', 'fallback']);
   });
 
   it('a portal into an svg, and mount() into an svg, create SVG elements', () => {

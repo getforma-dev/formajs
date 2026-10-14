@@ -261,13 +261,20 @@ MathML `mi`, `mo`, `mn`, `ms` or `mtext`; an `annotation-xml` whose `encoding`
 is `text/html` or `application/xhtml+xml`) and in HTML. A `title` it creates in
 an SVG is an SVG `title`, and an `svg` is SVG wherever it appears.
 
-The one place left where the parser differs is an HTML element such as `p` or
-`div` put directly in SVG or MathML. The parser moves that markup out of it,
-because it is not valid there; adoption leaves the node where it is.
+The parser still differs in three cases of markup that is not valid there:
+- an HTML element such as `p` or `div` put directly in SVG or MathML, which the
+  parser moves out of it and adoption leaves where it is;
+- an `svg` directly inside a MathML element that is not an integration point
+  (an `mrow`), which the parser makes a MathML element;
+- a MathML name inside SVG, which the parser makes an SVG element.
 
-Client rendering gives the same namespaces: `h()` resolves a `title` or an `a`
-from the element it goes into (see the SVG and MathML section of
-[API.md](API.md)), so a client-rendered icon and an adopted one match.
+`h()` creates an `svg` in SVG and a MathML name in MathML wherever it appears.
+
+Client rendering gives the same namespaces where `h()` knows the parent: a
+`title` or an `a` built inside `svg()`, or as a reactive child, a control-flow
+branch or row, a portal or a `mount()` into an SVG. One written as a child
+argument outside `svg()` is built before its `svg` exists and is HTML. See the
+SVG and MathML section of [API.md](API.md).
 
 **Reactive attributes.** An attribute the server already rendered with the
 client's value is not written at adoption, on any element; every later change

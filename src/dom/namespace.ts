@@ -6,29 +6,19 @@
  * element its content is SVG, inside a MathML element MathML, except at the
  * parser's HTML integration points, whose content is HTML.
  *
- * `h()` builds a child before its parent exists, so it cannot see where the
- * child goes. Two mechanisms close that gap:
- *
- * - **Context at build.** Where the parent is known (a reactive child, a
- *   control-flow branch rendered after insertion, a portal, `mount()`), the
- *   content is built inside {@link withNamespace} with the parent's content
- *   namespace, and `h()` creates the tags that are both HTML and SVG (`a`,
- *   `title`, `script`, `style`, `font`) in it.
- * - **Repair at insertion.** A node built before its parent was known carries a
- *   {@link NS_SYM} function. Where `h()` inserts it, the function receives the
- *   parent's content namespace and, if the node was built in another, rebuilds
- *   it (an element) or re-renders its content (a control-flow marker).
+ * `h()` creates the SVG and MathML names it knows in their namespace wherever
+ * they appear. A tag that is both HTML and SVG (`a`, `title`, `script`,
+ * `style`, `font`) takes the namespace of the content being built
+ * ({@link withNamespace}): where the parent is known (a reactive child, a
+ * control-flow helper's renders once its markers are in an element, a portal,
+ * `mount()`, adoption) that is the parent's content namespace; inside `svg()`
+ * it is SVG. A child passed to h() is built before its parent exists, so it
+ * gets the namespace being built in then: HTML, unless the tree is inside
+ * `svg()`.
  */
 
 export const SVG_NS = 'http://www.w3.org/2000/svg';
 export const MATHML_NS = 'http://www.w3.org/1998/Math/MathML';
-
-/**
- * On a node built before its parent was known: called with the namespace of
- * the content it is being inserted into; returns the node that replaces it, or
- * null when it stays.
- */
-export const NS_SYM = Symbol.for('forma-ns');
 
 /** The namespace `h()` creates a dual-use tag in: null is HTML. */
 let current: string | null = null;
@@ -63,7 +53,7 @@ const MATHML_TEXT_POINTS = new Set(['mi', 'mo', 'mn', 'ms', 'mtext']);
  * `ms` or `mtext`; an `annotation-xml` whose `encoding` is HTML); null (HTML)
  * there and anywhere else.
  *
- * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "keeps an a and a title in HTML outside an svg, and inside a foreignObject or a desc, even when built in svg()"
+ * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a foreignObject's or desc's content is HTML when built there: an eager child, a reactive child, and content built outside svg()"
  * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "h() creates math and its elements in the MathML namespace, and HTML inside a token element, as the parser does"
  */
 export function contentNs(parent: Node | null | undefined): string | null {
@@ -90,46 +80,4 @@ export function contentNs(parent: Node | null | undefined): string | null {
  */
 export function insertNs(parent: Node): string | null | undefined {
   return parent.nodeType === 1 ? contentNs(parent) : undefined;
-}
-
-/** False while a rebuild moves nodes it will settle itself afterwards. */
-let settling = true;
-
-/** @internal Run `move` without settling what it inserts. */
-export function unsettled<T>(move: () => T): T {
-  settling = false;
-  try {
-    return move();
-  } finally {
-    settling = true;
-  }
-}
-
-/** Settle one node against `ns`: the node now in its place. */
-function settleOne(node: Node, ns: string | null): Node {
-  const fix = (node as { [NS_SYM]?: (ns: string | null) => Node | null })[NS_SYM];
-  return (fix && fix(ns)) || node;
-}
-
-/**
- * @internal Before `child` is inserted into `parent`: if `parent` is an
- * element, rebuild or re-render what was built in another namespace than its
- * content's, and return the node to insert. A fragment is settled node by node
- * when its new parent is SVG or MathML content (HTML content is where it was
- * built, unless it was built inside `svg()`).
- */
-export function settle(parent: Node, child: Node): Node {
-  if (!settling || parent.nodeType !== 1) return child;
-  if (child.nodeType === 11) {
-    const ns = contentNs(parent);
-    if (ns) for (let n = child.firstChild; n; n = settleOne(n, ns).nextSibling);
-    return child;
-  }
-  return (child as { [NS_SYM]?: unknown })[NS_SYM] ? settleOne(child, contentNs(parent)) : child;
-}
-
-/** @internal Settle every child of `el` against its content namespace, in place. */
-export function settleChildren(el: Element): void {
-  const ns = contentNs(el);
-  for (let n = el.firstChild; n; n = settleOne(n, ns).nextSibling);
 }

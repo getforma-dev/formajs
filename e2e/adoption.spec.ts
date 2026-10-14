@@ -380,8 +380,13 @@ test('the namespace vectors: the parser, h() and adoption agree on every element
     const short: Record<string, string> = {
       'http://www.w3.org/1999/xhtml': 'html', 'http://www.w3.org/2000/svg': 'svg', 'http://www.w3.org/1998/Math/MathML': 'mathml',
     };
+    // The server's markup is adopted from the eager tree (adoption builds
+    // nothing); the client renders each child once its parent exists, as a
+    // reactive child is built, so h() takes the parser's namespace from it.
     const build = ([tag, props, ...children]: NsTree): unknown =>
       h(tag, props, ...children.map((c) => (typeof c === 'string' ? c : build(c as NsTree))));
+    const builtWithParent = ([tag, props, ...children]: NsTree): unknown =>
+      h(tag, props, ...children.map((c) => (typeof c === 'string' ? c : () => builtWithParent(c as NsTree))));
     const namespaces = (root: Element) =>
       [root, ...Array.from(root.querySelectorAll('*'))].map((el) => `${el.localName}:${short[el.namespaceURI ?? ''] ?? el.namespaceURI}`);
     return vectors.map((v, i) => {
@@ -389,7 +394,7 @@ test('the namespace vectors: the parser, h() and adoption agree on every element
       const parsedRoot = ssr.firstElementChild!;
       const parsed = namespaces(parsedRoot);
       const parsedHtml = parsedRoot.outerHTML;
-      mount(() => build(v.tree), `#csr${i}`);
+      mount(() => builtWithParent(v.tree), `#csr${i}`);
       const built = document.getElementById(`csr${i}`)!.firstElementChild!;
       const writes: string[] = [];
       const observer = new MutationObserver(() => {});
@@ -416,27 +421,31 @@ test('the namespace vectors: the parser, h() and adoption agree on every element
   }
 });
 
-test('content built inside an svg after activation is SVG: a createShow branch, list rows, switch cases, a portal; a foreignObject holds HTML', async ({ page }) => {
+test('content built inside an svg is SVG and rendered once: a createShow branch, list rows, switch cases, a portal; a foreignObject holds HTML', async ({ page }) => {
   await serve(page, '<div id="app"></div><svg id="target"></svg>' +
     '<div id="adopt" data-forma-ssr><svg viewBox="0 0 10 10"><g id="show"><!--f:s0--><!--/f:s0--></g>' +
     '<g id="rows"><!--f:l0--><a data-forma-key="a" href="#a"><title>a</title></a><!--/f:l0--></g></svg></div>');
   const steps = await page.evaluate(async () => {
-    const { h, mount, createSignal, createShow, createList, createSwitch, createPortal } = await import('/adoption-core.mjs' as string);
+    const { h, svg, mount, createSignal, createShow, createList, createSwitch, createPortal } = await import('/adoption-core.mjs' as string);
+    const renders = { show: 0, rows: 0, cases: 0 };
     const SVG = 'http://www.w3.org/2000/svg';
     const nonSvg = (root: Element) =>
       Array.from(root.querySelectorAll('*')).filter((el) => el.namespaceURI !== SVG && !el.closest('foreignObject')).map((el) => el.localName);
     const [on, setOn] = createSignal(true);
     const [keys, setKeys] = createSignal(['a', 'b']);
     const [tab, setTab] = createSignal('a');
-    mount(() => h('svg', { id: 'built', viewBox: '0 0 10 10' },
-      h('g', { id: 'g-show' }, createShow(on, () => h('title', null, 'On'), () => h('a', { href: '#off' }, h('circle', { r: '1' })))),
-      h('g', { id: 'g-rows' }, createList(keys, (k: string) => k, (k: string) => h('a', { href: `#${k}` }, h('title', null, k)))),
+    // The documented way for a hand-written tree: build it inside svg(), and
+    // build the foreignObject's content outside it.
+    const foreign = h('div', null, h('a', { href: '#html' }, 'html'));
+    mount(() => svg(() => h('svg', { id: 'built', viewBox: '0 0 10 10' },
+      h('g', { id: 'g-show' }, createShow(on, () => { renders.show++; return h('title', null, 'On'); }, () => { renders.show++; return h('a', { href: '#off' }, h('circle', { r: '1' })); })),
+      h('g', { id: 'g-rows' }, createList(keys, (k: string) => k, (k: string) => { renders.rows++; return h('a', { href: `#${k}` }, h('title', null, k)); })),
       h('g', { id: 'g-switch' }, createSwitch(tab, [
-        { match: 'a', render: () => h('a', { href: '#a' }, 'A') },
-        { match: 't', render: () => h('title', null, 'T') },
-      ], () => h('style', null, 'circle{}'))),
-      h('foreignObject', { width: '10', height: '10' }, h('div', null, h('a', { href: '#html' }, 'html'))),
-    ), '#app');
+        { match: 'a', render: () => { renders.cases++; return h('a', { href: '#a' }, 'A'); } },
+        { match: 't', render: () => { renders.cases++; return h('title', null, 'T'); } },
+      ], () => { renders.cases++; return h('style', null, 'circle{}'); })),
+      h('foreignObject', { width: '10', height: '10' }, foreign),
+    )), '#app');
     createPortal(() => h('title', null, 'Portaled'), document.getElementById('target')!);
     const warn = console.warn;
     console.warn = () => {};
@@ -454,6 +463,7 @@ test('content built inside an svg after activation is SVG: a createShow branch, 
       nonSvg: [...nonSvg(built), ...nonSvg(document.getElementById('target')!), ...nonSvg(document.querySelector('#adopt svg')!)],
       htmlInForeignObject: Array.from(built.querySelectorAll('foreignObject *'), (el) => `${el.localName}:${el.namespaceURI === SVG ? 'svg' : 'html'}`),
       shown: [built.querySelector('#g-show')!.firstElementChild?.localName, document.querySelector('#adopt #show')!.firstElementChild?.localName],
+      renders: { ...renders },
     });
     const out = [snapshot('first render')];
     setOn(false); setKeys(['c', 'a', 'b']); setTab('t'); setAOn(false); setAKeys(['c', 'a', 'b']);
@@ -471,4 +481,8 @@ test('content built inside an svg after activation is SVG: a createShow branch, 
     });
   }
   expect(steps.map((s) => s.shown)).toEqual([['title', 'title'], ['a', 'a'], ['title', 'title'], ['a', 'a']]);
+  // Each branch, row and case rendered once when it appeared (cases are cached).
+  expect(steps.map((s) => s.renders)).toEqual([
+    { show: 1, rows: 2, cases: 1 }, { show: 2, rows: 3, cases: 2 }, { show: 3, rows: 3, cases: 3 }, { show: 4, rows: 3, cases: 3 },
+  ]);
 });

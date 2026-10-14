@@ -176,16 +176,6 @@
   "note": "reactive xlink:href writes javascript: URLs"
  },
  {
-  "id": "element/dual-use-never-rebuilt",
-  "file": "src/dom/element.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "    if (to === ns) return null;\n    stop();",
-  "replace": "    return null;\n    stop();",
-  "note": "a title or an a built before its svg parent stays HTML inside it. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"builds a title and an a inside an svg in the SVG namespace without svg(), as the parser does\""
- },
- {
   "id": "element/function-child-outside-namespace",
   "file": "src/dom/element.ts",
   "tags": [
@@ -196,6 +186,16 @@
   "note": "a reactive child inside an svg builds a title or an a as HTML on its later runs. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a function child inside an svg builds in the SVG namespace on every run\""
  },
  {
+  "id": "element/namespace-warning-silent",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (__DEV__) warnNamespace(parent, child);\n",
+  "replace": "",
+  "note": "a title or an a built before its svg parent is inserted as HTML with no development warning pointing at svg(). Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a title or an a passed to h() before its svg parent exists stays HTML, warns in development, and is SVG inside svg()\""
+ },
+ {
   "id": "element/no-mathml",
   "file": "src/dom/element.ts",
   "tags": [
@@ -204,16 +204,6 @@
   "find": "  } else if (MATHML_TAGS.has(tagName)) {\n    el = document.createElementNS(MATHML_NS, tagName);\n",
   "replace": "",
   "note": "h() creates math and its elements as HTML unknown elements, which browsers do not render as MathML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"h() creates math and its elements in the MathML namespace, and HTML inside a token element, as the parser does\""
- },
- {
-  "id": "element/rebuild-keeps-discarded-effects",
-  "file": "src/dom/element.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "    if (to === ns) return null;\n    stop();",
-  "replace": "    if (to === ns) return null;",
-  "note": "a dual-use element rebuilt in SVG leaves its discarded HTML twin subscribed, reading its signals on every update. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a rebuilt element keeps its handlers, its reactive props and children, and its ref, and the discarded one stops updating\""
  },
  {
   "id": "expr/array-index-write-unbounded",
@@ -1061,16 +1051,6 @@
   "note": "duplicate keys all collapse onto the first occurrence"
  },
  {
-  "id": "list/first-rows-not-rebuilt",
-  "file": "src/dom/list.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "    if (to !== ns && parent) {\n      ns = to;\n      for (const node of currentNodes) {",
-  "replace": "    if (false) {\n      ns = to;\n      for (const node of currentNodes) {",
-  "note": "a createList passed to h() inside an svg keeps its first rows in HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"list rows inside an svg are SVG when first rendered, when added and when moved, 40 and more\""
- },
- {
   "id": "list/lis-flag-inverted",
   "file": "src/dom/list.ts",
   "tags": [
@@ -1247,16 +1227,6 @@
   "find": "    return name === 'foreignObject' || name === 'desc' || name === 'title' ? null : SVG_NS;",
   "replace": "    return name === 'foreignObject' ? null : SVG_NS;",
   "note": "an a inside an SVG desc or title is SVG, where the parser makes it HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"keeps an a and a title in HTML outside an svg, and inside a foreignObject or a desc, even when built in svg()\""
- },
- {
-  "id": "namespace/fragment-children-unsettled",
-  "file": "src/dom/namespace.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "    if (ns) for (let n = child.firstChild; n; n = settleOne(n, ns).nextSibling);",
-  "replace": "",
-  "note": "an element or control-flow content inside a fragment appended into an svg keeps the namespace it was built in. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"an element inside a Fragment child of an svg is SVG\""
  },
  {
   "id": "namespace/mathml-token-content-mathml",
@@ -1555,16 +1525,6 @@
   "note": "a createShow branch built after a toggle inside an svg is HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a createShow inside an svg creates SVG elements on its first render and on every toggle\""
  },
  {
-  "id": "show/first-render-not-rebuilt",
-  "file": "src/dom/show.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "    if (to !== ns && lastTruthy !== null && parent) {",
-  "replace": "    if (false) {",
-  "note": "a createShow passed to h() inside an svg keeps its first branch in HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a createShow inside an svg creates SVG elements on its first render and on every toggle\""
- },
- {
   "id": "show/hydrating-branch-wrong",
   "file": "src/dom/show.ts",
   "tags": [],
@@ -1837,16 +1797,6 @@
   "find": "          return untrack(() => withNamespace(ns, matchedCase.render));",
   "replace": "          return untrack(() => matchedCase.render());",
   "note": "a createSwitch case built inside an svg is HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"createSwitch cases inside an svg are SVG, cached cases included\""
- },
- {
-  "id": "switch/first-render-not-rebuilt",
-  "file": "src/dom/switch.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "    if (to !== ns && currentMatch !== UNSET && parent) {",
-  "replace": "    if (false) {",
-  "note": "a createSwitch passed to h() inside an svg keeps its first case cached in HTML, and switching back re-inserts it. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"createSwitch cases inside an svg are SVG, cached cases included\""
  },
  {
   "id": "switch/no-scoop-back",

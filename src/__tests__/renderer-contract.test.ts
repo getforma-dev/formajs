@@ -731,9 +731,17 @@ describe('renderer contract: namespaces match the parsed server markup (shared v
     for (const ns of ['svg', 'html', 'mathml']) expect(all.some((e) => e.endsWith(`:${ns}`))).toBe(true);
   });
 
+  // Each child is built once its parent exists, as a reactive child is (and
+  // as compiled JSX would be, FORMA-171): h() then takes the parser's
+  // namespace from the parent. A child passed eagerly to h() is built before
+  // its parent, so a hand-written tree with a dual-use tag in SVG needs svg()
+  // (docs/API.md); src/dom/__tests__/namespace-resolution.test.ts covers that.
+  const builtWithParent = ([tag, props, ...children]: NsTree): unknown =>
+    h(tag, props, ...children.map((c) => (typeof c === 'string' ? c : () => builtWithParent(c as NsTree))));
+
   describe.each(NS_VECTORS.map((v) => [v.name, v] as const))('%s', (_name, vector) => {
-    it('h() builds every element in the namespace the parser gives it, with the same markup', () => {
-      const built = buildWith(h)(vector.tree) as unknown as Element;
+    it('h(), building each child with its parent known, gives every element the namespace the parser gives it, with the same markup', () => {
+      const built = builtWithParent(vector.tree) as unknown as Element;
       const namespaces = [built, ...Array.from(built.querySelectorAll('*'))].map((el) => `${el.localName}:${el.namespaceURI}`);
       expect(namespaces).toEqual(vector.namespaces.map((e) => {
         const [name, ns] = e.split(':');
