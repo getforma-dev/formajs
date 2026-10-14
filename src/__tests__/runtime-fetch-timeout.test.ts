@@ -12,11 +12,18 @@ import * as runtime from '../runtime';
 /** Requests made through the stub, each with the signal it was given. */
 let requests: Array<{ url: string; init: RequestInit }> = [];
 
+/**
+ * How an engine rejects an aborted fetch. WebKit rejects with its own
+ * AbortError whatever reason the signal carries, so the runtime cannot take
+ * its message from the rejection.
+ */
+const engineAbort = () => new DOMException('Fetch is aborted', 'AbortError');
+
 /** A fetch whose server never answers. */
 function stalled(url: string, init: RequestInit = {}): Promise<Response> {
   requests.push({ url, init });
   return new Promise((_resolve, reject) => {
-    init.signal?.addEventListener('abort', () => reject(init.signal!.reason));
+    init.signal?.addEventListener('abort', () => reject(engineAbort()));
   });
 }
 
@@ -25,7 +32,7 @@ const answersAfter = (ms: number, body: unknown) => (url: string, init: RequestI
   requests.push({ url, init });
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => resolve({ json: async () => body } as Response), ms);
-    init.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(init.signal!.reason); });
+    init.signal?.addEventListener('abort', () => { clearTimeout(timer); reject(engineAbort()); });
   });
 };
 

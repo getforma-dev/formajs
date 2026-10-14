@@ -1933,15 +1933,14 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
 
       // A request the server never answers is aborted after FETCH_TIMEOUT_MS,
       // its own timer per request, and the abort lands in the error: target.
+      // Only the timer aborts the controller, and the message is written here:
+      // an engine rejects with its own AbortError (WebKit ignores a reason).
       // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch to a stalled endpoint aborts at 30 s into its error: target"
       // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch answered before 30 s lands in its target and is never aborted"
       const doFetch = () => {
         if (loadingTarget) scope.setters[loadingTarget]!(true);
         const ctrl = new AbortController();
-        const timer = setTimeout(
-          () => ctrl.abort(new Error(`data-fetch timed out after ${FETCH_TIMEOUT_MS} ms`)),
-          FETCH_TIMEOUT_MS,
-        );
+        const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
         fetch(url, { method, signal: ctrl.signal })
           .then(r => r.json())
           .then(data => {
@@ -1949,7 +1948,11 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
             if (loadingTarget) scope.setters[loadingTarget]!(false);
           })
           .catch(err => {
-            if (errorTarget) scope.setters[errorTarget]!(err.message);
+            if (errorTarget) {
+              scope.setters[errorTarget]!(
+                ctrl.signal.aborted ? `data-fetch timed out after ${FETCH_TIMEOUT_MS} ms` : err.message,
+              );
+            }
             if (loadingTarget) scope.setters[loadingTarget]!(false);
           })
           .finally(() => clearTimeout(timer));

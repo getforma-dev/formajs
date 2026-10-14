@@ -16,11 +16,13 @@ All notable changes to this project will be documented in this file.
 - **`data-fetch` aborts a request after 30 seconds** (FORMA-132, L-46), as
   `createFetch` does. Before, a request the server never answered held its
   `loading:` target true forever. Now the abort lands in the `error:` target as
-  `data-fetch timed out after 30000 ms`, and `loading:` turns false; each
-  request of a `poll:` fetch has its own 30 seconds. A shorter timeout granted
-  per mount comes with the tiered mount (FORMA-128). The CDN runtime grows by
-  122 B gzipped (33,983 B, gate 34,000 B) and the hardened runtime by 122 B
-  (32,995 B, gate 33,000 B); both stay under their gates, which are unchanged.
+  `data-fetch timed out after 30000 ms` in every engine (WebKit rejects an
+  aborted fetch with its own message, so the runtime writes this one), and
+  `loading:` turns false; each request of a `poll:` fetch has its own 30
+  seconds. A shorter timeout granted per mount comes with the tiered mount
+  (FORMA-128). The CDN runtime grows by 125 B gzipped (33,986 B, gate
+  34,000 B) and the hardened runtime by 124 B (32,997 B, gate 33,000 B); both
+  stay under their gates, which are unchanged.
 
 ### CI
 

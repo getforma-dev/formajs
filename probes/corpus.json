@@ -1295,6 +1295,16 @@
   "note": "a data-fetch to a stalled endpoint is never aborted: its loading: target stays true and its error: target never hears of it (L-46). Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch to a stalled endpoint aborts at 30 s into its error: target\""
  },
  {
+  "id": "runtime/data-fetch-timeout-message-from-engine",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "ctrl.signal.aborted ? `data-fetch timed out after ${FETCH_TIMEOUT_MS} ms` : err.message",
+  "replace": "err.message",
+  "note": "a timed-out data-fetch writes the engine's own abort text to its error: target (WebKit's is \"Fetch is aborted\"), which does not say it timed out. Verified by: src/__tests__/runtime-fetch-timeout.test.ts > \"a data-fetch to a stalled endpoint aborts at 30 s into its error: target\""
+ },
+ {
   "id": "runtime/data-fetch-timer-outlives-answer",
   "file": "src/runtime.ts",
   "tags": [
