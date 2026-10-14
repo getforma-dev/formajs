@@ -132,8 +132,9 @@ Verified by `src/security/__tests__/url-safety.test.ts` > "blocks data:image/svg
 
 A policy carrying `require-trusted-types-for 'script'` makes the browser refuse
 a string written to an HTML sink (`innerHTML`, a `<template>`'s `innerHTML`, an
-iframe's `srcdoc`, `insertAdjacentHTML`, …) unless a Trusted Types policy the
-page allows made it. forma-server 0.2.2 sends, beside its enforced policy,
+iframe's `srcdoc`, `insertAdjacentHTML`, …) or a script sink (an `on*`
+attribute, a script's `src`) unless a Trusted Types policy the page allows made
+it. forma-server 0.2.2 sends, beside its enforced policy,
 
 ```
 Content-Security-Policy-Report-Only: require-trusted-types-for 'script'; trusted-types forma forma-runtime
@@ -146,31 +147,56 @@ policies:
 - **`forma`** makes what `trustedHtml(markup)` returns, the one raw-HTML entry
   ([docs/API.md](docs/API.md#trustedhtml-the-one-raw-entry)). Every raw sink
   writes a `trustedHtml()` value as the `TrustedHTML` it is, so the page
-  accepts it; a plain string given to a raw sink reaches the sink as a string,
+  accepts it; anything else given to a raw sink reaches the sink as a string,
   which the page reports (Report-Only) or refuses (enforced).
 - **`forma-runtime`** is the zero-build runtime's parser's. `reconcile()` trims
-  what it is given before it parses it; markup that arrived as `trustedHtml()`
-  is minted again, trimmed, through this policy. A string given to
-  `reconcile()` is never minted.
+  what it is given before it parses it, so markup that arrived as a browser
+  `TrustedHTML` is minted again, trimmed, through this policy, and so is the
+  `srcdoc` of an iframe that markup parsed into, when the diff changes it. A
+  string given to `reconcile()` is never minted.
 
-Both pass markup through unchanged. What they enforce is that every raw entry
-is named: nothing reaches a sink without `trustedHtml()` or a policy of the
-application's own. Each policy is created once per page, on first use, and
-shared by every copy of core on the page (the runtime's IIFE beside core's ESM
-build, say), since an enforcing page refuses a second policy of the same name.
+Both pass markup through unchanged: what they enforce is that a raw entry is
+named. Each is created once per page, on first use, since an enforcing page
+refuses a second policy of one name, and every copy of core on the page (the
+runtime's IIFE beside core's ESM build, say) shares it through a registry on
+`globalThis` under the key `@getforma/core#trusted-types`. The registry holds
+no policy: it holds the mint `trustedHtml()` is, so a script that reaches the
+key can mint `forma` values as `trustedHtml()` can (SR8's lint lists the key
+as a raw entry), and a `forma-runtime` parser that takes only a browser
+`TrustedHTML`, so no script can mint a `forma-runtime` value from a string.
+If the page refuses either name (it is not listed, or another script created
+it first), core writes markup as a string, which the page then refuses, and a
+development build logs `FORMA_W_TT_POLICY_REFUSED` once.
 
-Core's own writes put no string into an HTML sink: `mount()`, the function it
-returns, and a reactive `dangerouslySetInnerHTML` that becomes `null` empty an
-element with `replaceChildren()`, which no policy checks. Under the header above,
-Report-Only and enforced, `e2e/trusted-types.spec.ts` runs core's own test pages
-and every raw sink given `trustedHtml()` and asserts zero violations; a string
-written to `innerHTML` raises one report, and the page still renders under
-Report-Only. It runs in Chromium on every merge, and in Firefox and WebKit
-before each release.
+What core writes of its own passes such a policy:
+
+- `mount()`, the function it returns, and a reactive `dangerouslySetInnerHTML`
+  that becomes `null` empty an element with `replaceChildren()`, which no
+  policy checks.
+- `reconcile()` writes markup that arrived trusted through `forma-runtime`,
+  and its diff writes no `on*` attribute or script `src`: a changed one is
+  removed, as h() and adoption write no `on*` name either.
+
+The raw sinks write what the application gives them, which is typed only if it
+is `trustedHtml()`. Two raw sinks no `trustedHtml()` can reach are the runtime's
+own `srcdoc` bindings, `data-bind:srcdoc` and `{item…}` in a list row's
+`srcdoc`: they write an expression's value, or a row's data, as a string that
+such a page reports or refuses, log `FORMA_W_RAW_RUNTIME_SRCDOC` in a
+development build, and are refused in 3.0.0.
+
+Under the header above, Report-Only and enforced, `e2e/trusted-types.spec.ts`
+runs core's own test pages and every raw sink given `trustedHtml()`, including
+a `reconcile()` diff that changes an iframe's `srcdoc` and a button's `onclick`,
+and asserts zero violations; a string written to `innerHTML` raises one
+report, and the page still renders under Report-Only. It runs in Chromium on
+every merge, and in Firefox and WebKit before each release.
 
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "reconcile() parses trusted markup through the forma-runtime policy and a string through no policy"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "the shared registry holds no policy, and its forma-runtime handle mints nothing from a string"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "trustedHtml() returns a TrustedHTML from the forma policy where the browser has Trusted Types"
+Verified by `src/__tests__/runtime-srcdoc.test.ts` > "data-bind:srcdoc writes its string and warns once with the runtime code"
 
 ---
 
@@ -207,4 +233,4 @@ Verified by `src/__tests__/docs-truth.test.ts` > "CSP.md's version history ends 
 | 2.0.1 | No CSP-affecting changes since 2.0.0. |
 | 2.0.2 | No CSP-affecting changes since 2.0.1. |
 | 2.0.3 | No CSP-affecting changes since 2.0.2. |
-| Unreleased | Trusted Types: core writes no string to an HTML sink of its own, and every raw sink takes `trustedHtml()`, made by core's policy `forma` (the runtime's parser re-mints through `forma-runtime`), so under `require-trusted-types-for 'script'; trusted-types forma forma-runtime` a page reports only the application's own string writes. See [Trusted Types](#trusted-types). |
+| Unreleased | Trusted Types: what core writes of its own passes `require-trusted-types-for 'script'; trusted-types forma forma-runtime` (its clears use `replaceChildren()`; the runtime's parser re-mints trusted markup through `forma-runtime` and writes no `on*` or script `src`), and every raw sink takes `trustedHtml()`, made by core's policy `forma`. Such a page reports only what the application writes as a string, the runtime's `srcdoc` bindings included. See [Trusted Types](#trusted-types). |

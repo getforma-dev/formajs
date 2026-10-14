@@ -145,8 +145,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (isUrlAttr(key) && isDangerousUrl(strVal, el.localName)) {\n    if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n    return;\n  }\n  // `srcdoc` takes trustedHtml() (DR-19): an object is written as htmlOf()\n  // gives it, so a TrustedHTML reaches the attribute typed.\n  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);",
-  "replace": "  // `srcdoc` takes trustedHtml() (DR-19): an object is written as htmlOf()\n  // gives it, so a TrustedHTML reaches the attribute typed.\n  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);",
+  "find": "  if (isUrlAttr(key) && isDangerousUrl(strVal, el.localName)) {\n    if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n    return;\n  }\n  // The string the URL guard checked",
+  "replace": "  // The string the URL guard checked",
   "note": "h() static attribute path writes javascript: URLs"
  },
  {
@@ -730,8 +730,8 @@
    "correctness",
    "contract"
   ],
-  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);",
-  "replace": "        el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);",
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);",
+  "replace": "        el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);",
   "note": "adoption rewrites every reactive attribute the server already holds: a DOM write per binding, and an iframe's src reloads (FORMA-020, DR-5)"
  },
  {
@@ -2210,19 +2210,9 @@
   "tags": [
    "security"
   ],
-  "find": "    const markup = trusted ? runtimeHtml(trimmed) : trimmed;",
+  "find": "    const markup = parser ? parser.html : trimmed;",
   "replace": "    const markup = trimmed;",
   "note": "reconcile() trims a trustedHtml() value and parses the trimmed string, which a page requiring Trusted Types refuses: the runtime parser's forma-runtime policy is skipped (DR-20). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
- },
- {
-  "id": "trusted/reconcile-launders-strings",
-  "file": "src/dom/reconcile.ts",
-  "tags": [
-   "security"
-  ],
-  "find": "    const markup = trusted ? runtimeHtml(trimmed) : trimmed;",
-  "replace": "    const markup = runtimeHtml(trimmed);",
-  "note": "reconcile() mints any string through Forma's forma-runtime policy, so a raw string entry is never reported and Trusted Types guard nothing (DR-19, DR-20). Verified by: src/dom/__tests__/trusted-html.test.ts > \"reconcile() parses trusted markup through the forma-runtime policy and a string through no policy\""
  },
  {
   "id": "trusted/srcdoc-stringified",
@@ -2230,7 +2220,7 @@
   "tags": [
    "security"
   ],
-  "find": "  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);",
+  "find": "  el.setAttribute(key, typeof value === 'object' && isRawHtmlAttr(key) && isTrustedHtml(value) ? htmlOf(value) : strVal);",
   "replace": "  el.setAttribute(key, strVal);",
   "note": "a static srcdoc given trustedHtml() is written as a string, which a page requiring Trusted Types refuses (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
  },
@@ -2240,7 +2230,7 @@
   "tags": [
    "security"
   ],
-  "find": "        el.setAttribute(key, typeof v === 'object' ? htmlOf(v) : strVal);",
+  "find": "        el.setAttribute(key, typeof v === 'object' && isRawHtmlAttr(key) && isTrustedHtml(v) ? htmlOf(v) : strVal);",
   "replace": "        el.setAttribute(key, strVal);",
   "note": "a reactive srcdoc given trustedHtml() is written as a string (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
  },
@@ -2250,7 +2240,7 @@
   "tags": [
    "security"
   ],
-  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);",
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);",
   "replace": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, str);",
   "note": "an adopted island's reactive srcdoc given trustedHtml() is written as a string (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"an adopted island's srcdoc binding writes trustedHtml() typed and warns once for a string\""
  },
@@ -2260,8 +2250,8 @@
   "tags": [
    "security"
   ],
-  "find": "  let found = reg.policies[name];",
-  "replace": "  let found: HtmlPolicy | null | undefined;",
+  "find": "  if (reg.forma === undefined) {",
+  "replace": "  {",
   "note": "each trustedHtml() asks the browser for the forma policy again; an enforcing page refuses a second policy of one name, so the second raw entry on a page fails (DR-20). Verified by: src/dom/__tests__/trusted-html.test.ts > \"trustedHtml() returns a TrustedHTML from the forma policy where the browser has Trusted Types\""
  },
  {
@@ -2290,8 +2280,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    warnRawString(sink);\n    return value;",
-  "replace": "    return value;",
+  "find": "  if (isTrustedHtml(value)) return htmlOf(value);\n  warnRawString(sink);\n",
+  "replace": "  if (isTrustedHtml(value)) return htmlOf(value);\n",
   "note": "a string given to a raw sink is written with no development warning, so the 2.x bridge says nothing before 3.0.0 refuses it (L-18, DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a string to each raw sink still renders, and warns once with the sink's code in development\""
  },
  {
@@ -2313,5 +2303,155 @@
   "find": "    if (isTrustedHtml(html)) return String(html);\n",
   "replace": "",
   "note": "./ssr throws on a dangerouslySetInnerHTML given trustedHtml(), so a component shared with the browser cannot take the typed form (L-18). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the SSR renderers write a trustedHtml() value's markup and still refuse a non-string\""
+ },
+ {
+  "id": "trusted/static-attr-second-conversion",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  el.setAttribute(key, typeof value === 'object' && isRawHtmlAttr(key) && isTrustedHtml(value) ? htmlOf(value) : strVal);",
+  "replace": "  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);",
+  "note": "h()'s static path writes any object as itself, so setAttribute converts it again after the URL guard passed its first string: a toString that changes writes javascript: (formajs#29 review B1). Verified by: src/__tests__/renderer-contract.test.ts > \"writes %s as the string the URL guard checked, not a second conversion\""
+ },
+ {
+  "id": "trusted/reactive-attr-second-conversion",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        el.setAttribute(key, typeof v === 'object' && isRawHtmlAttr(key) && isTrustedHtml(v) ? htmlOf(v) : strVal);",
+  "replace": "        el.setAttribute(key, typeof v === 'object' ? htmlOf(v) : strVal);",
+  "note": "h()'s reactive path converts an object a second time after the URL guard (formajs#29 review B1). Verified by: src/__tests__/renderer-contract.test.ts > \"writes %s as the string the URL guard checked, not a second conversion\""
+ },
+ {
+  "id": "trusted/adoption-attr-second-conversion",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);",
+  "replace": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);",
+  "note": "adoption converts an object a second time after the URL guard (formajs#29 review B1). Verified by: src/__tests__/renderer-contract.test.ts > \"writes %s as the string the URL guard checked, not a second conversion\""
+ },
+ {
+  "id": "trusted/reconcile-srcdoc-unminted",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      const minted = parser && attr.name === 'srcdoc' ? parser.srcdoc(newEl) : null;",
+  "replace": "      const minted = null;",
+  "note": "reconcile()'s diff writes a changed srcdoc of trusted markup as a string, which an enforcing page refuses (formajs#29 review S1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src\""
+ },
+ {
+  "id": "trusted/reconcile-writes-script-attrs",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (isScriptAttr(liveEl, attr.name)) {\n        liveEl.removeAttribute(attr.name);\n        continue;\n      }\n",
+  "replace": "",
+  "note": "reconcile()'s diff writes a changed on* handler or script src, a Trusted Types script sink core writes nowhere else (formajs#29 review S1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src\""
+ },
+ {
+  "id": "trusted/runtime-handle-mints-strings",
+  "file": "src/dom/runtime-parser.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (!tt || typeof trusted !== 'object' || trusted === null || !tt.isHTML(trusted)) return null;",
+  "replace": "      if (!tt) return null;",
+  "note": "the shared forma-runtime handle on globalThis mints a string, so any script launders markup past Trusted Types with no trustedHtml() in its source (formajs#29 review S2). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the shared registry holds no policy, and its forma-runtime handle mints nothing from a string\""
+ },
+ {
+  "id": "trusted/runtime-parser-mints-any-srcdoc",
+  "file": "src/dom/runtime-parser.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "          const doc = parsed.has(el) ? el.getAttribute('srcdoc') : null;",
+  "replace": "          const doc = el.getAttribute('srcdoc');",
+  "note": "the runtime parser mints the srcdoc of any element, so a string planted on a div is minted (formajs#29 review S2). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the shared registry holds no policy, and its forma-runtime handle mints nothing from a string\""
+ },
+ {
+  "id": "trusted/registry-exposes-policy",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    reg.forma = forma && ((markup: string) => forma.createHTML(markup));",
+  "replace": "    reg.forma = forma && ((markup: string) => forma.createHTML(markup)); (reg as Record<string, unknown>).policies = { forma };",
+  "note": "the registry on globalThis holds a live policy (formajs#29 review S2). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the shared registry holds no policy, and its forma-runtime handle mints nothing from a string\""
+ },
+ {
+  "id": "trusted/registry-has-prototype",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return host[REGISTRY_KEY] ??= Object.assign(Object.create(null) as Registry, {",
+  "replace": "  return host[REGISTRY_KEY] ??= Object.assign({} as Registry, {",
+  "note": "the registry inherits from Object.prototype, so a polluted Object.prototype.forma stands in for the policy (formajs#29 review S2). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a polluted Object.prototype does not stand in for a policy\""
+ },
+ {
+  "id": "trusted/reconcile-records-before-write",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    const markup = parser ? parser.html : trimmed;",
+  "replace": "    lastHtmlByContainer.set(container, trimmed);\n    const markup = parser ? parser.html : trimmed;",
+  "note": "reconcile() records markup before writing it, so after a refused string write the same markup as trustedHtml() is skipped as unchanged and the DOM stays stale (formajs#29 review N3). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a reconcile the page refused is not recorded, so the same markup as trustedHtml() is written\""
+ },
+ {
+  "id": "trusted/policy-refused-silent",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    warnPolicyRefused(name);\n",
+  "replace": "",
+  "note": "a refused policy name falls back to strings with no development warning (formajs#29 review N4). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a refused policy name warns once in development, and the sinks then write strings the page refuses\""
+ },
+ {
+  "id": "trusted/factory-trusts-any-object",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  return tt && typeof tt.createPolicy === 'function' && typeof tt.isHTML === 'function' ? tt : undefined;",
+  "replace": "  return tt;",
+  "note": "an element clobbered onto window.trustedTypes is taken for Trusted Types (formajs#29 review N5). Verified by: src/dom/__tests__/trusted-html.test.ts > \"an element named trustedTypes is not Trusted Types\""
+ },
+ {
+  "id": "trusted/look-alike-silent",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (isTrustedHtml(value)) return htmlOf(value);\n  warnRawString(sink);\n",
+  "replace": "  if (isTrustedHtml(value)) return htmlOf(value);\n  if (typeof value === 'string') warnRawString(sink);\n",
+  "note": "a look-alike object or a String object at a raw sink is written untyped with no development warning (formajs#29 review N1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a look-alike object or a String object is written as before and warns as a string does\""
+ },
+ {
+  "id": "trusted/runtime-bind-srcdoc-silent",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "          warnRuntimeSrcdoc(attrName);\n",
+  "replace": "",
+  "note": "data-bind:srcdoc writes a document from an expression with no development warning (formajs#29 review S3). Verified by: src/__tests__/runtime-srcdoc.test.ts > \"data-bind:srcdoc writes its string and warns once with the runtime code\""
+ },
+ {
+  "id": "trusted/runtime-row-srcdoc-silent",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "          warnRuntimeSrcdoc(attr.name);\n",
+  "replace": "",
+  "note": "a list row's srcdoc writes a document from row data with no development warning (formajs#29 review S3). Verified by: src/__tests__/runtime-srcdoc.test.ts > \"a list row's srcdoc writes its string and warns once with the runtime code\""
  }
 ]

@@ -120,15 +120,23 @@ code once, as `[forma] FORMA_W_RAW_SRCDOC: …`:
 | A string to the runtime's `reconcile()` | `FORMA_W_RAW_RECONCILE` | `reconcile(container, trustedHtml(markup))` |
 | A string as a `srcdoc` value | `FORMA_W_RAW_SRCDOC` | `srcdoc: trustedHtml(markup)` |
 | `h('script')` | `FORMA_W_SCRIPT_ELEMENT` | A script in the page, or a module the build bundles |
+| `data-bind:srcdoc`, or `{item…}` in a list row's `srcdoc`, in the HTML runtime | `FORMA_W_RAW_RUNTIME_SRCDOC` | The frame built with `h()` and `trustedHtml(markup)` |
 
-Under a page policy that requires Trusted Types, as forma-server 0.2.2's
-Report-Only header does, a string at a raw sink is also reported by the
-browser, and refused where the policy is enforced; a `trustedHtml()` value is
-not ([`../CSP.md`](../CSP.md#trusted-types)).
+Each raw sink logs for any value that is not `trustedHtml()`, a look-alike
+object or a `String` object as much as a string. Under a page policy that
+requires Trusted Types, as forma-server 0.2.2's Report-Only header does, such a
+value at a raw sink is also reported by the browser, and refused where the
+policy is enforced; a `trustedHtml()` value is not
+([`../CSP.md`](../CSP.md#trusted-types)). A page that refuses one of core's two
+policy names (its `trusted-types` directive does not list it, or another script
+created it first) makes core write markup as strings, which it then refuses; a
+development build logs `FORMA_W_TT_POLICY_REFUSED` once for each name.
 
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "a string to each raw sink still renders, and warns once with the sink's code in development"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "h('script') warns once in development and still builds the element"
 Verified by `src/dom/__tests__/trusted-html-build.test.ts` > "a production build carries none of the raw-HTML warnings, in any artifact"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "a refused policy name warns once in development, and the sinks then write strings the page refuses"
+Verified by `src/__tests__/runtime-srcdoc.test.ts` > "a list row's srcdoc writes its string and warns once with the runtime code"
 
 ## SSR form controls
 

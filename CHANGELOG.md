@@ -154,45 +154,74 @@ All notable changes to this project will be documented in this file.
   (33,072 to 34,542 B); their gates rise from 34,500 to 36,000 B and from
   33,500 to 35,000 B. This change leaves the core entry and the browser ESM
   bundle as they were.
-- **Core writes no string to an HTML sink of its own, and its raw sinks take
-  Trusted Types** (FORMA-126, FORMA-127; DR-19, DR-20). Under a page policy
-  with `require-trusted-types-for 'script'`, which forma-server 0.2.2 sends as
-  Report-Only and a later release enforces, a string written to an HTML sink
-  is reported, and refused where enforced. `mount()`, the function it returns,
-  and a reactive `dangerouslySetInnerHTML` that becomes `null` emptied an
-  element with `innerHTML = ''`; they now call `replaceChildren()`, which no
-  policy checks. The raw sinks (`dangerouslySetInnerHTML`, `setHTMLUnsafe()`,
-  `template()` and `templateMany()`, the runtime's `reconcile()`, and a
-  `srcdoc` value on `h()` and in adoption) write a `trustedHtml()` value as the
-  `TrustedHTML` it is. `reconcile()` trims what it is given before parsing it,
-  so markup that arrived as `trustedHtml()` is minted again, trimmed, through
-  core's second policy, `forma-runtime`; a string is never minted, and a value
-  that is neither throws a `TypeError` naming it, as it did before by
-  accident. Each policy is made once per page, on first use, and shared by
-  every copy of core on the page (the runtime's IIFE beside core's ESM build),
-  since an enforcing page refuses a second policy of one name. In Chromium,
-  Firefox and WebKit, served with `require-trusted-types-for 'script';
-  trusted-types forma forma-runtime` Report-Only and enforced, core's own test
-  pages and every raw sink given `trustedHtml()` raise no violation, and a
-  string written to `innerHTML` raises one report and still renders under
-  Report-Only (`e2e/trusted-types.spec.ts`). A string given to a raw sink is
-  written exactly as before, which such a page reports.
-- **Size** (L-51, FORMA-126 and FORMA-127): `trustedHtml()`, the two policies
-  and the typed `reconcile()` grow the CDN runtime by 462 B gzipped (35,540 to
-  36,002 B) and the hardened runtime by 481 B (34,542 to 35,023 B). Both passed
-  their gates, which rise to the measured size rounded up to the next 500 B:
-  36,000 to 36,500 B and 35,000 to 35,500 B (`scripts/check-size.mjs`, the
-  README's size table). Measured against `main` with FORMA-123 and FORMA-169,
-  the core entry grows by 480 B (28,776 to 29,256 B of its 30,000 B gate) and
-  the browser ESM bundle by 465 B (27,626 to 28,091 B of 29,000 B). The
-  production files that changed are the ones that reach a raw sink: the
-  entries `index`, `runtime`, `runtime-hardened` and `ssr/index` (ESM and
-  CJS), the shared chunks holding the DOM and the URL checks (which now hold
-  `trustedHtml()` too), and the CDN bundles; `http`, `server`, `storage`,
-  `tc39-compat`, `wasm` and the reactive chunks are byte-identical. No
-  development warning reaches a production artifact: each sits behind the
-  build flag inside `src/dom/trusted-html.ts`, which the build folds in every
-  artifact and chunk.
+- **What core writes of its own passes Trusted Types, and its raw sinks take
+  them** (FORMA-126, FORMA-127; DR-19, DR-20). Under a page policy with
+  `require-trusted-types-for 'script'`, which forma-server 0.2.2 sends as
+  Report-Only and 3.0.0 enforces, a string written to an HTML or script sink
+  is reported, and refused where enforced.
+  - `mount()`, the function it returns, and a reactive
+    `dangerouslySetInnerHTML` that becomes `null` emptied an element with
+    `innerHTML = ''`; they now call `replaceChildren()`, which no policy
+    checks.
+  - The raw sinks (`dangerouslySetInnerHTML`, `setHTMLUnsafe()`, `template()`
+    and `templateMany()`, the runtime's `reconcile()`, and a `srcdoc` value on
+    `h()`, in adoption and in `./ssr`) write a `trustedHtml()` value as the
+    `TrustedHTML` it is. Anything else is written exactly as before: a string,
+    and a non-string where the sink converted one (`setHTMLUnsafe()`,
+    `template()`, `srcdoc`); `dangerouslySetInnerHTML` and `reconcile()` still
+    refuse a non-string with a `TypeError`.
+  - Only a trusted `srcdoc` is written as itself. An attribute value is
+    otherwise converted to a string once, for the URL guard and the write
+    alike (formajs#29's review, B1: an object whose string changed between
+    the two would have written `javascript:`).
+  - `reconcile()` trims what it is given before parsing it, so markup that
+    arrived as a browser `TrustedHTML` is minted again, trimmed, through core's
+    second policy, `forma-runtime`, and parsed by it; a string is never
+    minted. Its diff mints a changed `srcdoc` of an iframe that trusted markup
+    parsed into, and writes no `on*` attribute or script `src` (or `href`): a
+    changed one is removed, as h() and adoption write no `on*` name. It records
+    markup as current only once the write succeeded, so after a write the page
+    refused, the same markup as `trustedHtml()` is not skipped as unchanged.
+  - Each policy is made once per page, on first use, since an enforcing page
+    refuses a second policy of one name, and every copy of core on the page
+    (the runtime's IIFE beside core's ESM build) shares it through a registry
+    on `globalThis` (`Symbol.for('@getforma/core#trusted-types')`, a record
+    with no prototype). The registry holds no policy object: it holds the mint
+    `trustedHtml()` is, which a consumer's SR8 lint lists as a raw entry, and
+    a `forma-runtime` parser that takes only a browser `TrustedHTML`, so no
+    script can mint a `forma-runtime` value from a string. If the page refuses
+    a name, core writes strings (which the page then refuses), and a
+    development build logs `FORMA_W_TT_POLICY_REFUSED` once per name. An
+    element clobbered onto `window.trustedTypes` is not taken for Trusted
+    Types.
+  - In Chromium, Firefox and WebKit, served with `require-trusted-types-for
+    'script'; trusted-types forma forma-runtime` Report-Only and enforced,
+    core's own test pages and every raw sink given `trustedHtml()` raise no
+    violation, a `reconcile()` diff that changes an iframe's `srcdoc` and a
+    button's `onclick` included; a string written to `innerHTML` raises one
+    report and still renders under Report-Only (`e2e/trusted-types.spec.ts`).
+  - Not covered: the HTML runtime's own `srcdoc` bindings
+    (`data-bind:srcdoc`, `{item…}` in a list row's `srcdoc`) write an
+    expression's value or a row's data as a string that such a page reports or
+    refuses; see *Deprecated*.
+- **Size** (L-51, FORMA-126 and FORMA-127), measured against `main` with
+  FORMA-123 and FORMA-169: `trustedHtml()`, the two policies, the typed
+  `reconcile()` and its parser grow the CDN runtime by 816 B gzipped (35,540
+  to 36,356 B) and the hardened runtime by 835 B (34,542 to 35,377 B). Both
+  passed their gates, which rise to the measured size rounded up to the next
+  500 B: 36,000 to 36,500 B and 35,000 to 35,500 B (`scripts/check-size.mjs`,
+  the README's size table). The core entry grows by 509 B (28,776 to 29,285 B
+  of its 30,000 B gate) and the browser ESM bundle by 517 B (27,626 to
+  28,143 B of 29,000 B); the runtime's parser is a module of its own
+  (`src/dom/runtime-parser.ts`) that only `reconcile()` imports, so the core
+  entry does not carry it. The production files that changed are the ones that
+  reach a raw sink: the entries `index`, `runtime`, `runtime-hardened` and
+  `ssr/index` (ESM and CJS), the shared chunks holding the DOM and the URL
+  checks (which now hold `trustedHtml()` too), and the CDN bundles; `http`,
+  `server`, `storage`, `tc39-compat`, `wasm` and the reactive chunks are
+  byte-identical. No development warning reaches a production artifact: each
+  sits behind the build flag inside `src/dom/trusted-html.ts`, which the build
+  folds in every artifact and chunk.
 
 ### Added
 
@@ -373,32 +402,42 @@ All notable changes to this project will be documented in this file.
 
 ### Deprecated
 
-- **A plain string given to a raw sink, and `h('script')`** (DR-19, L-18,
-  FORMA-126). Both keep working through 2.x, written exactly as before, and
-  3.0.0 refuses them (FORMA-109). In a development build the first string
-  each sink receives logs one coded line: `FORMA_W_RAW_INNER_HTML`
-  (`dangerouslySetInnerHTML`), `FORMA_W_RAW_SET_HTML` (`setHTMLUnsafe()`),
-  `FORMA_W_RAW_TEMPLATE` (`template()`, `templateMany()`),
-  `FORMA_W_RAW_RECONCILE` (`reconcile()`) and `FORMA_W_RAW_SRCDOC` (`srcdoc`),
-  as `[forma] FORMA_W_RAW_SRCDOC: …`; `h('script')` logs
+- **A value that is not `trustedHtml()` given to a raw sink, the HTML
+  runtime's `srcdoc` bindings, and `h('script')`** (DR-19, L-18, FORMA-126).
+  All keep working through 2.x, written exactly as before, and 3.0.0 refuses
+  them (FORMA-109). In a development build the first such value each sink
+  receives (a string, a look-alike object or a `String` object) logs one
+  coded line: `FORMA_W_RAW_INNER_HTML` (`dangerouslySetInnerHTML`),
+  `FORMA_W_RAW_SET_HTML` (`setHTMLUnsafe()`), `FORMA_W_RAW_TEMPLATE`
+  (`template()`, `templateMany()`), `FORMA_W_RAW_RECONCILE` (`reconcile()`)
+  and `FORMA_W_RAW_SRCDOC` (`srcdoc`, on h(), in adoption and in `./ssr`), as
+  `[forma] FORMA_W_RAW_SRCDOC: …`. The runtime's `data-bind:srcdoc`, and
+  `{item…}` in a list row's `srcdoc`, write an expression's value or a row's
+  data as a document, a raw entry no `trustedHtml()` can reach: they stay
+  strings and log `FORMA_W_RAW_RUNTIME_SRCDOC`. `h('script')` logs
   `FORMA_W_SCRIPT_ELEMENT` once. Each is logged once per page or process,
   whichever copy of core asks. `docs/STABILITY.md` lists what replaces each
   under *Deprecated forms*. The `srcdoc` line replaces the uncoded warning
-  `h()` logged for every `srcdoc` prop and adoption for every reactive one.
+  `h()`, adoption and `./ssr`'s `renderToString` logged for every `srcdoc`,
+  `trustedHtml()` or not.
   The development build (FORMA-169) carries them, so an application bundled
   from the npm package in development logs them; production builds carry
   none, and `scripts/verify-dist.mjs` fails a build in which a production
   file holds one or a development entry lacks one. The CDN bundles have no
   development build, so a page loading the runtime from a CDN logs none.
-  - Tests: `src/dom/__tests__/trusted-html.test.ts` (thirteen, among them
-    "a string to each raw sink still renders, and warns once with the sink's
-    code in development", "core's own writes raise no Trusted Types violation:
-    mount, unmount, the null clear, and every sink given trustedHtml()" under a
-    simulated enforcement, and "reconcile() parses trusted markup through the
-    forma-runtime policy and a string through no policy");
-    `src/dom/__tests__/trusted-html-build.test.ts` > "a production build
-    carries none of the raw-HTML warnings, in any artifact" (the real tsup
-    configs) and its control; `e2e/trusted-types.spec.ts` (thirteen per
+  - Tests: `src/dom/__tests__/trusted-html.test.ts` (twenty, under a
+    simulated Trusted Types engine where it matters, among them "a string to
+    each raw sink still renders, and warns once with the sink's code in
+    development", "core's own writes raise no Trusted Types violation: mount,
+    unmount, the null clear, and every sink given trustedHtml()", "reconcile()'s
+    diff mints a changed srcdoc of trusted markup and writes no on* or script
+    src" and "the shared registry holds no policy, and its forma-runtime handle
+    mints nothing from a string"); `src/__tests__/renderer-contract.test.ts` >
+    "writes %s as the string the URL guard checked, not a second conversion"
+    (static, reactive, adoption and SSR); `src/__tests__/runtime-srcdoc.test.ts`
+    (three); `src/dom/__tests__/trusted-html-build.test.ts` > "a production
+    build carries none of the raw-HTML warnings, in any artifact" (the real
+    tsup configs) and its control; `e2e/trusted-types.spec.ts` (fourteen per
     engine); `e2e/development-build.spec.ts` > "a development bundle of the
     packed package logs a string at a raw sink once, with its code, and
     trustedHtml() never".

@@ -508,8 +508,8 @@ Verified by `src/__tests__/docs-truth.test.ts` > "documents every symbol the roo
 FormaJS never builds markup from strings. `h()` creates elements with
 `document.createElement` and writes text with `textContent`, which is why
 `innerHTML` is not used for library-generated markup. Five APIs, the raw sinks,
-deliberately break that rule; **none of them sanitizes**, and all five are
-first-party-content-only sinks:
+deliberately break that rule, and the HTML runtime has two `srcdoc` bindings
+that do; **none of them sanitizes**, and all are first-party-content-only sinks:
 
 | Sink | Where | What it does |
 |---|---|---|
@@ -517,7 +517,8 @@ first-party-content-only sinks:
 | `setHTMLUnsafe(el, html)` | `@getforma/core` | assigns `innerHTML` on the element |
 | `template(html)`, `templateMany(html)` | `@getforma/core` | parses the markup into a cached `<template>`, which compiled output clones |
 | `reconcile(container, html)` | `@getforma/core/runtime` | parses an HTML string into a `<template>` and diffs it into the live page |
-| `srcdoc` attribute | `h()` and SSR | the browser parses the *attribute value* as a document, so escaping does not neutralize it |
+| `srcdoc` attribute | `h()`, adoption and SSR | the browser parses the *attribute value* as a document, so escaping does not neutralize it; anything but `trustedHtml()` logs a coded warning in development |
+| `data-bind:srcdoc`, `{item…}` in a list row's `srcdoc` | the HTML runtime | writes an expression's value, or a row's data, as the iframe's document: a string no `trustedHtml()` can reach, refused in 3.0.0 ([HTML-RUNTIME.md](HTML-RUNTIME.md)) |
 
 Everything else is guarded: URL-bearing attributes (`href`, `src`, `action`,
 `formaction`, `xlink:href`, `poster`, `background`, `data`) drop `javascript:`,
@@ -548,15 +549,19 @@ accepts it at the sink ([`../CSP.md`](../CSP.md#trusted-types)); elsewhere it
 returns a frozen stand-in that core's sinks recognise and write as its markup.
 The zero-build runtime exports it too (`FormaRuntime.trustedHtml` in the CDN
 bundles), for `reconcile()`. A `TrustedHTML` from an application's own policy
-is accepted as well.
+is accepted as well; TypeScript takes it for the `TrustedHtml` type only
+through a cast (`value as unknown as TrustedHtml`).
 
-A plain string still works through 2.x, exactly as before, and in a development
-build the first string each sink receives logs one coded warning; 3.0.0 accepts
-only `trustedHtml()`. The codes, and `h('script')`'s, are in
+A plain string still works through 2.x, exactly as before, and so does a
+non-string value where a sink took one in 2.0 (`dangerouslySetInnerHTML` and
+`reconcile()` refused one then, and still do). In a development build the first
+value each sink receives that is not `trustedHtml()` logs one coded warning;
+3.0.0 accepts only `trustedHtml()`. The codes, and `h('script')`'s, are in
 [STABILITY.md](STABILITY.md#deprecated-forms).
 
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "every raw sink writes a trustedHtml() value without a warning, and the DOM holds its markup"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "a string to each raw sink still renders, and warns once with the sink's code in development"
 Verified by `src/dom/__tests__/trusted-html.test.ts` > "a look-alike object is not trusted HTML"
+Verified by `src/dom/__tests__/trusted-html.test.ts` > "a look-alike object or a String object is written as before and warns as a string does"
 
 The full threat model is in [`../SECURITY.md`](../SECURITY.md).
