@@ -32,8 +32,8 @@ All notable changes to this project will be documented in this file.
   you insert with `appendChild` yourself. Shared namespace vectors
   (`src/__tests__/vectors/namespaces.json`) run through `h()`,
   `renderToString`, and each browser's parser and adoption in Chromium, Firefox
-  and WebKit. Core's ESM entry grows by 1,391 B gzipped (29,094 B, gate
-  30,000 B) and the CDN ESM bundle by 1,322 B (27,936 B, gate 29,000 B); no
+  and WebKit. Core's ESM entry grows by 1,464 B gzipped (29,167 B, gate
+  30,000 B) and the CDN ESM bundle by 1,378 B (27,992 B, gate 29,000 B); no
   gate is passed. The CDN runtimes build no elements through `h()` and are
   unchanged.
 

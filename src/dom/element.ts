@@ -1010,10 +1010,20 @@ function fillDual(
       break;
     }
   }
-  const owner: Owner = { disposers: [] };
-  runWithOwner(owner, () => fillElement(el, props, children));
-  const stop = () => { for (const d of owner.disposers.splice(0)) d(); };
-  if (owner.disposers.length) registerDisposer(stop);
+  // Only a reactive prop or child creates effects, so only then does the
+  // element need an owner of its own (a plain link pays for none).
+  let owner: Owner | null = null;
+  for (const key in props) {
+    if (key !== 'ref' && typeof props[key] === 'function' && !(key.charCodeAt(0) === 111 && key.charCodeAt(1) === 110)) owner = { disposers: [] };
+  }
+  for (const child of children) if (typeof child === 'function' || Array.isArray(child)) owner = { disposers: [] };
+  const stop = () => { if (owner) for (const d of owner.disposers.splice(0)) d(); };
+  if (owner) {
+    runWithOwner(owner, () => fillElement(el, props, children));
+    if (owner.disposers.length) registerDisposer(stop);
+  } else {
+    fillElement(el, props, children);
+  }
 
   (el as any)[NS_SYM] = (to: string | null): Node | null => {
     if (to === ns) return null;
