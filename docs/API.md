@@ -513,7 +513,7 @@ that do; **none of them sanitizes**, and all are first-party-content-only sinks:
 
 | Sink | Where | What it does |
 |---|---|---|
-| `dangerouslySetInnerHTML={{ __html }}` | prop on `h()` / JSX | assigns `innerHTML` on the element |
+| `dangerouslySetInnerHTML={{ __html }}` | prop on `h()` / JSX | assigns `innerHTML` on the element; `null`, `undefined` and `false` are no prop; give no children beside it (`FORMA_W_INNER_HTML_CHILDREN`) |
 | `setHTMLUnsafe(el, html)` | `@getforma/core` | assigns `innerHTML` on the element |
 | `template(html)`, `templateMany(html)` | `@getforma/core` | parses the markup into a cached `<template>`, which compiled output clones |
 | `reconcile(container, html)` | `@getforma/core/runtime` | parses an HTML string into a `<template>` and diffs it into the live page |
