@@ -19,8 +19,7 @@ import type { Expr, Stmt } from './ast';
 import { isExprError, type FormaExprError } from './errors';
 import { parseExpression, parseProgram } from './parser';
 import { validateExpression, validateProgram } from './validate';
-import { LIMITS } from './ast';
-import { charge, enter, evalExpr, leave, makeCtx, runProgram, type Meter, type ScopeLike } from './interp';
+import { charge, enter, evalExpr, leave, makeCtx, room, runProgram, type Meter, type ScopeLike } from './interp';
 
 export { LIMITS } from './ast';
 export { exprError, isExprError, type FormaExprError, type ExprErrorCode } from './errors';
@@ -28,7 +27,7 @@ export { hostFn, hostObject, isHost, type Bound, type ExprGrant, type Host } fro
 export { isLocalSelector } from './selector';
 export { allowlistSnapshot, SAFE_GLOBALS } from './allowlist';
 export { GROW, weigh } from './cost';
-export { safeKey, safeRead, setStepBudget, getStepBudget, type Meter, type ScopeLike } from './interp';
+export { running, safeKey, safeRead, setStepBudget, getStepBudget, type Meter, type ScopeLike } from './interp';
 
 const CACHE_MAX = 2048;
 
@@ -116,7 +115,7 @@ export function evaluateExpression(node: Expr, scope: ScopeLike, meter?: Meter |
   const outer = enter(ctx);
   try {
     const value = evalExpr(node, ctx);
-    if (text) charge(ctx, text(value, LIMITS.ALLOC_BUDGET), 'converting the result to text', -1);
+    if (text) charge(ctx, text(value, room(ctx)), 'converting the result to text', -1);
     return value;
   } finally {
     leave(ctx, outer, meter);

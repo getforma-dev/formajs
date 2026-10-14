@@ -48,11 +48,13 @@ const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
  * FORMA-025 (core 2.1.0) raised them again, to 36,000 and 35,000 B (35,540
  * and 34,542 B measured). FORMA-126 and FORMA-127 (core 2.1.0: trustedHtml(),
  * the typed reconcile() and its forma-runtime policy) raised them to 36,500
- * and 35,500 B (36,374 and 35,396 B measured).
+ * and 35,500 B (36,374 and 35,396 B measured). FORMA-173 (deferral per
+ * budget, the cap on a charge after a binding waits, its per-task allowance)
+ * raised them to 37,000 and 36,000 B (36,576 and 35,599 B measured).
  * FORMA-128 (the tiered mount: roots handed in, grants, the bound on `$el`,
  * coded denials, the page's mount switch, its review's confined `closest()`
  * and gated `$dispatch`; core 2.1.0) raised them to 40,500 and 39,500 B
- * (40,111 and 39,122 B measured).
+ * (40,329 and 39,344 B measured).
  * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
 export const GATES = [

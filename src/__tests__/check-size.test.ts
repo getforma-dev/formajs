@@ -136,8 +136,8 @@ describe('the gate list', () => {
     // The recorded sizes are the last measurement that raised a gate (L-51:
     // FORMA-128, core 2.1.0).
     for (const [entry, measured] of [
-      ['dist/formajs-runtime.global.js', 40111],
-      ['dist/formajs-runtime-hardened.global.js', 39122],
+      ['dist/formajs-runtime.global.js', 40329],
+      ['dist/formajs-runtime-hardened.global.js', 39344],
     ] as const) {
       const gate = GATES.find((g) => g.entry === entry);
       expect(gate, `${entry} needs its own gate`).toBeDefined();
