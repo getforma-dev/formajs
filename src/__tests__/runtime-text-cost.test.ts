@@ -105,8 +105,12 @@ describe('the runtime charges its own conversions to text (FORMA-025)', () => {
     runtime.setScopeValue(root, 'v', BIG);
     // A thousand rows each placing (or keyed by) the long string.
     runtime.setScopeValue(root, 'rows', BIG.map((name) => ({ name })));
-    // The first refusal in a task is reported at once; the rest of that task's
-    // bindings are retried in the tasks after it, and refused there.
+    // Each conversion weighs more than the whole budget, which no task could
+    // hold, so all six are refused and reported at once, not retried (S2).
+    expect(runtime.getDiagnostics().map((d) => [d.code, d.expr, d.count])).toEqual([
+      ['FORMA_E_BUDGET', 'v', 3],
+      ['FORMA_E_BUDGET', 'rows', 3],
+    ]);
     for (let i = 0; i < 10; i++) await tick();
     // Each keeps what the last value it converted wrote.
     expect(view(container.querySelector('#bind')!.getAttribute('title'))).toBe('init');

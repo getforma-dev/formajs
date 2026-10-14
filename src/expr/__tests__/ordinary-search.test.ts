@@ -6,7 +6,7 @@
  * widget code. Core 2.0.1 answers it until the step budget stops it, at about
  * 9,090 records. Core 2.0.3 priced lowercasing any text with a character
  * above Latin-1 at half a unit a character, so it refused the search past about
- * 1,716 records of Greek, Cyrillic, CJK or Latin Extended text. Core 2.0.4
+ * 1,716 records of Greek, Cyrillic, CJK or Latin Extended text. Core 2.1.0
  * prices those scripts by what lowercasing them measured (FORMA-028), so the
  * search answers as 2.0.1 does, at 900 and at 9,000 records, in every script
  * here; Latin-1 answers as it did in 2.0.3.

@@ -50,14 +50,17 @@ const nonAscii = RegExp.prototype.exec.bind(/[^\x00-\x7f]/);
 
 /**
  * Whether a character (the first `costly` found) belongs to a script whose
- * lowercasing measured at most about 19 ns a character at 4x CPU throttling,
- * text stored two bytes a character (FORMA-028): Latin Extended-A and B, the
+ * ordinary text lowercased at 4 to 19 ns a character at 4x CPU throttling,
+ * stored two bytes a character (FORMA-028): Latin Extended-A and B, the
  * combining marks, Greek, Cyrillic, Armenian, Hebrew, Arabic, the Indic
  * scripts, Thai, Tibetan, Latin Extended Additional (Vietnamese), the CJK
- * blocks and kana, Hangul, and the emoji planes. Testing one character costs
- * nothing; a full scan of two-byte text measured 6 to 7 ns a character, most
- * of what lowercasing it costs, so the tier is read from the first character
- * outside Latin-1, and SECURITY.md says what that leaves open.
+ * blocks and kana, Hangul, and the emoji planes. Turkish `İ` (U+0130) is in
+ * Latin Extended-A and so in this tier, though it lowercases to two characters
+ * and measured 27 to 30 ns. Testing one character costs nothing; a full scan
+ * of two-byte text measured 6 to 7 ns a character, most of what lowercasing
+ * it costs, so the tier is read from the first character outside Latin-1.
+ * Text that opens with one such character is priced 1/16 whatever follows;
+ * SECURITY.md states the bound that leaves (about 160 ms a task).
  */
 const middle = RegExp.prototype.test.bind(/[\u0100-\u024f\u0300-\u0fff\u1e00-\u1eff\u2e80-\u9fff\uac00-\ud7af\ud83c-\ud83e]/);
 
@@ -238,8 +241,8 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *   `nonAscii`): lowercasing a string stored one byte a character measured at
  *   most 2.1 ns. Lowercasing two-byte text measured 4 to 19 ns a character in
  *   the scripts `middle` names (most for all-capital Greek, least for text that
- *   changes little, such as CJK) and 17 to 40 ns beyond them (Georgian,
- *   Cherokee, Greek Extended, fullwidth Latin): such text costs 1/16 when its
+ *   changes little, such as CJK; Turkish `İ` 27 to 30 ns) and 17 to 40 ns
+ *   beyond them (Georgian, Cherokee, Greek Extended, fullwidth Latin): such text costs 1/16 when its
  *   first character above Latin-1 is in a `middle` script, else 1/2 (FORMA-028;
  *   in 2.0.3 all of it cost 1/2, refusing a search over 1,716 records of Greek).
  *   The first character decides because a full scan of two-byte text measured
@@ -252,10 +255,10 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  *   A string stored two bytes a character costs more for the same text
  *   (lowercasing 4 to 11 ns, plus the tier scan's 3.5 ns) than the 1/32 its
  *   tier charges: up to about fourfold. A text search over 9,000 records with
- *   such characters still measured under 50 ms; a single long two-byte string
- *   does not, and SECURITY.md lists it under FORMA-028. The tier test is
+ *   such characters still measured under 50 ms; a budget's worth of calls on
+ *   long two-byte strings does not, and SECURITY.md lists it. The tier test is
  *   itself a scan (free on one-byte strings), skipped when even the cheapest
- *   tier is past `room`.
+ *   tier is past the whole budget.
  * - `includes`, `indexOf` and `lastIndexOf` on a string are weighted for
  *   ordinary text, under 1 ns a character. A pattern whose first characters
  *   fill the receiver (`'ab'` in `'aaaa…'`) measured 39 ns: SECURITY.md lists

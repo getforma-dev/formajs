@@ -32,21 +32,23 @@ All notable changes to this project will be documented in this file.
   task: at 4x, in Chromium 151 on an Apple M1 Pro, the slowest of 41 runs took
   27 ms. A loop of character reads is otherwise bounded by the step budget, as
   before. `+=` now keeps the 1 MiB result cap that `+` has.
-- **The budgets are one per task, not one per evaluation** (FORMA-028). The
-  runtime keeps a meter of what the evaluations of the current task have
-  spent, and every evaluation it starts counts on from it, for the 250,000
-  units and the 100,000 steps alike; an evaluation started inside another (a
-  `data-computed` a binding reads, a handler `$el.click()` or `$dispatch`
-  reaches) spends the running one's budget. Ten bindings at the cap in one
-  widget used to run in one 382 ms task. A binding refused only because the
-  bindings before it in its task spent the budget is not reported: it renders
-  in the next task, where it starts first, so those ten render one task at a
-  time, none over 42 ms at 4x. A binding over the budget on its own is
-  reported as before. A computed refused inside a heavy reader is evaluated
+- **The budgets are one per task and per event, not per evaluation**
+  (FORMA-028). The runtime keeps a meter of what the evaluations of the
+  current task have spent, and every evaluation it starts counts on from it,
+  for the 250,000 units and the 100,000 steps alike; an evaluation started
+  inside another (a `data-computed` a binding reads, a handler `$el.click()`
+  or `$dispatch` reaches) spends the running one's budget. Ten bindings at the
+  cap in one widget used to run in one 382 ms task. A binding refused only
+  because the bindings before it in its task spent the budget is not reported:
+  it renders in the next task, where it starts first, so those ten render one
+  task at a time, none over 42 ms at 4x. A binding over the budget on its own
+  is reported as before. A computed refused inside a heavy reader is evaluated
   alone at the start of the next task, so its refusal is not cached as its
   answer. A handler cannot be re-run, so an event the runtime has not seen
   (and a `data-model` input) starts a fresh meter, and the handlers one event
-  reaches as it bubbles share it.
+  reaches as it bubbles share it. A charge larger than the whole budget is
+  refused and reported at once, whatever the task had spent: no later task
+  could hold it, so it is not priced again in each retry.
 - **The runtime's own conversions of a result to text are charged before
   they run** (FORMA-025). `data-text`, `data-bind:*`, `data-model`,
   `data-persist`, and a `data-list` row's `{item.x}` placeholders and
@@ -81,26 +83,41 @@ All notable changes to this project will be documented in this file.
   asserts that each is refused before the native runs, that no task reaches
   50 ms and, in Chromium, that the heap grows under 16 MB. Its table is the one
   `native-cost.test.ts` checks in Node.
-- **Still not bounded to 50 ms**, each to one evaluation per task, and listed
-  in SECURITY.md ("What the budgets do not bound"): a string search whose
-  pattern's first characters fill the text (`'ab'` in `'aaaa…'`, 39 ns a
+- **Still not bounded to 50 ms**, and listed in SECURITY.md ("What the budgets
+  do not bound"). The meter is zeroed by each event the runtime has not seen,
+  so the several events one task can deliver (those of one click or keystroke,
+  one per control of a submitted form) each get a budget: a widget that
+  handles all of them spends a budget per event in that task. Under A14 every
+  widget is the founder's reviewed code, and this is carried with the rest.
+  Each of the following is bounded to one evaluation per task: a string search
+  whose pattern's first characters fill the text (`'ab'` in `'aaaa…'`, 39 ns a
   character where ordinary text takes 1; one evaluation ran up to 315 ms at
   4x); case mapping of text stored two bytes a character but all Latin-1
   (charged as one-byte text, up to about four times under: 56 ms for seven
   calls on a million characters, 100 ms for alternating-case text); and text
   whose first character above Latin-1 is in a `1/16` script but whose rest is
   costlier (all-capital Greek 73 ms for four calls on 960,000 characters; a
-  Greek letter followed by Turkish `İ` or Cherokee up to 90 ms), because a full
-  scan of two-byte text measured 6 to 7 ns a character, most of what
-  lowercasing it costs. The largest ordinary evaluation is near the line as
-  well: the 9,000-record search measured 24 ms median at 4x in ASCII and up to
-  50 ms in Greek, where 2.0.1 measured 19 and 42 ms in the same session.
+  Greek letter followed by Cherokee 90 ms), because a full scan of two-byte
+  text measured 6 to 7 ns a character, most of what lowercasing it costs. Its
+  bound is a task's 4 million characters at 1/16 lowercased at about 40 ns,
+  the costliest measured: about 160 ms. Turkish `İ` (U+0130) is a Latin
+  Extended-A letter, so text with it is priced 1/16 though it measured 27 to
+  30 ns a character: one call on a million ran 76 ms before the 1 MiB cap
+  refused its two-million-character result. Nor does the budget price
+  `data-list`'s rows: about 14 µs each at 4x, in 2.0.3 as here (FORMA-172).
+  The largest ordinary evaluation is near the line as well: the 9,000-record
+  search measured 24 ms median at 4x in ASCII and up to 50 ms in Greek, where
+  2.0.1 measured 19 and 42 ms in the same session.
 - **Behaviour change: what a task can no longer compute.** Measured with this
   release's engine against 2.0.3's:
-  - Building a string by joining in a callback: `rows.reduce((s, r) => s + r.name + ', ', '')`
-    over names of 20 characters is refused past about 1,200 rows, where 2.0.3
-    answered about 14,300. `rows.map(r => r.name).join(', ')` builds the same
-    string and answers as before (about 10,400 rows of 20 characters).
+  - Building a string with `reduce` and `+`, accepted by the lead (L-50):
+    `rows.reduce((s, r) => s + r.name + ', ', '')` over names of 20 characters
+    is refused past about 1,200 rows, where 2.0.3 answered about 14,300. Each
+    `+` is charged the whole length it builds, so an accumulator pays the
+    square of its length. `rows.map(r => r.name).join('')` stays cheap: it
+    answers about 11,360 rows of 20 characters, as 2.0.3 does, in 7 ms median
+    at 4x for 11,000; with separators, `rows.map(r => r.name).join(', ')`
+    answers about 10,400.
   - Comparing two strings a callback has just built, or reading a character of
     one: `(s + 'y') === (s + 'z')` over 100-character strings past about
     10,280 iterations, `(s + 'y').charCodeAt(0)` past about 15,470 (2.0.3:
@@ -110,6 +127,10 @@ All notable changes to this project will be documented in this file.
     everything else the evaluation does (numbers: about 6,400, as before).
   - Bindings that together pass the budget in one task render over several
     tasks: until its turn, a binding shows what it showed before.
+  - `data-forma-expr-budget` now sets the step budget of a task (of an event,
+    for a handler and the bindings it updates), not of each evaluation. A page
+    that set it low renders its bindings over more tasks than before, where
+    2.0.3 gave each binding the whole of it.
   - A computed read inside a binding spends that binding's budget.
   - Among the handlers one event reaches as it bubbles, one that finds the
     budget spent by the handlers before it is refused with `FORMA_E_BUDGET`.
@@ -129,8 +150,8 @@ All notable changes to this project will be documented in this file.
   More is answered than in 2.0.3, too: the non-Latin search, and a string
   method given a long string argument. Rollback: pin 2.0.3.
 - **Size** (L-51): measured on `main` with FORMA-132, the CDN runtime grows
-  by 1,458 B gzipped (34,061 to 35,519 B) and the hardened runtime by 1,448 B
-  (33,072 to 34,520 B); their gates rise from 34,500 to 36,000 B and from
+  by 1,479 B gzipped (34,061 to 35,540 B) and the hardened runtime by 1,470 B
+  (33,072 to 34,542 B); their gates rise from 34,500 to 36,000 B and from
   33,500 to 35,000 B. This change leaves the core entry and the browser ESM
   bundle as they were.
 

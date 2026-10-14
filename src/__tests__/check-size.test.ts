@@ -134,10 +134,10 @@ describe('the gate list', () => {
     // set close to the measurement rather than at the +20% the other entries
     // use. Anything looser than +10% over the recorded size is not a gate.
     // The recorded sizes are the last measurement that raised a gate (L-51:
-    // FORMA-028 and FORMA-025, core 2.0.4).
+    // FORMA-028 and FORMA-025, core 2.1.0).
     for (const [entry, measured] of [
-      ['dist/formajs-runtime.global.js', 35519],
-      ['dist/formajs-runtime-hardened.global.js', 34520],
+      ['dist/formajs-runtime.global.js', 35540],
+      ['dist/formajs-runtime-hardened.global.js', 34542],
     ] as const) {
       const gate = GATES.find((g) => g.entry === entry);
       expect(gate, `${entry} needs its own gate`).toBeDefined();

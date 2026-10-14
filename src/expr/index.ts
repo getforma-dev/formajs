@@ -115,7 +115,7 @@ export function evaluateExpression(node: Expr, scope: ScopeLike, meter?: Meter |
   const outer = enter(ctx);
   try {
     const value = evalExpr(node, ctx);
-    if (text) charge(ctx, text(value, LIMITS.ALLOC_BUDGET - ctx.cost), 'converting the result to text', -1);
+    if (text) charge(ctx, text(value, LIMITS.ALLOC_BUDGET), 'converting the result to text', -1);
     return value;
   } finally {
     leave(ctx, outer, meter);

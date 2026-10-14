@@ -83,14 +83,38 @@ describe('the task budget (FORMA-028)', () => {
     </div>`;
     runtime.mount(container);
     // The first is refused in a task it started: reported at once. Its refused
-    // charge never ran, so the second fits; the third is deferred, then refused
-    // in the next task, which it starts.
+    // charge never ran, so the second fits. The third asks for more than the
+    // whole budget, which no task could hold: reported at once too, though
+    // the task had spent 200,000 before it.
     expect(texts()).toEqual(['server', '199990', 'server']);
-    expect(codes()).toEqual(['FORMA_E_BUDGET']);
+    expect(codes()).toEqual(['FORMA_E_BUDGET', 'FORMA_E_BUDGET']);
     await settle();
     expect(texts()).toEqual(['server', '199990', 'server']);
     expect(codes()).toEqual(['FORMA_E_BUDGET', 'FORMA_E_BUDGET']);
     expect(container.querySelectorAll('[data-forma-expr-error]')).toHaveLength(2);
+  });
+
+  it('a binding too heavy for any task is priced once and reported once', async () => {
+    // The middle binding dispatches an event each time it is evaluated, then
+    // asks for 300,000 units. Deferring it would price it again in every retry
+    // tick until it ran first (review S2); a charge over the whole budget is
+    // final instead. Two-sided: the third binding, which fits a task of its
+    // own, is still deferred and renders in the next one.
+    let priced = 0;
+    container.addEventListener('priced', () => { priced++; });
+    container.innerHTML = `<div data-forma-state='{}'>
+      <p data-out data-text="{${spending(100_000)}}">server</p>
+      <p data-out data-text="{[$dispatch('priced'), ${spending(300_010)}][1]}">server</p>
+      <p data-out data-text="{${spending(200_000)}}">server</p>
+    </div>`;
+    runtime.mount(container);
+    expect(texts()).toEqual(['99990', 'server', 'server']);
+    expect(codes()).toEqual(['FORMA_E_BUDGET']);
+    expect(priced).toBe(1);
+    await settle();
+    expect(texts()).toEqual(['99990', 'server', '199990']);
+    expect(runtime.getDiagnostics().map((d) => [d.code, d.count])).toEqual([['FORMA_E_BUDGET', 1]]);
+    expect(priced).toBe(1);
   });
 
   it('a chain of computeds spends one budget between them', async () => {

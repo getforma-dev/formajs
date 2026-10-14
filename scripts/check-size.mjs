@@ -45,8 +45,8 @@ const ROOT = resolve(fileURLToPath(import.meta.url), '../..');
  * CHANGELOG entry states the growth; a change that only refactors never
  * raises one. FORMA-132 (data-fetch's timeout) raised both, 34,000 to 34,500 B
  * and 33,000 to 33,500 B (34,061 and 33,072 B measured). FORMA-028 and
- * FORMA-025 (core 2.0.4) raised them again, to 36,000 and 35,000 B (35,519
- * and 34,520 B measured).
+ * FORMA-025 (core 2.1.0) raised them again, to 36,000 and 35,000 B (35,540
+ * and 34,542 B measured).
  * Verified by: src/__tests__/check-size.test.ts > "gates every CDN runtime artifact the docs point at"
  */
 export const GATES = [
