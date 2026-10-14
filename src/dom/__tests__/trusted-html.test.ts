@@ -465,6 +465,20 @@ describe('core under Trusted Types (simulated: happy-dom has none)', () => {
     expect(sim.violations).toEqual([]);
   });
 
+  it("adopting a string onto the walker's empty element raises one Trusted Types report, as client rendering does", () => {
+    // formajs#32's second review: holdsMarkup parsed the string through a
+    // template before writing it, a second report for one write.
+    sim = enforceTrustedTypes({ reportOnly: true });
+    document.body.innerHTML = trustedHtml('<div id="app" data-forma-ssr><article></article></div>') as unknown as string;
+    mount(() => h('article', { dangerouslySetInnerHTML: () => ({ __html: '<b>x</b>' }) }), '#app');
+    expect(document.querySelector('#app article')!.innerHTML).toBe('<b>x</b>');
+    expect(sim.violations).toEqual(['innerHTML <b>x</b>']);
+    // Client rendering, for comparison: one report for one write.
+    const client = h('article', { dangerouslySetInnerHTML: () => ({ __html: '<b>x</b>' }) });
+    expect(client.innerHTML).toBe('<b>x</b>');
+    expect(sim.violations).toEqual(['innerHTML <b>x</b>', 'innerHTML <b>x</b>']);
+  });
+
   it('a refused string does not block the same markup sent later as trustedHtml(), client-rendered and adopted', () => {
     // formajs#32's review (N1): the markup was recorded as current before the
     // write, so after an enforcing page refused it as a string, the same

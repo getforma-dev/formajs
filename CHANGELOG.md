@@ -499,7 +499,9 @@ All notable changes to this project will be documented in this file.
     it with the server's content as the browser serialises both, so markup
     `./ssr` wrote as given (`<br/>`, single quotes, `&#39;`, an unclosed `<p>`,
     a `<table>` without `<tbody>`) is not rewritten: an iframe in it does not
-    reload, and text typed into it before activation survives;
+    reload, and text typed into it before activation survives. An empty
+    element (the walker's) is written without the parse, so a string raises
+    one Trusted Types report, as client rendering does;
   - a reactive prop whose first value is `null` keeps the server's content
     (its children, adopted and bound) until markup arrives, as h() shows its
     children until then;
@@ -530,9 +532,9 @@ All notable changes to this project will be documented in this file.
   later as trustedHtml(), client-rendered and adopted"; `e2e/adoption.spec.ts`
   (four tests, among them twenty-one non-canonical markups, the review's
   among them, adopted without one DOM write) and the Trusted Types sink test's adopted
-  island, in Chromium, Firefox and WebKit. Size: the core entry grows by 223 B
-  gzipped (29,285 to 29,508 B of its 30,000 B gate) and the browser ESM bundle
-  by 215 B (28,143 to 28,358 B of 29,000 B); the CDN runtimes, which do not
+  island, in Chromium, Firefox and WebKit. Size: the core entry grows by 230 B
+  gzipped (29,285 to 29,515 B of its 30,000 B gate) and the browser ESM bundle
+  by 226 B (28,143 to 28,369 B of 29,000 B); the CDN runtimes, which do not
   adopt, do not change.
 - **SVG and MathML namespaces where `h()` knows the parent** (FORMA-026,
   DR-9). A tag that is both HTML and SVG (`title`, `a`, `script`, `style`,

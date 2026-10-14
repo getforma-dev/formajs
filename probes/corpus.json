@@ -2530,8 +2530,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "  if (current === markup) return true;\n  const tpl = document.createElement('template');\n  tpl.innerHTML = sink;\n  return tpl.innerHTML === current;",
-  "replace": "  return current === markup;",
+  "find": "  const tpl = document.createElement('template');\n  tpl.innerHTML = sink;\n  return tpl.innerHTML === current;",
+  "replace": "  return false;",
   "note": "adoption judges the server's markup by byte equality with the browser's serialisation, so ./ssr markup such as <br/> or &#39; is rewritten: iframes reload, typed text is lost (formajs#32 review S1, DR-5). Verified by: src/dom/__tests__/adopt-inner-html.test.ts > \"markup the server wrote in a form the browser serialises differently is not rewritten: %j\""
  },
  {
@@ -2583,5 +2583,15 @@
   "find": "    if (cache['innerHTML'] === markup) return;\n    const sink = rawHtml(html, 'innerHTML');\n    if (!adopting || !holdsMarkup(el, markup, sink)) el.innerHTML = sink;\n    cache['innerHTML'] = markup;",
   "replace": "    if (cache['innerHTML'] === markup) return;\n    cache['innerHTML'] = markup;\n    const sink = rawHtml(html, 'innerHTML');\n    if (!adopting || !holdsMarkup(el, markup, sink)) el.innerHTML = sink;",
   "note": "markup is recorded as current before the write, so a string the page refused blocks the same markup as trustedHtml() (formajs#32 review N1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a refused string does not block the same markup sent later as trustedHtml(), client-rendered and adopted\""
+ },
+ {
+  "id": "adopt/inner-html-empty-parsed",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (current === '') return false;\n",
+  "replace": "",
+  "note": "adoption parses a string through a template before writing it onto the walker's empty element: two Trusted Types reports for one write, where client rendering raises one (formajs#32 second review). Verified by: src/dom/__tests__/trusted-html.test.ts > \"adopting a string onto the walker's empty element raises one Trusted Types report, as client rendering does\""
  }
 ]

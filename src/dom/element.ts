@@ -539,6 +539,11 @@ export function bindInnerHTML(el: Element, value: unknown, adopt: boolean): void
 function holdsMarkup(el: Element, markup: string, sink: string): boolean {
   const current = el.innerHTML;
   if (current === markup) return true;
+  // An empty element (the walker's) holds no markup to compare: write, with
+  // no parse first, so a string raises one Trusted Types report, as client
+  // rendering does, not two.
+  // Verified by: src/dom/__tests__/trusted-html.test.ts > "adopting a string onto the walker's empty element raises one Trusted Types report, as client rendering does"
+  if (current === '') return false;
   const tpl = document.createElement('template');
   tpl.innerHTML = sink;
   return tpl.innerHTML === current;
