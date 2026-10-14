@@ -95,7 +95,7 @@ jobs:
       # FORMA-180). `npm ci` has already checked the bytes against the
       # lockfile's integrity. The audit reads the installed tree and the
       # registry; it changes no file, so the bytes this job packs are the same.
-      # check-release-workflow.rb's K5 keeps it after every `npm ci` here.
+      # check-release-workflow.rb's S1 keeps it as the step after every `npm ci`.
       - run: npm audit signatures
 
       - name: Verify version matches tag

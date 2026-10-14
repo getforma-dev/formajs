@@ -52,7 +52,7 @@ Verified by: `src/__tests__/runtime-srcdoc.test.ts` > "data-bind:srcdoc writes i
 
 ### There is no `new Function` in the HTML Runtime
 
-Expressions in `data-*` attributes are evaluated by an **allowlist AST interpreter** (`src/expr/`): lexer, precedence-climbing parser, validator, tree-walking interpreter. Every shipped artifact — `dist/runtime.js`, `dist/runtime.cjs`, the three IIFE globals (the runtime, the hardened runtime and the preview frame's), the hardened pair, and the SSR/Node path — contains **zero `eval`, zero `new Function` and zero `with()`**. There is no opt-in switch, because there is no fallback to switch on: `setUnsafeEval()`, `isUnsafeEvalAllowed()` and `data-forma-unsafe-eval` were removed along with the code they guarded.
+Expressions in `data-*` attributes are evaluated by an **allowlist AST interpreter** (`src/expr/`): lexer, precedence-climbing parser, validator, tree-walking interpreter. Every shipped artifact — `dist/runtime.js`, `dist/runtime.cjs`, the three classic-script builds (the `FormaRuntime` global, its hardened twin, and the preview frame's script, which defines no global), the hardened pair, and the SSR/Node path — contains **zero `eval`, zero `new Function` and zero `with()`**. There is no opt-in switch, because there is no fallback to switch on: `setUnsafeEval()`, `isUnsafeEvalAllowed()` and `data-forma-unsafe-eval` were removed along with the code they guarded.
 
 `scripts/verify-dist.mjs` greps every built artifact as the last step of `npm run build`, so this is asserted on the bytes that ship rather than inferred from the source.
 

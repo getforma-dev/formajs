@@ -123,7 +123,7 @@ jobs:
     # which playwright install was 0.3m. The Playwright config gives webServer
     # no explicit timeout, so it inherits the 60s default — `npx serve` failing
     # to bind fails the run at 60s and cannot hang. The two install steps are
-    # bounded on their own with one retry each (at most 9 and 5 minutes,
+    # bounded on their own with one retry each (at most 11 and 5 minutes,
     # FORMA-179), so 20 holds both at their worst plus a slow run of the rest.
     timeout-minutes: 20
     steps:
@@ -150,8 +150,9 @@ jobs:
           path: ~/.cache/playwright-apt
           key: playwright-apt-${{ steps.pw.outputs.image }}-${{ steps.pw.outputs.version }}-chromium
       - name: Install chromium's system packages, retried once
-        # Normally seconds (22 MB in 2s); each attempt is cut at 4 minutes.
-        timeout-minutes: 9
+        # Normally seconds (22 MB in 2s); each attempt is cut at 4 minutes;
+        # worst case about 9m40s with the dpkg wait, so 11.
+        timeout-minutes: 11
         run: |
           shopt -s nullglob
           mkdir -p ~/.cache/playwright-apt

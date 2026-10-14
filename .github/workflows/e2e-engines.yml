@@ -38,7 +38,7 @@ jobs:
     # 38570775920 (formajs#28's first dispatch) WebKit's `install --with-deps`
     # was still downloading its 181 system packages (117 MB, normally 15s) at
     # about 100 kB/s when the job timed out. The two install steps below are
-    # now bounded on their own, with one retry each (at most 9 and 5 minutes);
+    # now bounded on their own, with one retry each (at most 11 and 5 minutes);
     # 20 holds both at their worst plus the ~2m the rest takes.
     timeout-minutes: 20
     strategy:
@@ -78,8 +78,10 @@ jobs:
       - name: Install ${{ matrix.browser }}'s system packages, retried once
         # Normally under a minute (WebKit's 117 MB in 15s, Chromium's 22 MB in
         # 2s); each attempt is cut at 4 minutes, so a stalled mirror costs two
-        # attempts, not the job.
-        timeout-minutes: 9
+        # attempts, not the job. Worst case: two cuts (4m plus the 20s kill
+        # grace each), the dpkg wait of 60s and the cleanup, about 9m40s; 11
+        # holds it.
+        timeout-minutes: 11
         env:
           BROWSER: ${{ matrix.browser }}
         run: |

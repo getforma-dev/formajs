@@ -15,7 +15,7 @@
 # job's record before it publishes, and cannot go on to publish after a failed
 # step or job; unless the pack job uploads that artefact with
 # `overwrite: true`, so re-running all jobs after a failure replaces it; and
-# unless every `npm ci` is followed by `npm audit signatures` in its job. Ruby's standard library parses the YAML, so the check adds nothing
+# unless the step after every `npm ci` is its own `npm audit signatures` (S1). Ruby's standard library parses the YAML, so the check adds nothing
 # to the supply chain it guards. The repository-specific part is CONFIG.
 require 'yaml'
 
@@ -386,23 +386,38 @@ def check_pack_job(doc, config, out)
   end
 end
 
-# Every `npm ci` in the workflow is followed, in a later step of the same job,
-# by `npm audit signatures`, so a package whose registry record carries no
-# signature, or one the registry's keys do not verify, fails the job before
-# anything runs from the tree (A2 audit F11, FORMA-180). The audit must be its own
-# step, so nothing on its line can swallow its exit status.
+# S1 (A2 audit F11, FORMA-180; the same rule in every repository's lint): the
+# step right after every `npm ci` in a job is its own `run:` step whose command
+# is exactly `npm audit signatures`, so a package whose registry record carries
+# no signature, or one the registry's keys do not verify, fails the job before
+# anything runs from the tree; and the audit appears nowhere else, so a job
+# that installs nothing (publish) runs no npm command for it, and an audit
+# moved after a build step audits nothing the build already ran. The audit is
+# the whole step, so nothing on its line (`|| true`, `; true`, another
+# command) can swallow its exit status.
+AUDIT_SIGNATURES = /\Anpm audit signatures\z/.freeze
+
 def check_audit_signatures(doc, config, out)
   return unless config[:registry] == :npm
 
   jobs_of(doc).each do |name, job|
     steps = steps_of(job)
     steps.each_with_index do |step, i|
-      next unless run_of(step) =~ /\bnpm\s+ci\b/
-
-      audited = steps.drop(i + 1).any? { |s| run_of(s).strip =~ /\Anpm audit signatures\z/ }
-      next if audited
-
-      out << "K5 job `#{name}` step #{i + 1} runs `npm ci` with no later step `npm audit signatures` in the job; every install must be checked against the registry's signatures"
+      run = run_of(step)
+      if run =~ /\bnpm\s+ci\b/
+        following = steps[i + 1]
+        unless following.is_a?(Hash) && run_of(following).strip =~ AUDIT_SIGNATURES
+          found = following.nil? ? 'no step' : (following['run'] || following['uses']).to_s.strip.inspect
+          out << "S1 job `#{name}` step #{i + 1} runs `npm ci`; the next step must be its own `run: npm audit signatures`, found #{found}"
+        end
+      elsif run =~ /npm audit signatures/
+        previous = i.positive? ? steps[i - 1] : nil
+        if run.strip !~ AUDIT_SIGNATURES
+          out << "S1 job `#{name}` step #{i + 1}: `npm audit signatures` must be the whole step, with nothing to swallow its failure: #{run.strip.inspect}"
+        elsif !(previous.is_a?(Hash) && run_of(previous) =~ /\bnpm\s+ci\b/)
+          out << "S1 job `#{name}` step #{i + 1} runs `npm audit signatures` with no `npm ci` as the step before it; the audit follows an install, and a job that installs nothing runs no npm command"
+        end
+      end
     end
   end
 end
@@ -549,18 +564,32 @@ NPM_SEEDS = [
     with.delete('sparse-checkout')
     with.delete('sparse-checkout-cone-mode')
   end],
-  ['an npm ci in the pack job with no npm audit signatures after it', 'K5', lambda do |d|
+  ['an npm ci in the pack job with no npm audit signatures after it', 'S1', lambda do |d|
     pack_job(d)['steps'].reject! { |s| run_of(s).strip == 'npm audit signatures' }
   end],
-  ['the audit before the install instead of after it', 'K5', lambda do |d|
+  ['the audit before the install instead of after it', 'S1', lambda do |d|
     steps = pack_job(d)['steps']
     audit = steps.delete_at(steps.index { |s| run_of(s).strip == 'npm audit signatures' })
     steps.insert(steps.index { |s| run_of(s) =~ /\bnpm\s+ci\b/ }, audit)
   end],
-  ['an audit whose failure a `|| true` swallows', 'K5', lambda do |d|
+  ['the audit moved after the build step', 'S1', lambda do |d|
+    steps = pack_job(d)['steps']
+    audit = steps.delete_at(steps.index { |s| run_of(s).strip == 'npm audit signatures' })
+    steps.insert(steps.index { |s| run_of(s) =~ /\bnpm run build\b/ } + 1, audit)
+  end],
+  ['an audit whose failure a `|| true` swallows', 'S1', lambda do |d|
     pack_job(d)['steps'].find { |s| run_of(s).strip == 'npm audit signatures' }['run'] = 'npm audit signatures || true'
   end],
-  ['an npm ci in a new job with no audit', 'K5', lambda do |d|
+  ['an audit whose failure a `; true` swallows', 'S1', lambda do |d|
+    pack_job(d)['steps'].find { |s| run_of(s).strip == 'npm audit signatures' }['run'] = "npm audit signatures; true\n"
+  end],
+  ['the audit combined with the install in one step', 'S1', lambda do |d|
+    steps = pack_job(d)['steps']
+    steps.delete_at(steps.index { |s| run_of(s).strip == 'npm audit signatures' })
+    steps.find { |s| run_of(s) =~ /\bnpm\s+ci\b/ }['run'] = 'npm ci && npm audit signatures'
+  end],
+  ['an audit added to the publish job, which installs nothing', 'S1', ->(d) { publish_steps(d).insert(1, 'run' => 'npm audit signatures') }],
+  ['an npm ci in a new job with no audit', 'S1', lambda do |d|
     d['jobs']['extra'] = { 'permissions' => { 'contents' => 'read' }, 'runs-on' => 'ubuntu-latest', 'steps' => [{ 'run' => 'npm ci' }, { 'run' => 'npm test' }] }
     publish_job(d)['needs'] = needs_of(publish_job(d)) + ['extra']
   end],

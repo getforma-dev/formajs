@@ -31,12 +31,13 @@ All notable changes to this project will be documented in this file.
 - `release.yml`'s `test` and `pack` jobs run `npm audit signatures` after
   `npm ci`, so an installed package whose registry signature or attestation
   does not verify fails the run before anything is built; the SR43
-  lint's new rule K5 requires the audit after every `npm ci` in the workflow,
-  with four seeds (F11). The packed bytes are unchanged.
+  lint's new rule S1 requires the audit as the step after every `npm ci` in
+  the workflow and nowhere else, with eight seeds (F11). The packed bytes are unchanged.
 - The Playwright system-package retry in `e2e-engines.yml` and `ci.yml`
   tolerates a failing `dpkg --configure -a` and waits out the dpkg lock (up to
   60 s) before its second attempt; under errexit the failure ended the step
-  before the retry ran (F17a).
+  before the retry ran. The step's bound rises from 9 to 11 minutes for the
+  wait (F17a).
 
 ## [2.1.0] - 2026-10-14
 
