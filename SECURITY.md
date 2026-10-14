@@ -30,14 +30,22 @@ Verified by: `src/__tests__/index-surface.test.ts` > "%s exports exactly the doc
 
 ### Unsanitized HTML sinks
 
-`h()` builds DOM with `document.createElement` and writes text with `textContent`; the library never parses a markup string of its own. Four APIs deliberately opt out. **None of them sanitizes**, and all four should be treated as first-party-content-only:
+`h()` builds DOM with `document.createElement` and writes text with `textContent`; the library never parses a markup string of its own. Five APIs, and two bindings of the HTML runtime, deliberately opt out. **None of them sanitizes**, and all should be treated as first-party-content-only:
 
 - `dangerouslySetInnerHTML={{ __html }}` — prop on `h()` / JSX; assigns `innerHTML`.
 - `setHTMLUnsafe(el, html)` — exported from `@getforma/core`; assigns `innerHTML`.
+- `template(html)` and `templateMany(html)` — exported from `@getforma/core`; parse the markup into a cached `<template>` that compiled output clones.
 - `reconcile(container, html)` — exported from `@getforma/core/runtime`; parses an HTML string into a `<template>` and diffs it into the live page.
-- The `srcdoc` attribute — the browser parses the *attribute value* as a document, so attribute escaping does not neutralize it. It is emitted (a sandboxed `<iframe srcdoc>` is legitimate) with a dev-mode warning.
+- The `srcdoc` attribute — the browser parses the *attribute value* as a document, so attribute escaping does not neutralize it. It is emitted (a sandboxed `<iframe srcdoc>` is legitimate).
+- The HTML runtime's `data-bind:srcdoc`, and `{item…}` in a list row's `srcdoc` — they write an expression's value, or a row's data (a `data-fetch` response among them), as the iframe's document. No `trustedHtml()` can reach a binding, so they write a string, log `FORMA_W_RAW_RUNTIME_SRCDOC` once in a development build, and are refused in 3.0.0 (FORMA-109).
+
+Each takes `trustedHtml(markup)`, the one raw-HTML constructor (DR-19), beside a plain string. The name is the control: a search for it finds every raw entry in an application, which is what a consumer's CI allowlist (SR8) lists with an owner and an end date. Where the browser has Trusted Types, `trustedHtml()` makes a `TrustedHTML` through Forma's policy `forma`, so a page whose policy carries `require-trusted-types-for 'script'; trusted-types forma forma-runtime` lets it through and reports or refuses a plain string at the same sink. A plain string still works through 2.x and logs a coded warning once per sink in a development build; 3.0.0 accepts only `trustedHtml()`. What core writes of its own passes such a policy: `mount()` and its clears use `replaceChildren()`, and `reconcile()` writes markup that arrived trusted through its own policy, `forma-runtime`, and its diff of that markup writes no `on*` attribute or script `src` (the diff of a string writes them as 2.0 did). The policies are shared by every copy of core on a page through a registry on `globalThis` (`Symbol.for('@getforma/core#trusted-types')`) that holds no policy: it holds the mint `trustedHtml()` is, which SR8's lint lists as a raw entry, and a `forma-runtime` parser that takes only a browser `TrustedHTML`, so on an enforcing page no script can mint a `forma-runtime` value from a string. `h('script')` warns, as 3.0.0 refuses it. See [CSP.md](./CSP.md#trusted-types).
 
 Verified by: `src/dom/__tests__/element-url-safety.test.ts` > "emits srcdoc but warns that escaping does not neutralize it"
+Verified by: `src/dom/__tests__/trusted-html.test.ts` > "core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()"
+Verified by: `src/dom/__tests__/trusted-html.test.ts` > "a string to each raw sink still renders, and warns once with the sink's code in development"
+Verified by: `src/dom/__tests__/trusted-html.test.ts` > "the shared registry holds no policy, and its forma-runtime handle mints nothing from a string"
+Verified by: `src/__tests__/runtime-srcdoc.test.ts` > "data-bind:srcdoc writes its string and warns once with the runtime code"
 
 ## Supply Chain Security Notes
 

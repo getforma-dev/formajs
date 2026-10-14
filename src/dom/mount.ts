@@ -91,7 +91,11 @@ export function mount(
       disposeRoot = dispose;
       return withNamespace(contentNs(target), component);
     });
-    target.innerHTML = '';
+    // replaceChildren(), not `innerHTML = ''`: a string written to an HTML
+    // sink is what a page requiring Trusted Types reports or refuses, and
+    // core writes none (DR-20).
+    // Verified by: src/dom/__tests__/trusted-html.test.ts > "core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()"
+    target.replaceChildren();
     target.appendChild(dom);
   }
 
@@ -102,7 +106,7 @@ export function mount(
     unmounted = true;
     disposeRoot();
     if (active === target) {
-      target.innerHTML = '';
+      target.replaceChildren();
     } else {
       // The container was replaced by the component's root: removing that
       // element is what "unmount" means here — there is no container left.

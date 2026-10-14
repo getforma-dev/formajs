@@ -12,6 +12,7 @@
  */
 import { describe, it, expect, vi, afterEach } from 'vitest';
 import { renderToString, renderAttr, sh } from '../render.js';
+import { trustedHtml } from '../../dom/trusted-html.js';
 import { renderToStream } from '../stream.js';
 
 const SVG_PAYLOAD = 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" onload="alert(1)"/>';
@@ -106,11 +107,20 @@ describe('object data attribute', () => {
 
 describe('srcdoc', () => {
   it('warns in dev that srcdoc is a raw-HTML sink but still emits it', () => {
+    delete (globalThis as Record<symbol, unknown>)[Symbol.for('@getforma/core#trusted-types')];
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // A trustedHtml() value is the typed form (DR-19): emitted, escaped as any
+    // attribute value is, and not warned of.
+    const typed = renderToString(sh('iframe', { sandbox: '', srcdoc: trustedHtml('<p>typed</p>') }));
+    expect(typed).toContain('srcdoc="&lt;p&gt;typed&lt;/p&gt;"');
+    expect(warn).not.toHaveBeenCalled();
     const html = renderToString(sh('iframe', { sandbox: '', srcdoc: '<p>trusted</p>' }));
     // Blocking it would break legitimate sandboxed iframes, so it is emitted…
     expect(html).toContain('srcdoc="&lt;p&gt;trusted&lt;/p&gt;"');
     // …but escaping does not neutralize it: the browser decodes and parses it.
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining('raw-HTML sink'));
+    // The warning is h()'s, with its code (FORMA-126).
+    expect(warn.mock.calls.map((call) => String(call[0]))).toEqual([
+      expect.stringMatching(/^\[forma\] FORMA_W_RAW_SRCDOC: .*escaping does not neutralize/),
+    ]);
   });
 });

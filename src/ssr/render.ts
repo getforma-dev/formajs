@@ -32,14 +32,30 @@ export function escapeAttr(str: string): string {
 }
 
 import { __DEV__ } from '../reactive/dev.js';
+import { isTrustedHtml, warnRawAttr } from '../dom/trusted-html.js';
 import {
   isDangerousUrl,
   isUrlAttr,
   isEventHandlerAttr,
-  isRawHtmlAttr,
   isSafeAttrName,
   isSafeTagName,
 } from '../security/url-safety.js';
+
+/**
+ * The markup a `dangerouslySetInnerHTML` value writes: its `__html`, a string
+ * or a `trustedHtml()` value (DR-19), so a component shared with the browser
+ * renders here as it does there; anything else is a TypeError.
+ *
+ * Verified by: src/dom/__tests__/trusted-html.test.ts > "the SSR renderers write a trustedHtml() value's markup and still refuse a non-string"
+ */
+export function innerHtmlMarkup(raw: unknown): string {
+  if (typeof raw === 'object' && raw != null && '__html' in raw) {
+    const html = (raw as { __html: unknown }).__html;
+    if (typeof html === 'string') return html;
+    if (isTrustedHtml(html)) return String(html);
+  }
+  throw new TypeError('dangerouslySetInnerHTML must be { __html: string } or a trustedHtml() value');
+}
 
 /**
  * Decide whether a resolved prop should be emitted as an attribute, and return
@@ -68,15 +84,10 @@ export function renderAttr(key: string, resolved: unknown, tag?: string): string
   // legitimate pattern. But escaping does NOT make it safe — the browser
   // entity-decodes the attribute and parses the result as an HTML document that
   // is same-origin with the page — so it is a trusted-content sink like
-  // dangerouslySetInnerHTML, and says so in dev.
+  // dangerouslySetInnerHTML: a trustedHtml() value is emitted as its markup,
+  // and anything else logs h()'s coded warning in dev (FORMA_W_RAW_SRCDOC).
   // Verified by: src/ssr/__tests__/render-safety.test.ts > "warns in dev that srcdoc is a raw-HTML sink but still emits it"
-  if (__DEV__ && isRawHtmlAttr(attrName)) {
-    console.warn(
-      `[forma] "${attrName}" is a raw-HTML sink: the browser parses its value as ` +
-      `an HTML document, and attribute escaping does not neutralize that. Pass ` +
-      `only trusted markup, and prefer a sandboxed iframe.`,
-    );
-  }
+  warnRawAttr(attrName, resolved);
   return ' ' + attrName + '="' + escapeAttr(str) + '"';
 }
 
@@ -189,17 +200,7 @@ function renderToBuffer(node: unknown, parts: string[]): void {
 
     // dangerouslySetInnerHTML
     if (props?.['dangerouslySetInnerHTML']) {
-      const raw = props['dangerouslySetInnerHTML'];
-      if (typeof raw === 'object' && raw != null && '__html' in raw) {
-        const html = (raw as { __html: unknown }).__html;
-        if (typeof html === 'string') {
-          parts.push(html);
-        } else {
-          throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
-        }
-      } else {
-        throw new TypeError('dangerouslySetInnerHTML must be { __html: string }');
-      }
+      parts.push(innerHtmlMarkup(props['dangerouslySetInnerHTML']));
     } else {
       // Render children
       for (const child of children) {
