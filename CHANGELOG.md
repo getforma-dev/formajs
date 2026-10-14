@@ -4,6 +4,15 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+
+- **`./ssr`'s form controls are documented as a known gap** (FORMA-017, DR-24).
+  `renderToString` writes a `textarea`'s and a `select`'s `value` as a `value`
+  attribute, which the HTML parser ignores, where forma-ir 0.2.1 writes the
+  textarea's text and `selected` on the option. The renderer is unchanged
+  until `./ssr` is removed in 3.0.0; `docs/STABILITY.md` says what the served
+  page shows and how to write these controls instead, and two tests pin it.
+
 ### CI
 
 - **Actions pinned to commits; every job declares its token** (DR-32, SR21,
