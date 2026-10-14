@@ -19,6 +19,8 @@
  * Verified by: src/expr/__tests__/native-cost.test.ts > "every size-driven cost refuses a hostile size before the native runs"
  */
 
+import { LIMITS } from './ast';
+
 // Captured once, like the allowlist's intrinsics, so a page script that later
 // replaces one of them cannot make a cost read low.
 const isArray = Array.isArray;
@@ -42,10 +44,60 @@ const NONE: unknown[] = [];
 const costly = RegExp.prototype.exec.bind(/[^\x00-\xff\u2000-\u20cf\u2100-\u2125]/);
 const nonAscii = RegExp.prototype.exec.bind(/[^\x00-\x7f]/);
 
+/**
+ * Whether a character (the first `costly` found) belongs to a script whose
+ * lowercasing measured at most about 19 ns a character at 4x CPU throttling,
+ * text stored two bytes a character (FORMA-028): Latin Extended-A and B, the
+ * combining marks, Greek, Cyrillic, Armenian, Hebrew, Arabic, the Indic
+ * scripts, Thai, Tibetan, Latin Extended Additional (Vietnamese), the CJK
+ * blocks and kana, Hangul, and the emoji planes. Testing one character costs
+ * nothing; a full scan of two-byte text measured 6 to 7 ns a character, most
+ * of what lowercasing it costs, so the tier is read from the first character
+ * outside Latin-1, and SECURITY.md says what that leaves open.
+ */
+const middle = RegExp.prototype.test.bind(/[\u0100-\u024f\u0300-\u0fff\u1e00-\u1eff\u2e80-\u9fff\uac00-\ud7af\ud83c-\ud83e]/);
+
+/**
+ * Per character a `+`, `+=` or template literal produces (FORMA-028). Joining
+ * keeps the pieces as a rope; the first read of it copies the whole, which
+ * through the runtime measured 0.3 to 0.7 ns a produced character at 4x, and
+ * a default sort of such strings 1.3 to 2 ns: about a 128th of an
+ * `Array.from` slot for the copy, the sort's comparisons charged by its row.
+ */
+export const GROW = 1 / 128;
+
+/** Per character two strings are compared: 0.2 to 1.3 ns measured. */
+export const READ = 1 / 128;
+
+/** The fixed part of copying a rope an operand just built (plus a 32nd a character, to 512). */
+export const FLAT = 8;
+
+/** Per character a string is parsed as a number by an operator: 11 ns for digits. */
+export const PARSE = 1 / 8;
+
 type Cost = (recv: unknown, args: unknown[], room: number) => number;
 
 /** Elements in a string or array; 0 for anything else. */
 const len = (v: unknown): number => (typeof v === 'string' || isArray(v) ? v.length : 0);
+
+/** The longest string a result may be (`LIMITS.MAX_STRING_LENGTH`). */
+const MAX_TEXT = LIMITS.MAX_STRING_LENGTH;
+
+/**
+ * What searching an array for a long string reads: every element that is a
+ * string of the same length is compared to it whole.
+ * Verified by: src/expr/__tests__/string-growth.test.ts > "comparing long strings is charged by the characters compared"
+ */
+const alike = (r: unknown, v: unknown, room: number): number => {
+  let n = 0;
+  if (typeof v === 'string' && v.length > 127 && isArray(r)) {
+    for (const e of r) {
+      if (n > room) break;
+      if (typeof e === 'string' && e.length === v.length) n += v.length * READ;
+    }
+  }
+  return n;
+};
 
 /** A count argument as the native reads it, never negative. */
 const count = (v: unknown): number => max(0, toNumber(v) || 0);
@@ -86,6 +138,9 @@ const size = (v: unknown, room: number): number => {
  * Verified by: src/expr/__tests__/native-cost.test.ts > "weighing stops at the budget on a cyclic or deeply nested value"
  */
 export function weigh(root: unknown, room: number, depth = -1): number {
+  if (typeof root !== 'object' || root === null) {
+    return depth >= 0 ? 0 : typeof root === 'string' ? root.length : typeof root === 'number' ? 3 : 1;
+  }
   let total = 0;
   const todo: unknown[] = [root];
   const depths: number[] = [depth];
@@ -204,15 +259,21 @@ rows((r) => len(r) / 64, 'string.endsWith string.slice string.startsWith string.
 rows((r) => len(r) / 32, 'string.includes string.indexOf string.lastIndexOf');
 // Whitespace runs measured 3.5 ns a character.
 rows((r) => len(r) / 16, 'string.trim string.trimEnd string.trimStart');
+// Case mapping never shortens a string, so a receiver past the 1 MiB result
+// cap is refused before the call instead of after it (FORMA-028: one call on
+// 8 million two-byte characters took 115 ms before that refusal).
 rows((r, _, room) => {
   const n = len(r);
-  return n / 32 > room || !costly(r as string) ? n / 32 : n / 2;
+  if (n > MAX_TEXT) return Infinity;
+  const first = n / 32 > room ? null : costly(r as string);
+  return !first ? n / 32 : n / 16 > room || middle(first[0]) ? n / 16 : n / 2;
 }, 'string.toLowerCase');
 rows((r, _, room) => {
   const n = len(r);
+  if (n > MAX_TEXT) return Infinity;
   return n / 16 > room ? n / 16 : costly(r as string) ? n : nonAscii(r as string) ? n / 2 : n / 16;
 }, 'string.toUpperCase');
-rows((r, a, room) => len(r) / 16 + weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');
+rows((r, a, room) => len(r) / 16 + weigh(a[1], room) + alike(r, a[0], room), 'array.includes array.indexOf array.lastIndexOf');
 // Every index is visited, holes included.
 rows((r) => len(r), 'array.every array.reduce array.some');
 rows((r, a) => {
@@ -230,6 +291,7 @@ rows((r, a, room) => {
     for (const e of r) {
       if (per > room) break;
       if (isArray(e)) per += weigh(e, room);
+      else if (typeof e === 'string') per += e.length * READ;
     }
   }
   return per * log2(len(r) + 1);

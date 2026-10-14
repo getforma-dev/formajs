@@ -20,17 +20,11 @@
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { LIMITS } from '../ast';
-import {
-  ARRAY_METHODS,
-  HOF_CALLBACK_PARAMS,
-  NUMBER_METHODS,
-  SAFE_GLOBALS,
-  STRING_METHODS,
-} from '../allowlist';
 import { COSTS, DATA_ARGS, weigh } from '../cost';
 import { compileExpression, compileHandler, evaluateExpression, isExprError, runHandler } from '../index';
 import { hostObject } from '../host';
 import { scopeOf } from './helpers';
+import { callables, DATA_CASES, hostileFixtures, ownerOf, SIZE_CASES, type Callable } from './hostile-natives';
 
 const BUDGET = LIMITS.ALLOC_BUDGET;
 // The wrappers below run while the intrinsics are replaced, so the code they
@@ -40,30 +34,15 @@ const isArrayOriginal = Array.isArray;
 const LONG_TASK_MS = 50;
 const HEAP_CEILING = 16 * 1024 * 1024;
 
-// ── Fixtures ──
+// ── Fixtures (shared with e2e/sr33.spec.ts) ──
 
-/** 1,000 references to one 300,000-character string: 300 million characters as text, a few KB in memory. */
-const LONG = 'x'.repeat(300_000);
-const BIG = Array.from({ length: 1000 }, () => LONG);
-/** Receivers whose size alone is over the budget. */
-const BIG_ARR = Array.from({ length: 500_000 }, (_, i) => i);
-const BIG_STR = 'y'.repeat(500_000);
-/** Over the budget only through the cost row's multiplier or second term. */
-const MID_STR = 'z'.repeat(150_000);
-const KEYS_STR = 'k'.repeat(60_000);
-const SHORT = 'q'.repeat(1000);
-const SORTABLE = Array.from({ length: 30_000 }, (_, i) => (i * 7919) % 30_000);
-const INNER = Array.from({ length: 1000 }, (_, i) => i);
-const NESTED = Array.from({ length: 1000 }, () => INNER);
-/** Scans are charged a sixty-fourth to a sixteenth per element, so these are over 64x the budget. */
-const HUGE_ARR = new Array<number>(7_000_000);
-const HUGE_STR = 's'.repeat(17_000_000);
-const WIDE = Array.from({ length: 150_000 }, () => 0);
-/** 20,000 own keys: a data-argument native reads 16 units per key. */
-const BIG_OBJ = Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, i]));
+const FIXTURES = hostileFixtures();
+const BIG = FIXTURES.state['big'] as string[];
+const LONG = BIG[0]!;
+const WIDE = FIXTURES.state['wide'] as number[];
 
-const HOSTILE_OBJECTS = new WeakSet<object>([BIG, BIG_ARR, SORTABLE, NESTED, HUGE_ARR, WIDE, BIG_OBJ]);
-const HOSTILE_STRINGS = new Set<string>([LONG, BIG_STR, MID_STR, KEYS_STR, SHORT, HUGE_STR]);
+const HOSTILE_OBJECTS = new WeakSet<object>(FIXTURES.objects);
+const HOSTILE_STRINGS = new Set<string>(FIXTURES.strings);
 
 /** The benign probes the control uses. */
 const PROBE_ARR = [3, 1, 2];
@@ -86,57 +65,12 @@ function isProbe(v: unknown): boolean {
 }
 
 function state(): Record<string, unknown> {
-  return {
-    items: PROBE_ARR, s: PROBE_STR, n: PROBE_NUM,
-    big: BIG, bigArr: BIG_ARR, bigStr: BIG_STR, midStr: MID_STR, keysStr: KEYS_STR,
-    short: SHORT, sortable: SORTABLE, nested: NESTED, hugeArr: HUGE_ARR, hugeStr: HUGE_STR, wide: WIDE,
-    bigObj: BIG_OBJ,
-  };
+  return { items: PROBE_ARR, s: PROBE_STR, n: PROBE_NUM, ...FIXTURES.state };
 }
 
 // ── Every callable the allowlist grants ──
 
-interface Callable {
-  name: string;
-  owner: object;
-  key: string;
-  /** The call, with `arg` as its data argument (after a callback, for the higher-order methods). */
-  call: (arg: string) => string;
-}
-
-function callback(method: string): string {
-  if (method === 'sort') return '(a, b) => a - b';
-  if (method === 'reduce') return '(a, x) => a';
-  return 'x => x';
-}
-
-function callables(): Callable[] {
-  const out: Callable[] = [];
-  for (const m of Object.keys(ARRAY_METHODS)) {
-    const hof = Object.hasOwn(HOF_CALLBACK_PARAMS, m);
-    out.push({
-      name: `array.${m}`, owner: Array.prototype, key: m,
-      call: (arg) => (hof ? `items.${m}(${callback(m)}${arg ? `, ${arg}` : ''})` : `items.${m}(${arg})`),
-    });
-  }
-  for (const m of Object.keys(STRING_METHODS)) {
-    out.push({ name: `string.${m}`, owner: String.prototype, key: m, call: (arg) => `s.${m}(${arg})` });
-  }
-  for (const m of Object.keys(NUMBER_METHODS)) {
-    out.push({ name: `number.${m}`, owner: Number.prototype, key: m, call: (arg) => `n.${m}(${arg})` });
-  }
-  for (const [g, host] of Object.entries(SAFE_GLOBALS)) {
-    const owner = Reflect.get(globalThis, g) as object;
-    if (host.kind === 'fn') out.push({ name: g, owner: globalThis, key: g, call: (arg) => `${g}(${arg})` });
-    for (const [m, v] of Object.entries(host.members ?? {})) {
-      if (typeof v !== 'function') continue;
-      out.push({ name: `${g}.${m}`, owner, key: m, call: (arg) => `${g}.${m}(${arg})` });
-    }
-  }
-  return out;
-}
-
-const CALLABLES = callables();
+const CALLABLES: Callable[] = callables();
 
 // ── A fresh engine that captured call-through wrappers ──
 
@@ -145,7 +79,8 @@ const probeHits = new Set<string>();
 let engine: typeof import('../index');
 
 function intercept(c: Callable): () => void {
-  const original = Reflect.get(c.owner, c.key) as (...a: unknown[]) => unknown;
+  const owner = ownerOf(globalThis, c.owner);
+  const original = Reflect.get(owner, c.key) as (...a: unknown[]) => unknown;
   const wrapper = new Proxy(original, {
     apply(target, self, args: unknown[]) {
       let hostile = isHostile(self);
@@ -159,8 +94,8 @@ function intercept(c: Callable): () => void {
       return Reflect.apply(target, self, args);
     },
   });
-  Reflect.set(c.owner, c.key, wrapper);
-  return () => Reflect.set(c.owner, c.key, original);
+  Reflect.set(owner, c.key, wrapper);
+  return () => Reflect.set(owner, c.key, original);
 }
 
 beforeAll(async () => {
@@ -245,48 +180,6 @@ describe('the cost preflight, native by native (DR-16)', () => {
     expect(problems).toEqual([]);
   });
 
-  /** One hostile size per cost row: a receiver, a count or a length over the budget. */
-  const SIZE_CASES: Record<string, string> = {
-    'array.concat': 'bigArr.concat()',
-    'array.every': 'hugeArr.every(x => x)',
-    'array.filter': 'bigArr.filter(x => x)',
-    'array.flat': 'nested.flat()',
-    'array.flatMap': 'bigArr.flatMap(x => x)',
-    'array.includes': 'hugeArr.includes(1)',
-    'array.indexOf': 'hugeArr.indexOf(1)',
-    'array.join': 'bigArr.join()',
-    'array.lastIndexOf': 'hugeArr.lastIndexOf(1)',
-    'array.map': 'bigArr.map(x => x)',
-    'array.reduce': 'hugeArr.reduce((a, x) => a, 0)',
-    'array.reverse': 'bigArr.reverse()',
-    'array.slice': 'bigArr.slice()',
-    'array.some': 'hugeArr.some(x => x)',
-    'array.sort': 'sortable.sort()',
-    'string.concat': 'bigStr.concat()',
-    'string.endsWith': "hugeStr.endsWith('s')",
-    'string.includes': "hugeStr.includes('t')",
-    'string.indexOf': "hugeStr.indexOf('t')",
-    'string.lastIndexOf': "hugeStr.lastIndexOf('t')",
-    'string.padEnd': 'short.padEnd(12000000)',
-    'string.padStart': 'short.padStart(12000000)',
-    'string.repeat': 'short.repeat(10000)',
-    'string.replace': "bigStr.replace('y', 'z')",
-    'string.replaceAll': "midStr.replaceAll('', '-')",
-    'string.slice': 'hugeStr.slice(0, 1)',
-    'string.split': "bigStr.split('')",
-    'string.startsWith': "hugeStr.startsWith('s')",
-    'string.substring': 'hugeStr.substring(0, 1)',
-    'string.toLowerCase': 'hugeStr.toLowerCase()',
-    'string.toUpperCase': 'hugeStr.toUpperCase()',
-    'string.trim': 'hugeStr.trim()',
-    'string.trimEnd': 'hugeStr.trimEnd()',
-    'string.trimStart': 'hugeStr.trimStart()',
-    'Array.from': 'Array.from({length: 12000000})',
-    'Object.entries': 'Object.entries(keysStr)',
-    'Object.keys': 'Object.keys(keysStr)',
-    'Object.values': 'Object.values(keysStr)',
-  };
-
   it('every size-driven cost refuses a hostile size before the native runs', () => {
     // Completeness first: a row without a hostile case is a cost nobody tests.
     expect(Object.keys(SIZE_CASES).sort()).toEqual(Object.keys(COSTS).sort());
@@ -327,18 +220,6 @@ describe('the cost preflight, native by native (DR-16)', () => {
       expect(o.ms, name).toBeLessThan(LONG_TASK_MS);
     }
   });
-
-  /** Data-argument natives with a row: a shallowly huge argument, or a `fromIndex` heavy as text. */
-  const DATA_CASES: Record<string, string> = {
-    'Array.from': 'Array.from(bigArr)',
-    'Object.entries': 'Object.entries(bigArr)',
-    'Object.keys': 'Object.keys(bigArr)',
-    'Object.values': 'Object.values(bigArr)',
-    'array.concat': 'items.concat(bigArr)',
-    'array.includes': 'items.includes(1, big)',
-    'array.indexOf': 'items.indexOf(1, big)',
-    'array.lastIndexOf': 'items.lastIndexOf(1, big)',
-  };
 
   it('a native that reads its argument as data is charged its element count, not its text', () => {
     // Refused: arguments with more elements or keys than the budget, a
@@ -417,52 +298,63 @@ describe('the cost preflight, native by native (DR-16)', () => {
     for (const ch of ['’', '—', '€', '™', '…']) {
       expect(outcome(search, { rows: withOne(ch), q: 'needle' }), `one ${ch} per record`).toEqual({ value: 900 });
     }
-    // Two-sided: costlier text measured up to about 43 ns a character to lowercase,
-    // so the same search over it is refused, as N3 requires; one Greek letter
-    // or a case-mapped letterlike symbol (the Ohm sign U+2126, the Kelvin sign
-    // U+212A) is enough.
+    // Text with a character above Latin-1 in a script whose lowercasing
+    // measured at most about 19 ns a character (Greek, Cyrillic, CJK, Latin
+    // Extended) is charged 1/16 and answered as 2.0.1 answered it (FORMA-028;
+    // the full corpus is ordinary-search.test.ts).
     const greek = st.rows.map((r) => ({ title: r.title, body: r.body.replace(/a/g, 'α') }));
-    expect(outcome(search, { rows: greek, q: 'needle' })).toBe('FORMA_E_BUDGET');
-    expect(outcome(search, { rows: withOne('’α'), q: 'needle' })).toBe('FORMA_E_BUDGET');
+    expect(outcome(search, { rows: greek, q: 'needle' })).toEqual({ value: 900 });
+    expect(outcome(search, { rows: withOne('’α'), q: 'needle' })).toEqual({ value: 900 });
+    // Two-sided: a first character outside those scripts keeps the record at
+    // 1/2, so the same search is refused: a case-mapped letterlike symbol (the
+    // Ohm sign U+2126, the Kelvin sign U+212A) or Georgian.
     expect(outcome(search, { rows: withOne('\u2126'), q: 'needle' })).toBe('FORMA_E_BUDGET');
     expect(outcome(search, { rows: withOne('\u212a'), q: 'needle' })).toBe('FORMA_E_BUDGET');
+    expect(outcome(search, { rows: withOne('ქ'), q: 'needle' })).toBe('FORMA_E_BUDGET');
   });
 
   it('case mapping is charged by the costliest character of its receiver', () => {
-    // Each tier, either side of the budget. Lowercase: Latin-1, and the
-    // punctuation, currency signs and letterlike symbols that map to themselves
-    // (U+2000 to U+20CF, U+2100 to U+2125), 1/32 a character; anything else
-    // 1/2. Uppercase: ASCII 1/16, Latin-1 and those symbols 1/2, anything else
-    // 1. Past 1,048,576 characters the result cap refuses the call AFTER it
-    // runs, with the same code; only the allocation budget refuses it before,
-    // which is what the message tells apart.
-    const refusedBefore = (src: string, s: string): boolean => {
-      try {
-        evaluateExpression(compileExpression(src), scopeOf({ s }));
-        return false;
-      } catch (e) {
-        expect(isExprError(e), String(e)).toBe(true);
-        return /allocation budget/.test((e as Error).message);
-      }
-    };
+    // The rows themselves, tier by tier. Lowercase: Latin-1 and the self-mapping
+    // punctuation, currency signs and letterlike symbols (U+2000 to U+20CF,
+    // U+2100 to U+2125) 1/32 a character; text whose first character above
+    // those is in a script measured at most about 19 ns a character (FORMA-028)
+    // 1/16; anything else 1/2. Uppercase: ASCII 1/16, Latin-1 and those
+    // symbols 1/2, anything else 1.
+    const lower = COSTS['string.toLowerCase']!;
+    const upper = COSTS['string.toUpperCase']!;
     const text = (unit: string, n: number): string => unit.repeat(Math.ceil(n / unit.length)).slice(0, n);
-    const cases: Array<[string, string, number, boolean]> = [
-      ['toLowerCase', 'a', 7_900_000, false], ['toLowerCase', 'a', 8_100_000, true],
-      ['toLowerCase', 'é', 7_900_000, false], ['toLowerCase', 'é', 8_100_000, true],
-      ['toLowerCase', 'it’s', 7_900_000, false], ['toLowerCase', 'it’s', 8_100_000, true],
-      ['toLowerCase', 'a—€™…', 7_900_000, false],
-      ['toLowerCase', 'Σ', 490_000, false], ['toLowerCase', 'Σ', 510_000, true],
-      ['toLowerCase', 'a\u2126', 490_000, false], ['toLowerCase', 'a\u2126', 510_000, true],
-      ['toLowerCase', 'č', 490_000, false], ['toLowerCase', 'č', 510_000, true],
-      ['toUpperCase', 'a', 3_900_000, false], ['toUpperCase', 'a', 4_100_000, true],
-      ['toUpperCase', 'é', 490_000, false], ['toUpperCase', 'é', 510_000, true],
-      ['toUpperCase', 'it’s', 490_000, false], ['toUpperCase', 'it’s', 510_000, true],
-      ['toUpperCase', 'Σ', 245_000, false], ['toUpperCase', 'Σ', 255_000, true],
+    const N = 100_000;
+    const cases: Array<[typeof lower, string, number]> = [
+      [lower, 'a', N / 32], [lower, 'é', N / 32], [lower, 'it’s', N / 32], [lower, 'a—€™…', N / 32],
+      [lower, 'Σ', N / 16], [lower, 'č', N / 16], [lower, 'Ж', N / 16], [lower, '東', N / 16], [lower, 'ạ', N / 16],
+      [lower, 'aİ', N / 16], [lower, '😀', N / 16],
+      [lower, 'a\u2126', N / 2], [lower, 'ქ', N / 2], [lower, 'Ꭰ', N / 2], [lower, 'Ａ', N / 2], [lower, 'ἀ', N / 2],
+      [upper, 'a', N / 16], [upper, 'é', N / 2], [upper, 'it’s', N / 2], [upper, 'Σ', N], [upper, 'č', N],
     ];
     const wrong = cases
-      .filter(([method, unit, n, refused]) => refusedBefore(`s.${method}().length`, text(unit, n)) !== refused)
-      .map(([method, unit, n, refused]) => `${method} of ${n} × ${unit} should ${refused ? '' : 'not '}be refused before the call`);
+      .map(([row, unit, units]) => [row === lower ? 'toLowerCase' : 'toUpperCase', unit, units, row(text(unit, N), [], Infinity)] as const)
+      .filter(([, , units, got]) => got !== units)
+      .map(([name, unit, units, got]) => `${name} of ${N} x ${unit}: ${got}, not ${units}`);
     expect(wrong).toEqual([]);
+    // Case mapping never shortens a string, so a receiver past the 1 MiB
+    // result cap is refused before the call: 2.0.3 lowercased 8 million
+    // two-byte characters (115 ms at 4x) and only then refused the result.
+    const refusedBefore = (src: string, s: string): string => {
+      try {
+        evaluateExpression(compileExpression(src), scopeOf({ s }));
+        return 'answered';
+      } catch (e) {
+        expect(isExprError(e), String(e)).toBe(true);
+        return /allocation budget/.test((e as Error).message) ? 'before' : 'after';
+      }
+    };
+    const max = LIMITS.MAX_STRING_LENGTH;
+    for (const method of ['toLowerCase', 'toUpperCase']) {
+      expect(refusedBefore(`s.${method}().length`, text('a', max)), method).toBe('answered');
+      expect(refusedBefore(`s.${method}().length`, text('a', max + 1)), method).toBe('before');
+      // The same, stored two bytes a character (a slice of text that held one).
+      expect(refusedBefore(`s.${method}().length`, `Ā${text('a', max + 1)}`.slice(1)), method).toBe('before');
+    }
   });
 
   it('a $ in a replacement is charged only for what it can insert', () => {

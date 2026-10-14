@@ -54,7 +54,7 @@ import {
   STYLE_METHODS,
 } from './allowlist';
 import { hostObject, isHost, type Host } from './host';
-import { COSTS, DATA_ARGS, weigh } from './cost';
+import { COSTS, DATA_ARGS, FLAT, GROW, PARSE, READ, weigh } from './cost';
 
 export interface ScopeLike {
   getters: Record<string, () => unknown>;
@@ -67,13 +67,26 @@ interface Frame {
   parent: Frame | null;
 }
 
+/**
+ * What the evaluations of one task have spent so far (FORMA-028): the runtime
+ * keeps one, and every evaluation it starts counts on from it, so the step and
+ * allocation budgets bound the task, not each binding in it.
+ */
+export interface Meter {
+  steps: number;
+  cost: number;
+}
+
 export interface EvalCtx {
   scope: ScopeLike;
   frame: Frame | null;
+  /** Steps counted against the budget: this evaluation's, and the task's before it. */
   steps: number;
   budget: number;
-  /** Units charged to `LIMITS.ALLOC_BUDGET` so far in this evaluation. */
+  /** Units charged to `LIMITS.ALLOC_BUDGET`, counted the same way. */
   cost: number;
+  /** Whether part of the budget was already spent when this evaluation began. */
+  defer: boolean;
 }
 
 /** Prototype of a plain object literal, captured once. */
@@ -90,13 +103,52 @@ export function getStepBudget(): number {
   return stepBudget;
 }
 
-export function makeCtx(scope: ScopeLike): EvalCtx {
-  return { scope, frame: null, steps: 0, budget: stepBudget, cost: 0 };
+/** The evaluation running now, if any: one started inside it shares its budget. */
+let cur: EvalCtx | null = null;
+
+/**
+ * A context counts on from what was spent before it: the running evaluation's
+ * when one is nested in another (a `data-computed` read by a binding, a
+ * handler `$el.click()` dispatches), else the task's `meter`, else nothing.
+ * So a chain of computeds, or of handlers, spends one budget between them.
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "a chain of computeds spends one budget between them"
+ */
+export function makeCtx(scope: ScopeLike, meter?: Meter | null): EvalCtx {
+  const base = cur ?? meter;
+  const steps = base ? base.steps : 0;
+  const cost = base ? base.cost : 0;
+  return { scope, frame: null, steps, budget: stepBudget, cost, defer: steps + cost > 0 };
+}
+
+/** Make `ctx` the running evaluation; returns the one it was nested in. */
+export function enter(ctx: EvalCtx): EvalCtx | null {
+  const outer = cur;
+  cur = ctx;
+  return outer;
+}
+
+/**
+ * End `ctx`, whether it answered or threw, and hand what it spent back to
+ * what it counted on from: the evaluation it was nested in, else the meter.
+ */
+export function leave(ctx: EvalCtx, outer: EvalCtx | null, meter?: Meter | null): void {
+  cur = outer;
+  const base = outer ?? meter;
+  if (base) {
+    base.steps = ctx.steps;
+    base.cost = ctx.cost;
+  }
+}
+
+/** A budget refusal, marked for a retry when the evaluation did not start fresh. */
+function over(ctx: EvalCtx, err: FormaExprError): FormaExprError {
+  err.defer = ctx.defer;
+  return err;
 }
 
 function step(ctx: EvalCtx, at: number): void {
   if (++ctx.steps > ctx.budget) {
-    throw exprError('FORMA_E_BUDGET', `expression exceeded its ${ctx.budget}-step budget`, at);
+    throw over(ctx, exprError('FORMA_E_BUDGET', `expression exceeded its ${ctx.budget}-step budget`, at));
   }
 }
 
@@ -113,11 +165,15 @@ function room(ctx: EvalCtx): number {
 /**
  * Charge `units` to the evaluation, or refuse with `FORMA_E_BUDGET`. A NaN or
  * negative charge is refused too, so a cost that cannot be read fails closed.
+ * A refused charge is taken back: the call it priced never runs, so it does
+ * not count against the task's meter.
  * Verified by: src/expr/__tests__/native-cost.test.ts > "the budget is per evaluation and cumulative across its calls"
  */
-function charge(ctx: EvalCtx, units: number, what: string, at: number): void {
+export function charge(ctx: EvalCtx, units: number, what: string, at: number): void {
+  const spent = ctx.cost;
   if (!(units >= 0 && (ctx.cost += units) <= LIMITS.ALLOC_BUDGET)) {
-    throw exprError('FORMA_E_BUDGET', `${what} would exceed the ${LIMITS.ALLOC_BUDGET}-unit allocation budget`, at);
+    ctx.cost = spent;
+    throw over(ctx, exprError('FORMA_E_BUDGET', `${what} would exceed the ${LIMITS.ALLOC_BUDGET}-unit allocation budget`, at));
   }
 }
 
@@ -130,7 +186,13 @@ function charge(ctx: EvalCtx, units: number, what: string, at: number): void {
  * Verified by: src/expr/__tests__/native-cost.test.ts > "every size-driven cost refuses a hostile size before the native runs"
  */
 function preflight(ctx: EvalCtx, name: string, recv: unknown, args: unknown[], at: number): void {
-  if (!DATA_ARGS.has(name)) {
+  if (typeof recv === 'string') {
+    // A string method reads a string argument (a pattern, a separator, a
+    // filler) as it is, at about a nanosecond a character: it converts only
+    // the others. Its row charges what the argument makes it build.
+    // Verified by: src/expr/__tests__/string-growth.test.ts > "a string method reads a string argument for a thirty-second of a unit a character"
+    for (const a of args) charge(ctx, typeof a === 'string' ? a.length / 32 : weigh(a, room(ctx)), name, at);
+  } else if (!DATA_ARGS.has(name)) {
     for (const a of args) charge(ctx, weigh(a, room(ctx)), name, at);
   }
   const cost = Object.hasOwn(COSTS, name) ? COSTS[name]! : null;
@@ -145,6 +207,72 @@ function preflight(ctx: EvalCtx, name: string, recv: unknown, args: unknown[], a
  */
 function coerce(ctx: EvalCtx, v: unknown, at: number): void {
   if (typeof v === 'object' && v !== null) charge(ctx, weigh(v, room(ctx)), 'converting a value to text', at);
+}
+
+/**
+ * A string an operator builds (`a + b`, `x += s`, a template literal) is
+ * charged by its length (FORMA-028). Joining is cheap, because the engine
+ * keeps the pieces as a rope, but the first read of a fresh rope copies the
+ * whole of it: 19 doublings of `'x'` built 524,288 characters, and reading
+ * `(big + 'y')` 15,000 times then took 2.6 s at 4x CPU throttling. Charging
+ * what an operator produces charges each such copy before it can happen. A
+ * string under 512 characters is free: copying one measured under half a
+ * microsecond, and the step budget bounds how many one evaluation can build
+ * (about 33,000), so a search that joins each record's fields pays nothing.
+ * Verified by: src/expr/__tests__/string-growth.test.ts > "every round-2 rope case is refused before the long task"
+ */
+function grow(ctx: EvalCtx, v: unknown, at: number): void {
+  if (typeof v === 'string' && v.length > 511) charge(ctx, v.length * GROW, 'building a string', at);
+}
+
+/**
+ * A string an operand has just built with `+` or a template literal is a rope,
+ * and comparing it, or reading one character of it, first copies all of it:
+ * about half a microsecond plus 1 to 3 ns a character at 4x CPU throttling, so
+ * 12,400 comparisons of two such 511-character strings took 56 ms inside the
+ * step budget (FORMA-028). That copy is charged where it happens, up to the
+ * 512 characters past which `grow` has charged it already. A string method
+ * other than a character read is charged by its row, which a search that
+ * lowercases each record's joined fields already pays.
+ * Verified by: src/expr/__tests__/string-growth.test.ts > "comparing or reading a string just built is charged for copying it"
+ */
+function copied(ctx: EvalCtx, node: Expr, v: unknown, at: number): void {
+  if (typeof v === 'string' && v.length > 12 && (node.k === 'Template' || (node.k === 'Binary' && node.op === '+'))) {
+    charge(ctx, FLAT + Math.min(v.length, 512) / 32, 'copying a string just built', at);
+  }
+}
+
+/**
+ * A long string an operator converts to a number (`s * 1`, `-s`, `s < 1`,
+ * `s == 1`) is parsed whole: about 11 ns a character for digits at 4x CPU
+ * throttling, a tenth of an `Array.from` slot (FORMA-028).
+ * Verified by: src/expr/__tests__/string-growth.test.ts > "an operator that parses a long string as a number is charged for it"
+ */
+function parse(ctx: EvalCtx, v: unknown, at: number): void {
+  if (typeof v === 'string' && v.length > 31) charge(ctx, v.length * PARSE, 'converting a string to a number', at);
+}
+
+/**
+ * What a binary operator other than `+` reads of its string operands: a
+ * comparison of two strings reads them character by character (equality only
+ * when their lengths match); otherwise a string is parsed as a number, except
+ * by `===` and `!==`, which convert nothing, and against `null` by `==`.
+ * Verified by: src/expr/__tests__/string-growth.test.ts > "comparing long strings is charged by the characters compared"
+ */
+function scan(ctx: EvalCtx, op: BinaryOp, l: unknown, r: unknown, at: number): boolean {
+  const strict = op === '===' || op === '!==';
+  const equality = strict || op === '==' || op === '!=';
+  const arithmetic = op === '-' || op === '*' || op === '/' || op === '%';
+  if (!arithmetic && typeof l === 'string' && typeof r === 'string') {
+    const n = equality && l.length !== r.length ? 0 : Math.min(l.length, r.length);
+    if (n > 127) charge(ctx, n * READ, 'comparing strings', at);
+    return n > 0;
+  }
+  if (!strict && !(equality && (l == null || r == null))) {
+    parse(ctx, l, at);
+    parse(ctx, r, at);
+  }
+  return false;
 }
 
 // ── The two audited member-access helpers ──
@@ -498,6 +626,9 @@ function evalCall(node: Expr & { k: 'Call' }, ctx: EvalCtx): unknown {
     else args.push(evalArg(argNode, ctx));
   });
 
+  if (kind === 'string' && (method === 'at' || method === 'charAt' || method === 'charCodeAt')) {
+    copied(ctx, callee.object, recv, at);
+  }
   const names = (NAMES[kind] ??= Object.create(null) as Record<string, string>);
   preflight(ctx, (names[method] ??= `${kind}.${method}`), recv, args, at);
   guardArgs(method, args, at);
@@ -627,6 +758,7 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
           throw exprError('FORMA_E_BUDGET', 'the resulting string is too large', node.i);
         }
       }
+      grow(ctx, out, node.i);
       return out;
     }
 
@@ -646,6 +778,7 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
       const v = evalExpr(node.arg, ctx);
       if (node.op === '!') return !v;
       coerce(ctx, v, node.i);
+      parse(ctx, v, node.i);
       if (node.op === '-') return -(v as number);
       return +(v as number);
     }
@@ -676,6 +809,10 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
         coerce(ctx, l, node.i);
         coerce(ctx, r, node.i);
       }
+      if (op !== '+' && scan(ctx, op, l, r, node.i)) {
+        copied(ctx, node.left, l, node.i);
+        copied(ctx, node.right, r, node.i);
+      }
       switch (op) {
         case '===': return l === r;
         case '!==': return l !== r;
@@ -691,8 +828,9 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
           if (isHost(l) || isHost(r)) {
             throw exprError('FORMA_E_PROPERTY_DENIED', 'a host value cannot be concatenated', node.i);
           }
-          const sum = l + r;
-          return checkResultSize(sum, node.i);
+          const sum = checkResultSize(l + r, node.i);
+          grow(ctx, sum, node.i);
+          return sum;
         }
         case '-': return l - r;
         case '*': return l * r;
@@ -711,6 +849,7 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
     case 'Computed': {
       const obj = evalExpr(node.object, ctx);
       if (obj === null || obj === undefined) return undefined;
+      copied(ctx, node.object, obj, node.i);
       return safeRead(obj, evalExpr(node.key, ctx), node.i, node.optional);
     }
 
@@ -807,9 +946,18 @@ function applyOp(
     coerce(ctx, current, at);
     coerce(ctx, operand, at);
   }
+  if (op !== '=' && op !== '+=') {
+    parse(ctx, current, at);
+    parse(ctx, operand, at);
+  }
   switch (op) {
     case '=': return operand;
-    case '+=': return (current as number) + (operand as number);
+    case '+=': {
+      // The same string `+` builds, with the same 1 MiB cap.
+      const sum = checkResultSize((current as number) + (operand as number), at);
+      grow(ctx, sum, at);
+      return sum;
+    }
     case '-=': return (current as number) - (operand as number);
     case '*=': return (current as number) * (operand as number);
     case '/=': return (current as number) / (operand as number);
