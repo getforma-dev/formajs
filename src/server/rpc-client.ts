@@ -11,6 +11,8 @@
  *
  * @param endpoint - The RPC endpoint path (e.g. "/rpc/createTodo_a1b2c3")
  * @returns An async function that sends args to the server and returns the result
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function $$serverFunction<T extends (...args: unknown[]) => Promise<unknown>>(
   endpoint: string,

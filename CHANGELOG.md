@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Deprecated
+
+- **`@getforma/core/server`, `@getforma/core/ssr` and `@getforma/core/wasm`
+  are deprecated, and are removed in 3.0.0** (FORMA-131; DR-22 to DR-24). They
+  keep working through 2.x. Server functions give way to routes in the
+  application's Rust server, `./ssr` to the Rust walker, and `./wasm` to
+  core's `h()`, which islands already re-render with. `docs/STABILITY.md` marks
+  each row **Deprecated** and lists the codes under *Deprecated entry points*.
+  - The first time one of them is loaded in a development build, it logs one
+    line with a stable code: `FORMA_W_DEPRECATED_SERVER`,
+    `FORMA_W_DEPRECATED_SSR` or `FORMA_W_DEPRECATED_WASM`, as
+    `[forma] FORMA_W_DEPRECATED_SSR: …`, naming 3.0.0 and the replacement. Once
+    per process: a second copy of the module stays quiet.
+  - A development build is what it is for every `__DEV__` diagnostic: core
+    compiled from its source with `NODE_ENV` other than `production`. The
+    published files are production builds and log nothing. Every `.js` and
+    `.cjs` file under `dist/` is byte-identical to the build before this change
+    (all 33), so no size gate moved. The files that differ are the three
+    entries' type declarations, where every exported function now carries
+    `@deprecated`, and their source maps.
+  - `./ssr`'s note names how it differs from the walker: `renderToString`
+    writes a `textarea`'s and a `select`'s `value` as a `value` attribute,
+    which the HTML parser ignores, where the walker writes the textarea's text
+    and `selected` on the matching option.
+  - `scripts/verify-dist.mjs` fails a build in which a deprecation code reaches
+    any published artifact.
+  - Tests: `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its
+    deprecation once in development, with its code", "$subpath stays quiet when
+    NODE_ENV is production", "decides a development build as __DEV__ does,
+    under every NODE_ENV", "a production build of each deprecated entry carries
+    no warning" (the real tsup configs) and its control, "a build without the
+    production flag keeps the warning". The exact export-surface test still
+    lists all three entries until 3.0.0 removes them.
+
+### Documentation
+
+- `docs/STABILITY.md`'s footnote on `./wasm` said the subpath first resolves
+  "in the next release". It first resolved in 2.0.0 (npm's 1.5.0 has no
+  `./wasm` key; 2.0.0 has it), and the footnote now says so.
+
 ### CI
 
 - **Actions pinned to commits; every job declares its token** (DR-32, SR21,

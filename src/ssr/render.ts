@@ -88,6 +88,8 @@ export interface VNode {
 
 /**
  * Server-side hyperscript — creates a virtual node instead of a DOM element.
+ *
+ * @deprecated `@getforma/core/ssr` is removed in 3.0.0 (FORMA_W_DEPRECATED_SSR): render on the server with the Rust walker (forma-server).
  */
 export function sh(tag: string, props?: Record<string, unknown> | null, ...children: unknown[]): VNode {
   return { tag, props: props ?? null, children };
@@ -110,6 +112,8 @@ export function sh(tag: string, props?: Record<string, unknown> | null, ...child
  *   )
  * );
  * ```
+ *
+ * @deprecated `@getforma/core/ssr` is removed in 3.0.0 (FORMA_W_DEPRECATED_SSR): render on the server with the Rust walker (forma-server).
  */
 export function renderToString(node: unknown): string {
   const parts: string[] = [];

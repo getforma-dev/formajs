@@ -48,6 +48,8 @@ const resourceRegistry = new Map<string, Resource<unknown>>();
  * );
  * registerResource('/api/todos', todos);
  * ```
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function registerResource(key: string, resource: Resource<unknown>): void {
   resourceRegistry.set(key, resource);
@@ -55,6 +57,8 @@ export function registerResource(key: string, resource: Resource<unknown>): void
 
 /**
  * Unregister a resource (call on cleanup/unmount).
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function unregisterResource(key: string): void {
   resourceRegistry.delete(key);
@@ -64,6 +68,8 @@ export function unregisterResource(key: string): void {
  * Apply revalidation data from a single-flight mutation response.
  * For each key in the revalidate map, find the matching resource
  * and mutate it directly with the fresh data (skipping a refetch).
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function applyRevalidation(revalidateData: Record<string, unknown>): void {
   for (const [key, freshData] of Object.entries(revalidateData)) {
@@ -84,6 +90,8 @@ export function applyRevalidation(revalidateData: Record<string, unknown>): void
  * import { enableAutoRevalidation } from 'forma/server/mutation';
  * enableAutoRevalidation();
  * ```
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function enableAutoRevalidation(): () => void {
   if (typeof window === 'undefined') {
@@ -119,6 +127,8 @@ export function enableAutoRevalidation(): () => void {
  *   });
  * }
  * ```
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function withRevalidation<T>(data: T, revalidate: Record<string, unknown>): MutationResponse<T> {
   return { data, __revalidate: revalidate };
