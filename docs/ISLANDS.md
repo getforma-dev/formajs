@@ -255,20 +255,37 @@ stay the server's, so focus and state inside an icon survive activation. The
 parser keeps an SVG or MathML tag's case (`clipPath`), and adoption matches it
 exactly; an HTML element matches a tag in any case. Where adoption must create
 an element (the server rendered another tag, or nothing), it creates it in the
-namespace the HTML parser would have used: SVG or MathML inside those
-elements, HTML inside a `foreignObject`. A `title` it creates in an SVG is an
-SVG `title`.
+namespace of the element it goes into: SVG inside an SVG element, MathML
+inside a MathML element, HTML inside a `foreignObject` and in HTML. A `title`
+it creates in an SVG is an SVG `title`.
 
-**Reactive attributes.** An attribute the server already rendered with the
-client's value is not written at adoption, on any element; every later change
-is. Setting an attribute to the value it has is still a DOM write, and for an
-`iframe`'s `src` it reloads the frame.
+That is the namespace the HTML parser gives the server's markup, except where
+the parser switches back to HTML inside SVG or MathML. Adoption follows that
+switch only in a `foreignObject`. In these places it keeps the parent's
+namespace, where the parser does not:
+
+- the content of a MathML `mi`, `mo`, `mn`, `ms` or `mtext`, other than an
+  `mglyph` or `malignmark`;
+- the content of a MathML `annotation-xml` whose `encoding` is `text/html` or
+  `application/xhtml+xml`, and an `svg` in any `annotation-xml`;
+- the content of an SVG `title` or `desc`;
+- an HTML element such as `p` or `div` put directly in SVG or MathML, which the
+  parser moves out of it (that markup is not valid there).
+
+For example, a `b` that adoption creates in an `mtext` is a MathML `b`, where
+the parser makes the server's `b` an HTML one. What the server rendered in
+these places keeps the parser's namespace, because adoption keeps those nodes.
 
 Client rendering differs for icons: plain `h()` creates SVG-only tags (`svg`,
 `path`, `clipPath`) in the SVG namespace by name, but a `title` or an `a` is
 built before the `svg` it goes into, so it is created as HTML. Build an icon
 that has a `title` or a link inside `svg()` (see the SVG section of
 [API.md](API.md)) to get what the server's HTML parses to.
+
+**Reactive attributes.** An attribute the server already rendered with the
+client's value is not written at adoption, on any element; every later change
+is. Setting an attribute to the value it has is still a DOM write, and for an
+`iframe`'s `src` it reloads the frame.
 
 Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "adopts a server-rendered inline SVG with no DOM write and no re-created node"
 Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "adopts case-sensitive SVG tags such as clipPath and linearGradient in place"

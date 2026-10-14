@@ -478,10 +478,13 @@ export function ensureNode(value: unknown, ns: string | null = null): Node | nul
  * Handles nested ShowDescriptor and ListDescriptor children by converting
  * them to real reactive primitives (createShow, createList).
  *
- * `ns` is the namespace of the content the element goes into (null: HTML), so
- * the element lands where the parser would have put the server's: `svg` and
- * `math` open SVG and MathML, and their descendants stay in it, except a
- * `foreignObject`'s, which are HTML. An element in SVG or MathML is created
+ * `ns` is the namespace of the content the element goes into (null: HTML):
+ * `svg` and `math` open SVG and MathML, and their descendants stay in it,
+ * except a `foreignObject`'s, which are HTML. That is where the parser puts
+ * the server's element, except at the parser's other switches back to HTML
+ * (the content of MathML `mi`, `mo`, `mn`, `ms`, `mtext` and an HTML
+ * `annotation-xml`, of SVG `title` and `desc`): there this keeps the foreign
+ * namespace. docs/ISLANDS.md lists them. An element in SVG or MathML is created
  * with `createElementNS`, whatever its tag (h() alone would make a `title` or
  * an `a` an HTML element); in HTML content h() creates it.
  *
