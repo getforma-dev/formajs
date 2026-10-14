@@ -273,6 +273,25 @@ describe('what adoption builds inside an SVG is SVG (FORMA-026)', () => {
 });
 
 describe('adoption at the parser\'s HTML integration points (FORMA-026)', () => {
+  it('what adoption creates inside an SVG is built in SVG from the start: a ref on it is called once', () => {
+    document.body.innerHTML = '<div id="app" data-forma-ssr><svg viewBox="0 0 10 10"><circle r="1"></circle></svg></div>';
+    const app = document.getElementById('app')!;
+    const refs: Element[] = [];
+    const warn = console.warn;
+    console.warn = () => {};
+    try {
+      mount(() => h('svg', { viewBox: '0 0 10 10' },
+        h('g', null, h('title', { ref: (el: Element) => refs.push(el) }, 'T'), h('a', { href: '#x' })),
+      ) as unknown as HTMLElement, app);
+    } finally {
+      console.warn = warn;
+    }
+    const title = app.querySelector('title')!;
+    expect(title.namespaceURI).toBe(SVG);
+    expect(app.querySelector('a')!.namespaceURI).toBe(SVG);
+    expect(refs).toEqual([title]);
+  });
+
   it('adoption creates what the server left out of a desc or an mtext in HTML, and an svg in SVG anywhere', () => {
     document.body.innerHTML =
       '<div id="app" data-forma-ssr><div><svg><desc id="d"></desc></svg>' +
