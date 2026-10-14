@@ -24,8 +24,15 @@ const ROOT = fileURLToPath(new URL('..', import.meta.url));
 const KNOWN_WARNING = '[forma] Dropped unsafe-URL prop "href" on <a>';
 
 const APP = `
-import { h, mount } from '@getforma/core';
-mount(() => h('a', { id: 'link', href: 'javascript:alert(1)' }, 'unsafe link'), '#app');
+import { h, mount, setHTMLUnsafe, trustedHtml } from '@getforma/core';
+mount(() => h('section', null,
+  h('a', { id: 'link', href: 'javascript:alert(1)' }, 'unsafe link'),
+  h('div', { id: 'typed', dangerouslySetInnerHTML: { __html: trustedHtml('<i>typed</i>') } }),
+  h('div', { id: 'raw' }),
+), '#app');
+// FORMA-126: a plain string at a raw sink, twice; trustedHtml() above, never.
+setHTMLUnsafe(document.getElementById('raw'), '<b>first</b>');
+setHTMLUnsafe(document.getElementById('raw'), '<b>second</b>');
 `;
 
 let scratch: string;
@@ -103,6 +110,19 @@ test('a development bundle of the packed package resolves the development build 
   await expect(page.locator('#link')).not.toHaveAttribute('href');
 });
 
+test('a development bundle of the packed package logs a string at a raw sink once, with its code, and trustedHtml() never', async ({ page }) => {
+  const logged = await run(page, 'development');
+
+  // FORMA-126's bridge (L-18): the string still renders, and says so once.
+  await expect(page.locator('#raw')).toHaveText('second');
+  await expect(page.locator('#typed')).toHaveText('typed');
+  const raw = logged.filter((m) => m.text.includes('FORMA_W_RAW_'));
+  expect(raw.map((m) => [m.type, m.text.slice(0, m.text.indexOf(':'))])).toEqual([
+    ['warning', '[forma] FORMA_W_RAW_SET_HTML'],
+  ]);
+  expect(raw[0]!.text).toContain('trustedHtml()');
+});
+
 test('a production bundle of the same application resolves the production files and logs nothing', async ({ page }) => {
   const core = bundles.production.inputs.filter((file) => file.includes('@getforma/core/'));
   expect(core.length).toBeGreaterThan(0);
@@ -116,4 +136,6 @@ test('a production bundle of the same application resolves the production files 
 
   expect(logged).toEqual([]);
   await expect(page.locator('#link')).not.toHaveAttribute('href');
+  await expect(page.locator('#raw')).toHaveText('second');
+  await expect(page.locator('#typed')).toHaveText('typed');
 });

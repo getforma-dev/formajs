@@ -1,5 +1,7 @@
 // DOM mutation helpers
 
+import { rawHtml, type TrustedHtml } from '../dom/trusted-html.js';
+
 /** Add one or more CSS classes to an element. */
 export function addClass(el: HTMLElement, ...classes: string[]): void {
   el.classList.add(...classes);
@@ -68,8 +70,10 @@ export function setText(el: HTMLElement, text: string): void {
  * Set raw HTML on an element. **No sanitization is performed.**
  *
  * Prefer `setText()` for user-controlled content. Only use this when you
- * trust the HTML source (e.g., server-rendered markup you control).
+ * trust the HTML source (e.g., server-rendered markup you control), and wrap
+ * it in `trustedHtml()` (DR-19): a plain string still works in 2.x and warns
+ * once in development (FORMA_W_RAW_SET_HTML).
  */
-export function setHTMLUnsafe(el: HTMLElement, html: string): void {
-  el.innerHTML = html;
+export function setHTMLUnsafe(el: HTMLElement, html: string | TrustedHtml): void {
+  el.innerHTML = rawHtml(html, 'setHTMLUnsafe');
 }

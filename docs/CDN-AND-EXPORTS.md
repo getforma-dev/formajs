@@ -81,7 +81,7 @@ so a bundler never pulls them into an app that does not ask for them.
 | `@getforma/core/http` | `createFetch`, `fetchJSON`, `createSSE`, `createWebSocket` |
 | `@getforma/core/storage` | `createLocalStorage`, `createSessionStorage`, `createIndexedDB` |
 | `@getforma/core/server` | **Deprecated**, removed in 3.0.0 ([STABILITY.md](STABILITY.md#deprecated-entry-points)). `createAction`, `$$serverFunction`, `handleRPC`, `createRPCMiddleware`, `setRPCGuard` |
-| `@getforma/core/runtime` | HTML runtime — `initRuntime()`, `mount()`, `unmount()`, `reconcile()`, `getDiagnostics()` |
+| `@getforma/core/runtime` | HTML runtime — `initRuntime()`, `mount()`, `unmount()`, `reconcile()`, `trustedHtml()`, `getDiagnostics()` |
 | `@getforma/core/runtime-hardened` | The same runtime, bundled without code splitting (alias: `@getforma/core/runtime-csp`) |
 | `@getforma/core/ssr` | **Deprecated**, removed in 3.0.0 ([STABILITY.md](STABILITY.md#deprecated-entry-points)). Server-side rendering in Node — `renderToString()`, `renderToStream()`, `sh()`, `shSuspense()`, `ssrSignal()`, `getSwapScript()` |
 | `@getforma/core/wasm` | **Deprecated**, removed in 3.0.0 ([STABILITY.md](STABILITY.md#deprecated-entry-points)). `renderLocal()`, `renderIsland()` — render via the Rust FMIR walker compiled to WASM |
