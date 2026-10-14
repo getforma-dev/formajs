@@ -232,21 +232,22 @@ for (const [entry, code] of [
 // ---------------------------------------------------------------------------
 // 3c. The raw-HTML warnings are development-only
 // ---------------------------------------------------------------------------
-// A plain string given to a raw sink, and h('script'), log a coded warning in
-// a development build (FORMA-126, src/dom/trusted-html.ts). Each sits behind
+// A value that is not trustedHtml() given to a raw sink, the runtime's srcdoc
+// bindings, h('script') and a refused policy name log a coded warning in a
+// development build (FORMA-126, src/dom/trusted-html.ts). Each sits behind
 // the build flag itself, written out at the warning, so every production
 // artifact drops it, code-split chunks and the CDN bundles included; the
 // development twins keep it.
-const RAW_HTML_WARNING = /FORMA_W_(?:RAW_[A-Z_]+|SCRIPT_ELEMENT)/;
+const RAW_HTML_WARNING = /FORMA_W_(?:RAW_[A-Z_]+|SCRIPT_ELEMENT|TT_POLICY_REFUSED)/;
 for (const rel of jsArtifacts()) {
   if (!isDevelopment(rel) && RAW_HTML_WARNING.test(read(rel))) {
     fail(`${rel} contains a raw-HTML development warning: the build flag did not fold it away`);
   }
 }
 for (const [entry, codes] of [
-  ['index', ['FORMA_W_RAW_INNER_HTML', 'FORMA_W_RAW_SET_HTML', 'FORMA_W_RAW_TEMPLATE', 'FORMA_W_RAW_SRCDOC', 'FORMA_W_SCRIPT_ELEMENT']],
-  ['runtime', ['FORMA_W_RAW_RECONCILE']],
-  ['runtime-hardened', ['FORMA_W_RAW_RECONCILE']],
+  ['index', ['FORMA_W_RAW_INNER_HTML', 'FORMA_W_RAW_SET_HTML', 'FORMA_W_RAW_TEMPLATE', 'FORMA_W_RAW_SRCDOC', 'FORMA_W_SCRIPT_ELEMENT', 'FORMA_W_TT_POLICY_REFUSED']],
+  ['runtime', ['FORMA_W_RAW_RECONCILE', 'FORMA_W_RAW_RUNTIME_SRCDOC', 'FORMA_W_TT_POLICY_REFUSED']],
+  ['runtime-hardened', ['FORMA_W_RAW_RECONCILE', 'FORMA_W_RAW_RUNTIME_SRCDOC', 'FORMA_W_TT_POLICY_REFUSED']],
 ]) {
   for (const ext of ['js', 'cjs']) {
     const rel = `${DEV_OUT_DIR}/${entry}.${ext}`;

@@ -13,14 +13,20 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import rawConfig from '../../../tsup.config';
-import { RAW_STRING_CODES } from '../trusted-html';
+import { POLICY_REFUSED_CODE, RAW_STRING_CODES, RUNTIME_SRCDOC_CODE } from '../trusted-html';
 
 const configs = rawConfig as Options[];
 
-/** What only the raw-sink development warnings carry. */
-const RAW_MARKS = [...Object.values(RAW_STRING_CODES).map(([code]) => code), 'was given a plain string'];
+/** What only the raw-sink development warnings carry, and a refused policy's. */
+const RAW_MARKS = [
+  ...Object.values(RAW_STRING_CODES).map(([code]) => code),
+  'was given a plain string',
+  POLICY_REFUSED_CODE,
+];
 /** What only h('script')'s development warning carries. */
 const SCRIPT_MARK = 'FORMA_W_SCRIPT_ELEMENT';
+/** What only the runtime's srcdoc bindings' development warning carries. */
+const RUNTIME_MARK = RUNTIME_SRCDOC_CODE;
 
 /**
  * Build the tsup config that emits `entries`, narrowed to them, into a private
@@ -56,13 +62,14 @@ async function buildAll(entries: string[], overrides: Options = {}): Promise<Rec
 
 /**
  * The code-split ESM entries that reach a raw sink, then the two
- * self-contained bundles: the browser ESM bundle (core, with h()) and the
- * runtime's IIFE, built by plain esbuild (no h(), so no script warning).
+ * self-contained bundles: the browser ESM bundle (core, with h(), without the
+ * runtime) and the runtime's IIFE, built by plain esbuild (no h(), so no
+ * script warning).
  */
 const BUILDS: ReadonlyArray<{ name: string; entries: string[]; marks: string[] }> = [
-  { name: 'code-split ESM', entries: ['index', 'runtime', 'ssr/index'], marks: [...RAW_MARKS, SCRIPT_MARK] },
+  { name: 'code-split ESM', entries: ['index', 'runtime', 'ssr/index'], marks: [...RAW_MARKS, SCRIPT_MARK, RUNTIME_MARK] },
   { name: 'browser ESM bundle', entries: ['forma.esm'], marks: [...RAW_MARKS, SCRIPT_MARK] },
-  { name: 'runtime IIFE', entries: ['formajs-runtime'], marks: RAW_MARKS },
+  { name: 'runtime IIFE', entries: ['formajs-runtime'], marks: [...RAW_MARKS, RUNTIME_MARK] },
 ];
 
 describe('the raw-HTML warnings in a production build (the real tsup configs)', () => {
@@ -70,7 +77,7 @@ describe('the raw-HTML warnings in a production build (the real tsup configs)', 
     for (const { name, entries } of BUILDS) {
       const files = await buildAll(entries);
       const all = Object.values(files).join('\n');
-      for (const mark of [...RAW_MARKS, SCRIPT_MARK]) expect(all, `${name}: ${mark}`).not.toContain(mark);
+      for (const mark of [...RAW_MARKS, SCRIPT_MARK, RUNTIME_MARK]) expect(all, `${name}: ${mark}`).not.toContain(mark);
       // The typed path itself is there: the build dropped the warnings only.
       expect(all, name).toContain('createPolicy');
       expect(all, name).toContain('@getforma/core#trusted-types');

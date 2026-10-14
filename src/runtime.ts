@@ -158,7 +158,7 @@
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
-import { trustedHtml, type TrustedHtml } from './dom/trusted-html';
+import { trustedHtml, warnRuntimeSrcdoc, type TrustedHtml } from './dom/trusted-html';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 import {
   clearExpressionCache,
@@ -1139,6 +1139,10 @@ function cloneAttributeTemplates(el: Element, item: unknown): void {
         if (isUnsafeAttrBinding(attr.name, value, node.tagName.toLowerCase())) {
           node.removeAttribute(attr.name);
         } else {
+          // A row's `srcdoc` is a raw entry no trustedHtml() can reach:
+          // written as the string it is, and warned of (FORMA-126).
+          // Verified by: src/__tests__/runtime-srcdoc.test.ts > "a list row's srcdoc writes its string and warns once with the runtime code"
+          warnRuntimeSrcdoc(attr.name);
           node.setAttribute(attr.name, value);
         }
       }
@@ -1834,6 +1838,10 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         if (isUnsafeAttrBinding(attrName, str, el.tagName.toLowerCase())) {
           el.removeAttribute(attrName);
         } else {
+          // `data-bind:srcdoc` is a raw entry no trustedHtml() can reach:
+          // written as the string it is, and warned of (FORMA-126).
+          // Verified by: src/__tests__/runtime-srcdoc.test.ts > "data-bind:srcdoc writes its string and warns once with the runtime code"
+          warnRuntimeSrcdoc(attrName);
           el.setAttribute(attrName, str);
         }
       });
