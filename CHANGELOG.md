@@ -23,9 +23,13 @@ All notable changes to this project will be documented in this file.
 - **`docs/ISLANDS.md` states what adoption skips today** (FORMA-016): a plain
   array child (`.map()` without `createList`), `createErrorBoundary`,
   `createSwitch`, `createPortal` and `createSuspense`, and a reactive child
-  that returns an element; what a server-rendered page gets with each, the
-  build code compiler 0.3.7 reports for it, and what to write instead. It also
-  documents `browserOnly()`.
+  that returns an element; what a server-rendered page gets with each,
+  measured in Chromium (on a `mount()` root, `createErrorBoundary`,
+  `createSwitch` and `createSuspense` make activation throw and nothing after
+  them activates; `createPortal`'s content never appears; a reactive `.map()`
+  shows its elements as `[object HTMLLIElement]` text), the build code
+  compiler 0.3.7 reports for it, and what to write instead. It also documents
+  `browserOnly()`.
 
 ### CI
 

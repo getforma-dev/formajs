@@ -351,17 +351,22 @@ Verified by `src/dom/__tests__/browser-only.test.ts` > "called as a component, r
 
 Adoption has no handling for the constructs below, so a server-rendered page
 that uses one is not adopted as written (FORMA-016). Since compiler 0.3.7 each
-is reported at build time with its code, file and line, and `--strict` makes it
-an error; the way out is to render the subtree in the browser with
-`browserOnly()`, or to write it as a construct the server renders.
+is reported at build time with its code, file and line, and `@getforma/build`'s
+strict mode makes it an error; the way out is to render the subtree in the
+browser with `browserOnly()`, or to write it as a construct the server renders.
+
+What each one does, measured in Chromium on a `mount()` root built with
+compiler 0.3.7 and activated by this runtime, with a counter button after the
+construct:
 
 | Construct | What a server-rendered page gets today | Build code | Instead |
 |---|---|---|---|
-| A plain array child: `{rows.map(r => <li>…</li>)}` without `createList` | The server renders an empty island shell nothing registers; adoption skips the array, so the rows never appear after activation | `BUILD-701` | `createList(rows, keyFn, (r) => …)`, or `...CONST.map(…)` over a module-level const |
-| `createErrorBoundary` | The server renders an empty shell where it stands, and adoption has no handling for it | `BUILD-702` | Move the boundary out of the server-rendered tree |
-| `createSwitch` | The same | `BUILD-703` | A `createShow` per case |
-| `createPortal` | The same | `BUILD-704` | Create the portal from an effect after activation |
-| `createSuspense` | The same | `BUILD-705` | Render the loaded state from server data |
+| A plain array child: `{rows.map(r => <li>…</li>)}` without `createList` | The server renders an empty island shell nothing registers; adoption skips the array, so the rows never appear. The rest of the page activates | `BUILD-701` | `createList(rows, keyFn, (r) => …)`, or `...CONST.map(…)` over a module-level const |
+| The same in a reactive child: `{() => rows.map(r => <li>…</li>)}` | The server renders empty text; after activation the page shows the elements as text, `[object HTMLLIElement],[object HTMLLIElement]`. The rest of the page activates | `BUILD-701` | The same |
+| `createErrorBoundary` | The server renders an empty shell where it stands, and **activation throws** `TypeError: Failed to execute 'insertBefore' on 'Node': parameter 1 is not of type 'Node'`: nothing after the construct activates (the button stays dead) | `BUILD-702` | Move the boundary out of the server-rendered tree |
+| `createSwitch` | The same: activation throws, and nothing after it activates | `BUILD-703` | A `createShow` per case |
+| `createPortal` | No error, and the rest of the page activates, but the portal's content never appears: the server's empty shell stays where it stood | `BUILD-704` | Create the portal from an effect after activation |
+| `createSuspense` | The same as `createErrorBoundary`: activation throws, and nothing after it activates | `BUILD-705` | Render the loaded state from server data |
 
 A reactive child that returns an element, `{() => c() ? <el /> : null}`,
 renders right on the server, but adoption binds it as text: beside the
