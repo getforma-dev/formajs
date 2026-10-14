@@ -457,7 +457,7 @@ sections above cover the ones with non-obvious semantics.
 | Control flow | `createShow`, `createSwitch`, `createList`, `reconcileList`, `createPortal`, `createSuspense`, `createErrorBoundary`, `cleanup` |
 | Components | `defineComponent`, `disposeComponent`, `onMount`, `onUnmount`, `createContext`, `provide`, `inject`, `unprovide` |
 | State | `createStore`, `createHistory`, `persist(source, key, options?)` — mirrors a `[get, set]` pair into `localStorage` |
-| Islands | `activateIslands`, `hydrateIsland`, `deactivateIsland`, `deactivateAllIslands`, `sanitizePropsDeep` |
+| Islands | `activateIslands`, `hydrateIsland`, `deactivateIsland`, `deactivateAllIslands`, `sanitizePropsDeep`, `browserOnly(component)` — a component that renders in the browser alone ([ISLANDS.md](ISLANDS.md#browser-only-components-browseronly)) |
 | Events | `createBus`, `delegate(container, selector, event, handler)`, `onKey(combo, handler, options?)` |
 | DOM utils | `$`, `$$`, `addClass`, `removeClass`, `toggleClass`, `setStyle`, `setAttr`, `setText`, `setHTMLUnsafe`, `closest`, `children`, `siblings`, `parent`, `nextSibling`, `prevSibling`, `onResize`, `onIntersect`, `onMutation` |
 

@@ -26,7 +26,7 @@ const SURFACES: Record<string, { load: () => Promise<object>; exports: string[] 
   '.': {
     load: () => import('../index'),
     exports: [
-      '$', '$$', 'Fragment', 'activateIslands', 'addClass', 'batch', 'children',
+      '$', '$$', 'Fragment', 'activateIslands', 'addClass', 'batch', 'browserOnly', 'children',
       'cleanup', 'closest', 'createBus', 'createComputed', 'createContext',
       'createEffect', 'createErrorBoundary', 'createHistory', 'createList',
       'createMemo', 'createPortal', 'createReducer', 'createRef',
