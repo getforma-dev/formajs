@@ -12,6 +12,18 @@ All notable changes to this project will be documented in this file.
   job in `ci.yml` declares `contents: read`; `release.yml`, `docs.yml` and
   `e2e-engines.yml` already declared their permissions and keep them. Every
   install was already `npm ci`. The published package is unchanged.
+- **Only the release's publish job can mint the publish credential** (SR43,
+  L-34, L-42, FORMA-134). `release.yml` splits into `engines`, `test`, `pack`
+  and `publish`. Tests and builds run in jobs without `id-token: write`; `pack`
+  restores no cache, packs the tarball and records its SHA-256; `publish`, the
+  only job holding `id-token: write`, restores no cache and installs nothing,
+  checks the downloaded tarball against that record (whose own hash travels as
+  a job output) and runs `npm publish <tarball> --provenance --ignore-scripts`.
+  The create-forma-app dispatch moves to a `notify` job with no permissions.
+  The tag stays the only trigger. CI's new `release-workflow` job runs
+  actionlint (binary checked against a pinned SHA-256),
+  `scripts/check-release-workflow.rb --self-test` and
+  `scripts/test-release-artifacts.sh`. The published package is unchanged.
 
 ## [2.0.3] - 2026-10-14
 
