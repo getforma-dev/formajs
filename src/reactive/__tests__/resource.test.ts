@@ -34,19 +34,21 @@ describe('createResource', () => {
   });
 
   it('sets error on fetcher rejection', async () => {
-    let errorVal: unknown;
+    let read!: Promise<unknown>;
     createRoot(() => {
       const resource = createResource(
         () => true,
         () => Promise.reject(new Error('fail')),
       );
-      Promise.resolve()
+      // The error is read a macrotask later, and the test waits for that read
+      // itself. It used to wait a fixed 10 ms instead, which raced the 0 ms
+      // timer and lost once in 100 runs under a load average over 200
+      // (FORMA-179).
+      read = Promise.resolve()
         .then(() => new Promise((r) => setTimeout(r, 0)))
-        .then(() => {
-          errorVal = resource.error();
-        });
+        .then(() => resource.error());
     });
-    await new Promise((r) => setTimeout(r, 10));
+    const errorVal = await read;
     expect(errorVal).toBeInstanceOf(Error);
     expect((errorVal as Error).message).toBe('fail');
   });

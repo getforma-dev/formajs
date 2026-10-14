@@ -835,6 +835,43 @@ All notable changes to this project will be documented in this file.
   on the publish or pack job, and a checkout of another repository or ref;
   every rule has a seed in `--self-test`, which fails if one does not. The
   artefact test flips a byte instead of writing one that may already be there.
+- **No permanently skipped job, no flaky timing test, a bounded browser
+  install** (FORMA-179, FORMA-177). The nightly mutation-probe run leaves
+  `ci.yml` for its own workflow, `nightly-probes.yml` (schedule and
+  `workflow_dispatch` only, the same pins, token, timeout and artefact), and
+  `ci.yml` drops its `schedule`, so no PR or push shows `probes` as skipped.
+  `e2e-engines.yml` (and so the release's `engines` gate) and `ci.yml`'s
+  Chromium `e2e` install each engine in two steps, its system packages and
+  then the browser, each restored from a cache keyed on the Playwright version
+  (the packages' also on the runner image) and each bounded, with one retry;
+  a slow apt mirror once held WebKit's install past the job's 10 minutes.
+  `publish` and `pack` still restore no cache. The three heaviest task-budget
+  tests and a native-cost test get explicit timeouts about 3x their slowest
+  CI run (one had timed out under coverage on Node 20). Two unit tests stop
+  timing themselves: native-cost's 50 ms bound goes (the native never reached
+  and the heap not grown are its deterministic checks; `e2e/sr33.spec.ts`
+  keeps the 50 ms in three browsers), and string-growth's 200 ms ceiling
+  becomes a count: a refused loop stops before a tenth of the interpreter
+  steps it takes over short strings. `e2e/expr-cost.spec.ts` mounts each
+  widget on a fresh task, as `e2e/sr33.spec.ts` does: in WebKit two evaluates
+  could run before the runtime's task timer, so the second widget counted on
+  from the first one's spending and its refusal waited for a retry instead of
+  being reported (three WebKit failures of "each round-2 rope case is refused
+  before the long task"). `resource.test.ts`'s "sets error on fetcher
+  rejection" waits for its own read instead of a fixed 10 ms, which raced the
+  read's 0 ms timer and lost once in 100 runs under load. The release's
+  `pack` job uploads `release-packed` with `overwrite: true`, so re-running
+  all jobs after a failure replaces the earlier attempt's artefact instead
+  of failing on its name (A2 audit S7); `publish` still checks every file
+  against the record whose hash `pack` passes as a job output. The SR43
+  lint's new rule K4 requires it, with two seeds in `--self-test`. WebKit's
+  e2e tests get 30 s, 3x the default: a worker fixture shares the timeout of
+  the test that starts it, and on a slow runner the first test of each worker
+  timed out setting up WebKit's page, twice. "data-text of a value heavier
+  than the budget is refused before it is converted" mounts its widget three
+  times and bounds the least at 50 ms: one noisy sample took 169 ms in
+  Firefox, where a conversion that ran would take seconds each time. The
+  published package is unchanged.
 
 ## [2.0.3] - 2026-10-14
 

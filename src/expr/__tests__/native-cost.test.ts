@@ -16,7 +16,17 @@
  * calls the real intrinsic.
  *
  * Each hostile case must be refused with `FORMA_E_BUDGET`, with the native
- * never reached, the heap not grown by more than a few MB, and no 50 ms task.
+ * never reached and the heap not grown by more than a few MB.
+ *
+ * No wall clock (FORMA-177). In Node these refusals took 0.01 to 4.2 ms on an
+ * idle machine, and their time measured the runner when it was busy: under a
+ * load average over 30 this file's 50 ms bound failed, and a probe run then
+ * credited two other probes' kills to it. What would make a refusal slow is
+ * the native running or the value being converted to text first, and both are
+ * observed here without a clock: the native reached, the heap grown. The
+ * 50 ms bound is asserted where it measures the code, in a browser, by
+ * e2e/sr33.spec.ts over the same table: Chromium at 4x CPU throttling, then
+ * Firefox and WebKit.
  */
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { LIMITS } from '../ast';
@@ -31,7 +41,6 @@ const BUDGET = LIMITS.ALLOC_BUDGET;
 // call must not reach a wrapped intrinsic: Array.isArray is taken here, and
 // they loop by index rather than with Array.prototype.some.
 const isArrayOriginal = Array.isArray;
-const LONG_TASK_MS = 50;
 const HEAP_CEILING = 16 * 1024 * 1024;
 
 // ── Fixtures (shared with e2e/sr33.spec.ts) ──
@@ -112,16 +121,14 @@ beforeAll(async () => {
 interface Outcome {
   code: unknown;
   value: unknown;
-  ms: number;
   grew: number;
 }
 
-/** Evaluate `src` in the wrapped engine, timing it and weighing the heap around it. */
+/** Evaluate `src` in the wrapped engine, weighing the heap around it. */
 function attempt(src: string): Outcome {
   const scope = scopeOf(state());
   const compiled = engine.compileExpression(src);
   const heap = process.memoryUsage().heapUsed;
-  const start = performance.now();
   let code: unknown = 'answered';
   let value: unknown;
   try {
@@ -129,8 +136,7 @@ function attempt(src: string): Outcome {
   } catch (e) {
     code = engine.isExprError(e) ? e.code : e;
   }
-  const ms = performance.now() - start;
-  return { code, value, ms, grew: process.memoryUsage().heapUsed - heap };
+  return { code, value, grew: process.memoryUsage().heapUsed - heap };
 }
 
 /** Every way a hostile case can fall short, as readable lines. */
@@ -140,7 +146,6 @@ function shortfalls(name: string, src: string): string[] {
   const problems: string[] = [];
   if (o.code !== 'FORMA_E_BUDGET') problems.push(`${src} → ${String(o.code)}, not FORMA_E_BUDGET`);
   if (hostileHits.get(name)) problems.push(`${src} → ${name} ran on the hostile value before the refusal`);
-  if (o.ms >= LONG_TASK_MS) problems.push(`${src} → a ${o.ms.toFixed(1)} ms task`);
   if (o.grew > HEAP_CEILING) problems.push(`${src} → the heap grew ${(o.grew / 1e6).toFixed(1)} MB`);
   return problems;
 }
@@ -217,7 +222,7 @@ describe('the cost preflight, native by native (DR-16)', () => {
       const o = attempt(`${name}(big)`);
       expect(o.code, name).toBe('answered');
       expect(o.value, name).toBe(name === 'Boolean' || name === 'Array.isArray');
-      expect(o.ms, name).toBeLessThan(LONG_TASK_MS);
+      expect(o.grew, name).toBeLessThan(HEAP_CEILING);
     }
   });
 
@@ -270,7 +275,9 @@ describe('the cost preflight, native by native (DR-16)', () => {
     expect(outcome('1 != data', st)).toBe('FORMA_E_BUDGET');
   });
 
-  it('a text search over records is answered as on main', () => {
+  // About 3x its slowest CI run, 1,981 ms (FORMA-179): vitest's 5 s default
+  // was only 2.5x that.
+  it('a text search over records is answered as on main', { timeout: 6_000 }, () => {
     // Review R1: lowercasing ASCII costs about 1 ns a character, not a slot,
     // so a client-side search over 9,000 records of 260 characters is answered,
     // as on main, where the step budget is what limits it (about 9,060).

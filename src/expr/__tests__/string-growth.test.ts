@@ -9,11 +9,15 @@
  * 5513640827): 1.1 to 4.3 s at 4x CPU throttling through the runtime. The same
  * holds for comparing long strings and for parsing one as a number.
  *
- * These run in Node, where a refused case still does the work the budget
- * allows before the refusal: tens of milliseconds, more on a loaded machine
- * or under a CI runner's coverage instrumentation (52 ms once on Node 20).
- * Here a ceiling of 200 ms only separates a bounded refusal from the seconds
- * 2.0.3 took (0.6 s to 11 s for these). In a browser:
+ * How soon a refusal comes is counted here, not timed (FORMA-177). A refused
+ * loop must stop before a tenth of its course: before a tenth of the
+ * interpreter steps the same expression takes over short strings, which
+ * nothing charges, and which is the whole loop 2.0.3 ran over long ones. Steps
+ * are read from a meter the evaluation counts on, so the bound holds on a
+ * loaded machine and under coverage alike, where a wall clock measured the
+ * runner too: FORMA-028's 200 ms ceiling here saw 52 ms once on Node 20. The
+ * refusals measured 0.25% to 4.1% of their loops. The milliseconds belong to a
+ * browser:
  * - the four round-2 cases are asserted under 50 ms, unthrottled, in all
  *   three engines by e2e/expr-cost.spec.ts ("each round-2 rope case is
  *   refused before the long task"), and measured at 4x by
@@ -23,29 +27,40 @@
  */
 import { describe, expect, it } from 'vitest';
 import { LIMITS } from '../ast';
-import { compileExpression, compileHandler, evaluateExpression, isExprError, runHandler } from '../index';
+import { compileExpression, compileHandler, evaluateExpression, isExprError, runHandler, type Meter } from '../index';
 import { scopeOf } from './helpers';
-
-const NODE_CEILING_MS = 200;
 
 interface Outcome {
   code: string;
   message: string;
   value: unknown;
-  ms: number;
+  /** Interpreter steps the evaluation spent, to its answer or its refusal. */
+  steps: number;
 }
 
 function attempt(src: string, state: Record<string, unknown> = {}): Outcome {
   const compiled = compileExpression(src);
-  const start = performance.now();
+  // A fresh meter adds nothing to the evaluation's budgets (it counts on from
+  // zero, with no cap); it only keeps what the evaluation spent.
+  const meter: Meter = { steps: 0, cost: 0 };
   try {
-    const value = evaluateExpression(compiled, scopeOf(state));
-    return { code: 'answered', message: '', value, ms: performance.now() - start };
+    const value = evaluateExpression(compiled, scopeOf(state), meter);
+    return { code: 'answered', message: '', value, steps: meter.steps };
   } catch (e) {
-    const ms = performance.now() - start;
     if (!isExprError(e)) throw e;
-    return { code: e.code, message: e.message, value: undefined, ms };
+    return { code: e.code, message: e.message, value: undefined, steps: meter.steps };
   }
+}
+
+/**
+ * Why `refused` came too late, or null: it must be a refusal that stopped
+ * before a tenth of the steps `whole`, the same expression answered over short
+ * strings, took.
+ */
+function late(src: string, refused: Outcome, whole: Outcome): string | null {
+  if (whole.code !== 'answered') return `${src}: over short strings ${whole.code}, not answered`;
+  if (refused.steps * 10 >= whole.steps) return `${src}: refused after ${refused.steps} of ${whole.steps} steps`;
+  return null;
 }
 
 /** A rope of 2^k characters, built inside the expression as the review built it. */
@@ -67,7 +82,9 @@ describe('strings an expression builds and reads (FORMA-028)', () => {
       const o = attempt(src);
       if (o.code !== 'FORMA_E_BUDGET') problems.push(`${name}: ${o.code}, not FORMA_E_BUDGET`);
       else if (!/allocation budget/.test(o.message)) problems.push(`${name}: refused by "${o.message}", not the allocation budget`);
-      if (o.ms >= NODE_CEILING_MS) problems.push(`${name}: a ${o.ms.toFixed(1)} ms task`);
+      // The same loop over a 2-character "rope": nothing is charged.
+      const tooLate = late(name, o, attempt(ROUND_2(1)[name]!));
+      if (tooLate) problems.push(tooLate);
     }
     expect(problems).toEqual([]);
     // The rope itself is answered: 524,288 characters cost about 8,200 units.
@@ -134,6 +151,7 @@ describe('strings an expression builds and reads (FORMA-028)', () => {
     const b = 'c'.repeat(199_999) + 'z';
     const c = 'c'.repeat(200_001);
     const st = { a, b, c, list: Array.from({ length: 10 }, () => 'c'.repeat(199_999) + 'y'), short: 'abc' };
+    const shortSt = { a: 'cz', b: 'cz', list: Array.from({ length: 10 }, () => 'cy') };
     const refused = [
       'Array.from({length: 20000}).filter(() => a === b).length',
       'Array.from({length: 20000}).filter(() => a == b).length',
@@ -141,14 +159,18 @@ describe('strings an expression builds and reads (FORMA-028)', () => {
       // An array search compares each element of the same length whole.
       'Array.from({length: 2000}).filter(() => list.includes(b)).length',
       'Array.from({length: 2000}).filter(() => list.indexOf(b) >= 0).length',
-      // A default sort compares elements as text: each one is read at every level.
-      'Array.from({length: 2000}).map(() => a).sort().length',
     ];
     for (const src of refused) {
       const o = attempt(src, st);
       expect(o.code, src).toBe('FORMA_E_BUDGET');
-      expect(o.ms, src).toBeLessThan(NODE_CEILING_MS);
+      expect(late(src, o, attempt(src, shortSt))).toBeNull();
     }
+    // A default sort compares elements as text: each one is read at every
+    // level. It is refused in its own preflight, after the map has built its
+    // input, so the steps before it are all the map's: the sort never runs.
+    const sorted = attempt('Array.from({length: 2000}).map(() => a).sort().length', st);
+    expect(sorted.code).toBe('FORMA_E_BUDGET');
+    expect(sorted.message).toMatch(/allocation budget/);
     // Two-sided: strings of different lengths are unequal without being read,
     // short strings cost nothing, and a few long comparisons are answered.
     expect(attempt('Array.from({length: 20000}).filter(() => a === c).length', st))
@@ -172,7 +194,7 @@ describe('strings an expression builds and reads (FORMA-028)', () => {
     ]) {
       const o = attempt(src, st);
       expect(o.code, src).toBe('FORMA_E_BUDGET');
-      expect(o.ms, src).toBeLessThan(NODE_CEILING_MS);
+      expect(late(src, o, attempt(src, { ...st, digits: '12' }))).toBeNull();
     }
     // Two-sided: `===` converts nothing, and a short numeric string is free.
     expect(attempt('Array.from({length: 1000}).filter(() => digits === 1).length', st))

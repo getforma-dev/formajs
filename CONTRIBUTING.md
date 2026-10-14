@@ -365,6 +365,17 @@ markers, the `data-forma-*` attribute names, the `__forma_islands` script
 protocol and its props JSON shape, and the FMIR binary layout. Everything else
 is fair game.
 
+## Skipped checks that are by design
+
+On a pull request or a push, a CI job shows "skipped" only when a job it needs
+has failed: `package` and `e2e` need `test`, so a red `test` skips them, and
+they run once it is green. Two workflows are not on every pull request at all,
+so they never show as skipped there: `nightly-probes.yml`, the mutation-probe
+run, starts on its nightly schedule or by `gh workflow run nightly-probes.yml
+--ref <branch>`; `e2e-engines.yml` runs on a pull request only when it changes
+that workflow or `playwright.config.ts`, by dispatch, and inside a release. A
+job skipped for any other reason is a defect in the workflow (FORMA-179).
+
 ## Pull Requests
 
 1. Fork and create a feature branch
