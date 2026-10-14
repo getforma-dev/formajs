@@ -132,7 +132,8 @@ jobs:
       contents: read
     runs-on: ubuntu-latest
     needs: test
-    # MEASURED locally: build 6s, check:pack (publint + attw) 4s. `attw --pack`
+    # MEASURED locally: build 6s, check:pack (publint + attw, over the package
+    # and again over its development build, FORMA-169) 10s. `attw --pack`
     # shells out to `npm pack`. Realistic worst case ~2m; 10 is 5x.
     timeout-minutes: 10
     steps:

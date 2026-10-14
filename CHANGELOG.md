@@ -177,9 +177,134 @@ All notable changes to this project will be documented in this file.
   with no document it renders nothing. Additive: no existing export changes.
   The core entry grows 103 B gzipped (27,703 to 27,806 B of its 30,000 B gate)
   and the browser ESM bundle 99 B; the CDN runtimes do not change.
+- **A development build, behind the `development` export condition**
+  (FORMA-169; L-18's A2 bridge, whose old paths "warn in development builds").
+  Every published file folds `__DEV__` to `false`, so no development warning
+  in core reached anyone who installed the package: not FORMA-131's
+  deprecations, not the hydration-mismatch, dropped-prop or raw-HTML-sink
+  warnings. Each `exports` subpath's `import` and `require` branch now has a
+  `development` key, after `types` and before `default`, that selects a twin
+  of its file under `dist/dev/`: the same sources and options, with `__DEV__`
+  folded to `true`. The type declarations are shared. Vite's dev server,
+  webpack in development mode, Vitest and Bun's bundler select it by
+  themselves; esbuild with `conditions: ['development', 'module']`, Rollup with
+  `exportConditions: ['development']`, Node with `--conditions=development`,
+  and `@getforma/build` in watch mode (forma-tools, FORMA-169).
+  `docs/CDN-AND-EXPORTS.md` (*Development build*) has every resolver checked,
+  and `docs/STABILITY.md` (*Development builds*) says the CDN bundles have no
+  development build. Additive; rollback is removing the condition.
+  - **Test suites log core's warnings.** Vitest (4 and 5) asks for
+    `development` by default, for a test's own imports and for the
+    dependencies it leaves to Node, so a suite on this release loads the
+    development build and its output shows `[forma]` warnings; a suite that
+    fails on console output fails on them. To keep a suite on production, run
+    it with `NODE_ENV=production`, or drop the condition with the
+    `configEnvironment` plugin in `docs/CDN-AND-EXPORTS.md` (*Vitest*).
+    Setting `resolve.conditions` or `ssr.resolve.conditions` does not do it:
+    Vitest appends its own list, which carries the condition.
+  - **Bun's bundler selects it even when minifying.** `bun build --minify`
+    and `Bun.build({ minify: true })` ship `dist/dev/` unless given
+    `--production` or `NODE_ENV=production`; that is Bun's convention, and
+    the package cannot override it.
+  - **Production is unchanged.** A resolver that does not ask for the
+    condition resolves the same files as before, and all 87 production files
+    under `dist/`, maps and declarations included, are byte-identical to
+    `main`'s build before this change. `node scripts/dist-baseline.mjs [ref]`
+    (new, `npm run check:baseline`) builds a ref in a temporary worktree and
+    compares, through `scripts/verify-dist.mjs --baseline`. No size gate moves.
+  - **Package size** (`npm pack`, against `main` at FORMA-123's merge):
+    1,477,609 to 1,656,308 B packed (+178,699 B, +12.1%), 5,978,199 to
+    6,783,862 B unpacked (+805,663 B, +13.5%), 90 to 120 files. The
+    JavaScript behind `exports` (802,129 B) ships twice. The twins carry no
+    source maps, which would have added another 2.7 MB unpacked (0.64 MB
+    packed): their code keeps its names and one statement a line. A
+    development bundle's own source map therefore reaches core's `dist/dev/`
+    files, not its TypeScript sources.
+  - **One build per process.** A resolver applies one set of conditions to
+    every specifier, and a development file imports only development files,
+    so one resolver loads one copy of core's reactive state. Two resolvers in
+    one process that disagree (Vite's server-side rendering with
+    `ssr.resolve.externalConditions: ['development']` while Node loads an
+    external dependency without `--conditions=development`) load both
+    builds, and the existing duplicate-instance warning says so. A bundler
+    that inlines core while Node loads it for an external dependency (Vite's
+    `ssr.noExternal`, Vitest's `server.deps.inline`) loaded two copies before
+    this change and still does; only which build each copy is can differ.
+    `sideEffects` lists the twins' runtime files and chunks as it lists
+    production's.
+  - **Checks.** `scripts/verify-dist.mjs` fails a build in which a subpath's
+    branch lacks its twin or orders it after `default`, a twin is
+    byte-identical to its production file, a development graph reaches a
+    production file or the reverse, a production file binds `__DEV__` to
+    anything but `false` or a development one to anything but `true`, a
+    deprecation code is missing from a development entry, or Node, with and
+    without `--conditions=development`, resolves any subpath, imported or
+    required, to the wrong file. `npm run check:pack` also runs publint and
+    attw over a copy of the package whose development leaves replace the
+    defaults (`scripts/check-pack-development.mjs`), since attw takes no
+    conditions.
+  - Tests: `src/__tests__/development-build.test.ts` (the real tsup configs,
+    built into a scratch package and resolved by Node) > "every subpath
+    resolves to production files without the condition and to their
+    development twins with it", "a process resolving with the development
+    condition loads one copy of core, and it is the development build", "a
+    process resolving without the condition loads one copy of core, and it is
+    the production build", "a process that loads both builds is told so by the
+    duplicate-instance warning"; `src/__tests__/build-config.test.ts` >
+    "builds a development twin of every config the exports map reaches,
+    differing only in the dev flag, the directory and the declarations", and
+    "hard-defines the dev flag in every artifact", "keeps dependencies external
+    for the Node-facing entries" and "ships a build entry for every dist file
+    the exports map promises", extended to the twins;
+    `src/__tests__/package-exports.test.ts` > "gives every import/require
+    condition a development twin between types and default". The ticket's
+    acceptance test, in Chromium on every merge (and Firefox and WebKit before
+    a release): `e2e/development-build.spec.ts` packs the package, bundles one
+    application from the tarball with esbuild twice, and loads each: "a
+    development bundle of the packed package resolves the development build
+    and logs a known warning once", "a production bundle of the same
+    application resolves the production files and logs nothing".
 
 ### Changed
 
+- **List adoption fails the island on a row-count mismatch instead of deleting
+  rows** (FORMA-123, DR-8). Server rows without `data-forma-key` are matched by
+  index. Before, a client array shorter than the server's rows had the extra
+  rows removed and a longer one had rows rendered fresh, silently (ksx's #5 lost
+  the server rows absent from a list's array before its state was seeded). Now,
+  when the counts differ (including an empty array, or an empty server region
+  with items), no row is adopted, removed or rendered: the island keeps the
+  server's rows and is marked `error`, and `FORMA_E_HYDRATE_LIST_COUNT`, naming
+  both counts, is logged in every build and passed to `onError` handlers
+  (source `'hydration'`). An island in `error` is inert: the listeners attached
+  during adoption are removed, on the server's elements and on any adoption
+  built through `h()` before the failure, and the bindings it adopted are
+  disposed, also for a direct `hydrateIsland()` caller whose root lives on.
+  This holds for any adoption that fails part-way.
+  **Adoption now runs in a batch.** A signal written during adoption (in a
+  `ref`, say) takes its new value at once, but the effects that write triggers
+  in other islands or roots run when the walk ends, not during it. Adoption's
+  own bindings still run when they are created. So a failing island detaches
+  nothing that another island or `mount()` root built. Such a root's new rows
+  are no longer owned by the failing island either; before, they were disposed
+  with it, also on 2.0.x for an island failing by a throwing reactive child. Nodes adoption replaced or
+  added before the failing list (a tag mismatch, a fresh keyed row) stay as it
+  left them. `mount()` and `hydrateIsland()` keep `data-forma-ssr` and do not
+  throw, as for `FORMA_E_HYDRATE_NODE`. Equal counts adopt as before, and rows
+  that carry `data-forma-key` keep matching by key. Applications whose state
+  reaches the island from the server's data see no change.
+  **Migration:** the server writes an empty list region when the list's data
+  is not an array, so a list the client computes for itself inside a
+  server-rendered island was rendered fresh on 2.0.x and now leaves the island
+  inert. Start that list's signal empty and fill it after activation (an empty
+  array adopts the empty region), or render the list in the browser only.
+  Core's ESM entry grows by 365 B gzipped (28,411 to 28,776 B, gate 30,000 B
+  unchanged) and the CDN ESM bundle by 323 B (27,303 to 27,626 B, gate
+  29,000 B). A page with one island, bundled from the core entry with esbuild
+  (minified, gzip -9) as DR-35 counts N2, grows by about 205 B (a counter from
+  12,595 to 12,801 B). The CDN runtimes do not include adoption; each shrinks by
+  8 B, because a module-level `Symbol.for` call in the adoption code, kept in
+  their bundles as a side effect, is gone.
 - **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
   reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
   deploy every client of a server reconnected in the same instant. The delay is
@@ -218,13 +343,13 @@ All notable changes to this project will be documented in this file.
     `FORMA_W_DEPRECATED_SSR` or `FORMA_W_DEPRECATED_WASM`, as
     `[forma] FORMA_W_DEPRECATED_SSR: …`, naming 3.0.0 and the replacement. Once
     per process: a second copy of the module stays quiet.
-  - The line logs only when core runs from source, as every `__DEV__`
-    diagnostic does: in Node with `NODE_ENV` other than `production`, in a
-    browser with the global `__FORMA_DEV__` set. The published files are
-    production builds and log nothing, so an application's own development
-    build of the npm package does not either (FORMA-169 tracks that gap for
-    every `__DEV__` diagnostic). An installed package shows the deprecation in
-    its types: every function the three entries export carries `@deprecated`.
+  - The line logs only in a development build, as every `__DEV__` diagnostic
+    does: the installed package resolved with the `development` condition
+    (FORMA-169, under *Added*), or core from source (in Node with `NODE_ENV`
+    other than `production`, in a browser with the global `__FORMA_DEV__`
+    set). The production files log nothing. An installed package also shows
+    the deprecation in its types: every function the three entries export
+    carries `@deprecated`.
     Every `.js` and `.cjs` file under `dist/` is byte-identical to the build
     before this change (all 33), so no size gate moved; the files that differ
     are the three entries' type declarations and their source maps.

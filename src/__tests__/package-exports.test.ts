@@ -35,6 +35,25 @@ describe('exports map', () => {
     }
   });
 
+  it('gives every import/require condition a development twin between types and default', () => {
+    // FORMA-169. `development` selects the twin under dist/dev/ that keeps
+    // core's development warnings. A resolver takes the first condition it
+    // accepts, so the key must precede `default`; TypeScript takes `types`
+    // first, so the declarations stay shared. The twins' side effects are
+    // declared as the production files' are, or a bundler could drop a chunk
+    // whose only job is its side effect.
+    for (const key of subpathKeys()) {
+      for (const condition of ['import', 'require'] as const) {
+        const branch = pkg.exports[key][condition];
+        expect(Object.keys(branch), `${key}.${condition}`).toEqual(['types', 'development', 'default']);
+        expect(branch.development, `${key}.${condition}.development`).toBe(branch.default.replace('./dist/', './dist/dev/'));
+      }
+    }
+    const production = pkg.sideEffects.filter((p: string) => !p.startsWith('./dist/dev/'));
+    const development = pkg.sideEffects.filter((p: string) => p.startsWith('./dist/dev/'));
+    expect(development).toEqual(production.map((p: string) => p.replace('./dist/', './dist/dev/')));
+  });
+
   it('resolves every require condition to a .cjs file', () => {
     // Under "type": "module" a .js file is ESM; requiring it fails in Node and
     // several bundlers. attw reports this as CJSResolvesToESM.

@@ -6,9 +6,10 @@ What you can build on, what is still moving, and what is known to be broken.
 change, and a change would be a breaking release with a migration note in
 `CHANGELOG.md`. **Beta** means it works and is tested, but the shape may still
 move. **Experimental** means do not build on it yet. **Deprecated** means it
-still works as documented and is removed in the major its row names; when core
-runs from source it logs a coded warning, and an installed package shows it as
-`@deprecated` in its types. See [Deprecated entry points](#deprecated-entry-points).
+still works as documented and is removed in the major its row names; a
+[development build](#development-builds) logs a coded warning, and an installed
+package shows it as `@deprecated` in its types. See
+[Deprecated entry points](#deprecated-entry-points).
 
 | Feature | Status | Notes |
 |---|---|---|
@@ -31,6 +32,7 @@ runs from source it logs a coded warning, and an installed package shows it as
 | SSR (`@getforma/core/ssr`: `renderToString`, `renderToStream`) | **Deprecated** | Removed in 3.0.0. Render on the server with the Rust walker (forma-server); its form controls differ from the walker's, see [SSR form controls](#ssr-form-controls). Logs `FORMA_W_DEPRECATED_SSR`. |
 | Streaming SSR under strict CSP | **Known gap** | Suspense swap scripts carry no `nonce`, so a strict `script-src 'nonce-…'` blocks them and out-of-order content never swaps in. Use non-streaming SSR under strict CSP; do not add `'unsafe-inline'`. See [`../CSP.md`](../CSP.md). |
 | TC39 Signals compat (`State`, `Computed`) | **Beta** | Tracks an evolving TC39 proposal |
+| Development build (the `development` export condition) | **Beta** | Each subpath's `development` condition selects a twin under `dist/dev/` that keeps the `__DEV__` warnings; the CDN bundles have none. What the warnings say may change in any release. See [Development builds](#development-builds). |
 | WASM render (`@getforma/core/wasm`) | **Deprecated** | Removed in 3.0.0. Re-render an island in the browser with core's `h()`, as islands already do. Needs `window.__FORMA_WASM__`; first shipped in 2.0.0 ‡. Logs `FORMA_W_DEPRECATED_WASM`. |
 
 † The island figure counts the test cases in `activate`, `activate-isolation`,
@@ -56,21 +58,51 @@ working through 2.x and are removed in 3.0.0.
 | `@getforma/core/ssr` | `FORMA_W_DEPRECATED_SSR` | The Rust walker: forma-server renders the page |
 | `@getforma/core/wasm` | `FORMA_W_DEPRECATED_WASM` | Core's `h()`, which islands already re-render with |
 
-The first time one of them is loaded where core runs from source, it logs its
-code once, as `[forma] FORMA_W_DEPRECATED_SSR: …`, with what replaces it. That
-is the rule for every dev-only diagnostic in core (`__DEV__`): in Node, core
-compiled from its source with `NODE_ENV` other than `production`; in a browser
-bundle of the source, which has no `process`, only with the global
-`__FORMA_DEV__` set. The files under `dist/` that npm installs, and the CDN
-bundles, are production builds. They log nothing, even in an application's own
-development build, their JavaScript is byte for byte what it was before the
-deprecation, and `scripts/verify-dist.mjs` fails a build that leaks a code into
-one. What an installed package shows instead is in its type declarations: every
-function these entries export is marked `@deprecated`, which editors strike
-through. The `FORMA_W_` codes are listed here and nowhere else.
+The first time one of them is loaded in a [development build](#development-builds),
+it logs its code once, as `[forma] FORMA_W_DEPRECATED_SSR: …`, with what
+replaces it. A production build logs nothing: its JavaScript is byte for byte
+what it was before the deprecation, and `scripts/verify-dist.mjs` fails a build
+that leaks a code into one. An installed package also shows the deprecation in
+its type declarations, development or production: every function these entries
+export is marked `@deprecated`, which editors strike through. The `FORMA_W_`
+codes are listed here and nowhere else.
 
 Verified by `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its deprecation once in development, with its code"
 Verified by `src/__tests__/deprecated-entries.test.ts` > "a production build of each deprecated entry carries no warning"
+
+## Development builds
+
+Every dev-only diagnostic in core sits behind `__DEV__`: the deprecations
+above, hydration mismatches, props the renderer drops, raw-HTML sinks, a
+signal's debug name. `__DEV__` is true in a development build, which is one of:
+
+- **The installed package, resolved with the `development` export
+  condition.** Each subpath's `import` and `require` branch has a
+  `development` key that selects a twin of its file under `dist/dev/`, built
+  from the same sources with `__DEV__` folded to `true`; the type declarations
+  are shared. Vite's dev server, webpack in development mode, Vitest and
+  Bun's bundler set the condition themselves (Bun's even in a minified build,
+  unless given `--production` or `NODE_ENV=production`, and Vitest in every
+  test run unless told otherwise); esbuild, Rollup and Node set it only when
+  told to (`conditions: ['development', 'module']`, `exportConditions`,
+  `node --conditions=development`); `@getforma/build` sets it in watch mode.
+  See [CDN-AND-EXPORTS.md](CDN-AND-EXPORTS.md#development-build), which has
+  every resolver checked and how to keep a Vitest suite on production.
+- **Core compiled from its source**: in Node with `NODE_ENV` other than
+  `production`; in a browser bundle of the source, which has no `process`, only
+  with the global `__FORMA_DEV__` set.
+
+Everything else is a production build and logs none of it: the installed
+package resolved without the condition (the files under `dist/` but
+`dist/dev/`), and every CDN bundle. **The CDN bundles have no development
+build**: `formajs-runtime.global.js`, its hardened and short-named copies, and
+`forma.esm.js` exist in their production form only, so a page that loads core
+from a CDN gets none of these warnings. To see them, install the package and
+build with a bundler in development.
+
+Verified by `src/__tests__/development-build.test.ts` > "every subpath resolves to production files without the condition and to their development twins with it"
+Verified by `src/__tests__/development-build.test.ts` > "a process resolving with the development condition loads one copy of core, and it is the development build"
+Verified by `src/__tests__/development-build.test.ts` > "a process resolving without the condition loads one copy of core, and it is the production build"
 
 ## SSR form controls
 

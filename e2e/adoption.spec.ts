@@ -364,6 +364,79 @@ test("a bound iframe src the server already rendered is not set again, so the fr
   await expect(page.frameLocator('#frame').locator('p')).toHaveText('frame ?next');
 });
 
+// FORMA-123 (decision brief DR-8): rows without data-forma-key are matched by
+// index, so a client array whose length differs from the server's rows fails
+// the island instead of removing or adding rows.
+test('a list whose client array differs in count from the server rows leaves the island error with its code and removes no node', async ({ page }) => {
+  const rows = (n: number) => `<ul><!--f:l0-->${Array.from({ length: n }, (_, i) => `<li>row ${i}</li>`).join('')}<!--/f:l0--></ul>`;
+  await serve(page,
+    `<div data-forma-island="0" data-forma-component="Fewer"><button id="fewer">go</button>${rows(3)}</div>` +
+    `<div data-forma-island="1" data-forma-component="More"><button id="more">go</button>${rows(3)}</div>` +
+    `<div data-forma-island="2" data-forma-component="Equal"><button id="equal">go</button>${rows(3)}</div>`);
+  const errors: string[] = [];
+  page.on('console', (msg) => { if (msg.type() === 'error') errors.push(msg.text()); });
+  page.on('pageerror', (err) => errors.push(`uncaught: ${err.message}`));
+  const served = await page.evaluate(() => [0, 1, 2].map((i) => document.querySelector(`[data-forma-island="${i}"]`)!.innerHTML));
+
+  const result = await page.evaluate(async () => {
+    const records: string[] = [];
+    const observer = new MutationObserver((batch) => {
+      for (const r of batch) {
+        const island = (r.target as Element).closest?.('[data-forma-island]') ?? (r.target.parentElement?.closest('[data-forma-island]'));
+        const id = island?.getAttribute('data-forma-island');
+        if (id === '2') continue; // the equal-count island re-inserts its adopted rows
+        records.push(`${r.type}:${id}:${r.attributeName ?? ''}:${r.removedNodes.length}:${r.addedNodes.length}`);
+      }
+    });
+    observer.observe(document.body, { subtree: true, childList: true, attributes: true, characterData: true });
+    const { h, activateIslands, createList, createSignal, onError } = await import('/adoption-core.mjs' as string);
+    const codes: string[] = [];
+    onError((err: { code?: string }, info?: { source?: string }) => codes.push(`${err.code}:${info?.source}`));
+    const clicks: string[] = [];
+    const [fewer, setFewer] = createSignal(['row 0', 'row 1']);
+    const [more, setMore] = createSignal(['row 0', 'row 1', 'row 2', 'row 3']);
+    const [equal, setEqual] = createSignal(['row 0', 'row 1', 'row 2']);
+    Object.assign(window as any, { setFewer, setMore, setEqual, clicks });
+    const island = (name: string, items: () => string[]) => () => h('div', null,
+      h('button', { id: name, onClick: () => clicks.push(name) }, 'go'),
+      h('ul', null, createList(items, (x: string) => x, (x: string) => h('li', null, x))));
+    activateIslands({ Fewer: island('fewer', fewer), More: island('more', more), Equal: island('equal', equal) });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    records.push(...observer.takeRecords().map((r) => `${r.type}:late`));
+    observer.disconnect();
+    return { records, codes };
+  });
+
+  expect(result.codes).toEqual(['FORMA_E_HYDRATE_LIST_COUNT:hydration', 'FORMA_E_HYDRATE_LIST_COUNT:hydration']);
+  // Status changes only: no node removed, added or rewritten in either failed island.
+  expect(result.records).toEqual([
+    'attributes:0:data-forma-status:0:0', 'attributes:0:data-forma-status:0:0',
+    'attributes:1:data-forma-status:0:0', 'attributes:1:data-forma-status:0:0',
+  ]);
+  await expect(page.locator('[data-forma-island="0"]')).toHaveAttribute('data-forma-status', 'error');
+  await expect(page.locator('[data-forma-island="1"]')).toHaveAttribute('data-forma-status', 'error');
+  await expect(page.locator('[data-forma-island="2"]')).toHaveAttribute('data-forma-status', 'active');
+  expect(errors.filter((e) => e.startsWith('uncaught'))).toEqual([]);
+  const coded = errors.filter((e) => e.includes('FORMA_E_HYDRATE_LIST_COUNT'));
+  expect(coded).toHaveLength(2);
+  expect(coded[0]).toContain('3 rows');
+  expect(coded[0]).toContain('2 items');
+  expect(coded[1]).toContain('4 items');
+
+  // The failed islands are inert; the equal-count island is live.
+  await page.locator('#fewer').click();
+  await page.locator('#more').click();
+  await page.locator('#equal').click();
+  expect(await page.evaluate(() => (window as any).clicks)).toEqual(['equal']);
+  await page.evaluate(() => {
+    (window as any).setFewer(['a']);
+    (window as any).setMore(['a', 'b', 'c', 'd', 'e']);
+    (window as any).setEqual(['row 2', 'row 1', 'row 0', 'row 3']);
+  });
+  expect(await page.evaluate(() => [0, 1].map((i) => document.querySelector(`[data-forma-island="${i}"]`)!.innerHTML))).toEqual(served.slice(0, 2));
+  await expect(page.locator('[data-forma-island="2"] li')).toHaveText(['row 2', 'row 1', 'row 0', 'row 3']);
+});
+
 // FORMA-026 (decision brief DR-9): the shared namespace vectors through each
 // engine's parser. src/__tests__/renderer-contract.test.ts runs the same file
 // through h() and renderToString; here the browser parses the server markup,
