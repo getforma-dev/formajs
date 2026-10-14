@@ -10,6 +10,7 @@
 
 import { createUnownedRoot } from 'forma/reactive';
 import { hydrateIslandOrFail, isHydrateError, reportHydrateError } from './hydrate.js';
+import { contentNs, withNamespace } from './namespace.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -83,10 +84,12 @@ export function mount(
       reportHydrateError(failure);
     }
   } else {
-    // Normal mount — clear and append
+    // Normal mount — clear and append. The component is built in the
+    // container's content namespace: SVG into an svg element.
+    // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a portal into an svg, and mount() into an svg, create SVG elements"
     const dom = createUnownedRoot((dispose) => {
       disposeRoot = dispose;
-      return component();
+      return withNamespace(contentNs(target), component);
     });
     target.innerHTML = '';
     target.appendChild(dom);

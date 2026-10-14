@@ -305,33 +305,29 @@ Verified by `src/dom/__tests__/form-control-adoption.test.ts` > "binds a title's
 stay the server's, so focus and state inside an icon survive activation. The
 parser keeps an SVG or MathML tag's case (`clipPath`), and adoption matches it
 exactly; an HTML element matches a tag in any case. Where adoption must create
-an element (the server rendered another tag, or nothing), it creates it in the
-namespace of the element it goes into: SVG inside an SVG element, MathML
-inside a MathML element, HTML inside a `foreignObject` and in HTML. A `title`
-it creates in an SVG is an SVG `title`.
+an element, it creates it in the namespace the parser gives that place. This
+covers what the server rendered differently or left out, a show branch it left
+empty, a keyed row it did not render, and every later toggle or row. Inside an
+SVG element that namespace is SVG, inside a MathML element MathML, and HTML at
+the parser's HTML integration points (a `foreignObject`, `desc` or `title`; a
+MathML `mi`, `mo`, `mn`, `ms` or `mtext`; an `annotation-xml` whose `encoding`
+is `text/html` or `application/xhtml+xml`) and in HTML. A `title` it creates in
+an SVG is an SVG `title`, and an `svg` is SVG wherever it appears.
 
-That is the namespace the HTML parser gives the server's markup, except where
-the parser switches back to HTML inside SVG or MathML. Adoption follows that
-switch only in a `foreignObject`. In these places it keeps the parent's
-namespace, where the parser does not:
-
-- the content of a MathML `mi`, `mo`, `mn`, `ms` or `mtext`, other than an
-  `mglyph` or `malignmark`;
-- the content of a MathML `annotation-xml` whose `encoding` is `text/html` or
-  `application/xhtml+xml`, and an `svg` in any `annotation-xml`;
-- the content of an SVG `title` or `desc`;
+The parser still differs in three cases of markup that is not valid there:
 - an HTML element such as `p` or `div` put directly in SVG or MathML, which the
-  parser moves out of it (that markup is not valid there).
+  parser moves out of it and adoption leaves where it is;
+- an `svg` directly inside a MathML element that is not an integration point
+  (an `mrow`), which the parser makes a MathML element;
+- a MathML name inside SVG, which the parser makes an SVG element.
 
-For example, a `b` that adoption creates in an `mtext` is a MathML `b`, where
-the parser makes the server's `b` an HTML one. What the server rendered in
-these places keeps the parser's namespace, because adoption keeps those nodes.
+`h()` creates an `svg` in SVG and a MathML name in MathML wherever it appears.
 
-Client rendering differs for icons: plain `h()` creates SVG-only tags (`svg`,
-`path`, `clipPath`) in the SVG namespace by name, but a `title` or an `a` is
-built before the `svg` it goes into, so it is created as HTML. Build an icon
-that has a `title` or a link inside `svg()` (see the SVG section of
-[API.md](API.md)) to get what the server's HTML parses to.
+Client rendering gives the same namespaces where `h()` knows the parent: a
+`title` or an `a` built inside `svg()`, or as a reactive child, a control-flow
+branch or row, a portal or a `mount()` into an SVG. One written as a child
+argument outside `svg()` is built before its `svg` exists and is HTML. See the
+SVG and MathML section of [API.md](API.md).
 
 **Reactive attributes.** An attribute the server already rendered with the
 client's value is not written at adoption, on any element; every later change
@@ -345,6 +341,8 @@ Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "creates the content of a 
 Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "creates MathML the server did not render in the MathML namespace"
 Verified by `src/dom/__tests__/hydrate-svg.test.ts` > "writes nothing where the server already holds the value, and still writes every change"
 Verified by `src/dom/__tests__/svg-namespace.test.ts` > "an icon built in svg() has the namespaces and markup the parser gives the server HTML"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a show branch the server left empty, the branches it toggles to, and fresh keyed rows"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "adoption creates what the server left out of a desc or an mtext in HTML, and an svg in SVG anywhere"
 
 ---
 

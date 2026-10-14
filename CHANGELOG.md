@@ -51,11 +51,13 @@ All notable changes to this project will be documented in this file.
   server-rendered island was rendered fresh on 2.0.x and now leaves the island
   inert. Start that list's signal empty and fill it after activation (an empty
   array adopts the empty region), or render the list in the browser only.
-  Core's ESM entry grows by 305 B gzipped (27,806 to 28,111 B, gate 30,000 B
-  unchanged) and the CDN ESM bundle by 305 B (26,721 to 27,026 B, gate
-  29,000 B). The CDN runtimes do not include adoption; each shrinks by 8 B,
-  because a module-level `Symbol.for` call in the adoption code, kept in their
-  bundles as a side effect, is gone.
+  Core's ESM entry grows by 365 B gzipped (28,411 to 28,776 B, gate 30,000 B
+  unchanged) and the CDN ESM bundle by 323 B (27,303 to 27,626 B, gate
+  29,000 B). A page with one island, bundled from the core entry with esbuild
+  (minified, gzip -9) as DR-35 counts N2, grows by about 205 B (a counter from
+  12,595 to 12,801 B). The CDN runtimes do not include adoption; each shrinks by
+  8 B, because a module-level `Symbol.for` call in the adoption code, kept in
+  their bundles as a side effect, is gone.
 - **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
   reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
   deploy every client of a server reconnected in the same instant. The delay is
@@ -80,6 +82,71 @@ All notable changes to this project will be documented in this file.
   to 34,500 B and 33,000 to 33,500 B (`scripts/check-size.mjs`, the README's
   size table).
 
+### Deprecated
+
+- **`@getforma/core/server`, `@getforma/core/ssr` and `@getforma/core/wasm`
+  are deprecated, and are removed in 3.0.0** (FORMA-131; DR-22 to DR-24). They
+  keep working through 2.x. Server functions give way to routes in the
+  application's Rust server, `./ssr` to the Rust walker, and `./wasm` to
+  core's `h()`, which islands already re-render with. `docs/STABILITY.md` marks
+  each row **Deprecated** and lists the codes under *Deprecated entry points*;
+  `SECURITY.md` and `docs/CDN-AND-EXPORTS.md` mark the entries too.
+  - The first time one of them is loaded where core runs from source, it logs
+    one line with a stable code: `FORMA_W_DEPRECATED_SERVER`,
+    `FORMA_W_DEPRECATED_SSR` or `FORMA_W_DEPRECATED_WASM`, as
+    `[forma] FORMA_W_DEPRECATED_SSR: …`, naming 3.0.0 and the replacement. Once
+    per process: a second copy of the module stays quiet.
+  - The line logs only when core runs from source, as every `__DEV__`
+    diagnostic does: in Node with `NODE_ENV` other than `production`, in a
+    browser with the global `__FORMA_DEV__` set. The published files are
+    production builds and log nothing, so an application's own development
+    build of the npm package does not either (FORMA-169 tracks that gap for
+    every `__DEV__` diagnostic). An installed package shows the deprecation in
+    its types: every function the three entries export carries `@deprecated`.
+    Every `.js` and `.cjs` file under `dist/` is byte-identical to the build
+    before this change (all 33), so no size gate moved; the files that differ
+    are the three entries' type declarations and their source maps.
+  - The deprecated SSR row links to *SSR form controls* (FORMA-017) for how
+    `./ssr` differs from the walker, which that section states; it is no
+    longer a row of its own.
+  - `scripts/verify-dist.mjs` fails a build in which a deprecation code reaches
+    any published artifact.
+  - Tests: `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its
+    deprecation once in development, with its code", "$subpath stays quiet when
+    NODE_ENV is production", "decides a development build as __DEV__ does,
+    under every NODE_ENV", "a production build of each deprecated entry carries
+    no warning" (the real tsup configs) and its control, "a build without the
+    production flag keeps the warning". The exact export-surface test still
+    lists all three entries until 3.0.0 removes them.
+
+### Fixed
+
+- **SVG and MathML namespaces where `h()` knows the parent** (FORMA-026,
+  DR-9). A tag that is both HTML and SVG (`title`, `a`, `script`, `style`,
+  `font`) now takes the namespace of the content it is built in. Where its
+  parent is known, that is the parent's, as the HTML parser gives it: a
+  reactive child, a `createShow` branch, `createList` row or `createSwitch`
+  case rendered once the helper is in the document, a portal into an SVG,
+  `mount()` into an SVG element, and what adoption creates (a show branch it
+  repairs, a fresh keyed row). Before, all of these created such a tag as
+  HTML inside an SVG. Content at the parser's HTML integration points is HTML:
+  a `foreignObject`, `desc` or `title`, a MathML token element, an HTML
+  `annotation-xml`. `h()` also creates MathML Core's elements (`math`,
+  `mrow`, `mi`, …) in MathML, and more SVG names (`feDropShadow`, `mpath`,
+  `view`, the remaining filter primitives) in SVG.
+  A child passed to `h()` is still built before its parent exists. In
+  `h('svg', null, h('title'))` the `title` is HTML, as before; build such a
+  tree inside `svg()`, where a helper's first render is SVG too. Shared namespace vectors (`src/__tests__/vectors/namespaces.json`)
+  run through `h()`, `renderToString`, and each browser's parser and adoption
+  in Chromium, Firefox and WebKit.
+  **Size (L-51, DR-35):** core's ESM entry grows by 605 B gzipped (27,806 to
+  28,411 B, gate 30,000 B) and the CDN ESM bundle by 568 B (26,725 to
+  27,293 B, gate 29,000 B); no gate is passed and none rises. A page with one
+  island, bundled from the core entry with esbuild (minified, gzip -9) as
+  DR-35 counts N2, grows by about 456 B: a counter from 12,139 to 12,595 B,
+  a page with a `createShow` and a `createList` from 12,210 to 12,668 B. The
+  CDN runtimes build nothing through `h()` and shrink by 12 B and 13 B.
+
 ### Documentation
 
 - **`docs/ISLANDS.md` states what adoption skips today** (FORMA-016): a plain
@@ -98,6 +165,9 @@ All notable changes to this project will be documented in this file.
   textarea's text and `selected` on the option. The renderer is unchanged
   until `./ssr` is removed in 3.0.0; `docs/STABILITY.md` says what the served
   page shows and how to write these controls instead, and two tests pin it.
+- `docs/STABILITY.md`'s footnote on `./wasm` said the subpath first resolves
+  "in the next release". It first resolved in 2.0.0 (npm's 1.5.0 has no
+  `./wasm` key; 2.0.0 has it), and the footnote now says so.
 
 ### CI
 

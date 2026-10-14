@@ -103,6 +103,8 @@ function isSuspenseVNode(v: unknown): v is SuspenseVNode {
 
 /**
  * Create a server-side Suspense VNode for streaming SSR.
+ *
+ * @deprecated `@getforma/core/ssr` is removed in 3.0.0 (FORMA_W_DEPRECATED_SSR): render on the server with the Rust walker (forma-server).
  */
 export function shSuspense(fallback: unknown, asyncChildren: () => Promise<unknown>): SuspenseVNode {
   return {
@@ -176,6 +178,8 @@ function raceTimeout<T>(p: Promise<T>, ms: number | undefined): Promise<T | type
  *   response.write(chunk);
  * }
  * ```
+ *
+ * @deprecated `@getforma/core/ssr` is removed in 3.0.0 (FORMA_W_DEPRECATED_SSR): render on the server with the Rust walker (forma-server).
  */
 export async function* renderToStream(
   node: unknown,

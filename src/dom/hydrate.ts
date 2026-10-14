@@ -10,7 +10,8 @@
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
 import { reportError } from '../reactive/dev.js';
 import { openBatch, closeBatchWithoutRoot } from '../reactive/batch.js';
-import { h, Fragment, fillElement, SVG_NS, cleanup, getAbortController, recordListeners } from './element.js';
+import { h, Fragment, fillElement, cleanup, getAbortController, recordListeners } from './element.js';
+import { SVG_NS, contentNs, withNamespace } from './namespace.js';
 import {
   adoptFormControlProperty,
   adoptTextareaText,
@@ -24,7 +25,6 @@ import { createShow } from './show.js';
 import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
 
 
-const MATHML_NS = 'http://www.w3.org/1998/Math/MathML';
 
 // ---------------------------------------------------------------------------
 // Tag names and namespaces
@@ -43,18 +43,6 @@ function sameTag(el: Element, tag: string): boolean {
   return el.localName === tag || el.tagName === tag.toUpperCase();
 }
 
-/**
- * The namespace of the content of `parent`, where adoption creates what the
- * server did not render: SVG or MathML inside those elements, except a
- * `foreignObject`'s content, which is HTML; null (HTML) anywhere else.
- *
- * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "rebuilds a mismatched SVG child in the SVG namespace, title and a included"
- * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "creates the content of a foreignObject in the HTML namespace"
- */
-function contentNs(parent: Node | null | undefined): string | null {
-  const ns = parent && (parent as Element).namespaceURI;
-  return (ns === SVG_NS && (parent as Element).localName !== 'foreignObject') || ns === MATHML_NS ? ns : null;
-}
 
 // ---------------------------------------------------------------------------
 // Hydration state — module-level boolean
@@ -440,13 +428,13 @@ export function ensureNode(value: unknown, ns: string | null = null): Node | nul
     const prevH = hydrating;
     hydrating = false;
     try {
-      return createShow(
+      return withNamespace(ns, () => createShow(
         value.condition,
-        () => ensureNode(value.whenTrue()) ?? document.createComment('empty'),
+        () => ensureNode(value.whenTrue(), ns) ?? document.createComment('empty'),
         value.whenFalse
-          ? () => ensureNode(value.whenFalse!()) ?? document.createComment('empty')
+          ? () => ensureNode(value.whenFalse!(), ns) ?? document.createComment('empty')
           : undefined,
-      );
+      ));
     } finally {
       hydrating = prevH;
     }
@@ -455,7 +443,7 @@ export function ensureNode(value: unknown, ns: string | null = null): Node | nul
     const prevH = hydrating;
     hydrating = false;
     try {
-      return createList(value.items, value.keyFn, value.renderFn, value.options);
+      return withNamespace(ns, () => createList(value.items, value.keyFn, value.renderFn, value.options));
     } finally {
       hydrating = prevH;
     }
@@ -471,15 +459,15 @@ export function ensureNode(value: unknown, ns: string | null = null): Node | nul
  * Handles nested ShowDescriptor and ListDescriptor children by converting
  * them to real reactive primitives (createShow, createList).
  *
- * `ns` is the namespace of the content the element goes into (null: HTML):
- * `svg` and `math` open SVG and MathML, and their descendants stay in it,
- * except a `foreignObject`'s, which are HTML. That is where the parser puts
- * the server's element, except at the parser's other switches back to HTML
- * (the content of MathML `mi`, `mo`, `mn`, `ms`, `mtext` and an HTML
- * `annotation-xml`, of SVG `title` and `desc`): there this keeps the foreign
- * namespace. docs/ISLANDS.md lists them. An element in SVG or MathML is created
- * with `createElementNS`, whatever its tag (h() alone would make a `title` or
- * an `a` an HTML element); in HTML content h() creates it.
+ * `ns` is the namespace of the content the element goes into (null: HTML),
+ * from contentNs: `svg` and `math` open SVG and MathML wherever they appear,
+ * and the parser's HTML integration points (a `foreignObject`, `desc` or
+ * `title`; a MathML `mi`, `mo`, `mn`, `ms` or `mtext`; an HTML `annotation-xml`)
+ * hold HTML, which is where the parser puts the server's element. An element in
+ * SVG or MathML is created with `createElementNS`, whatever its tag; in HTML
+ * content h() creates it.
+ *
+ * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "adoption creates what the server left out of a desc or an mtext in HTML, and an svg in SVG anywhere"
  *
  * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "rebuilds a mismatched SVG list row in the SVG namespace"
  * Verified by: src/dom/__tests__/hydrate-svg.test.ts > "creates the content of a foreignObject in the HTML namespace"
@@ -487,7 +475,9 @@ export function ensureNode(value: unknown, ns: string | null = null): Node | nul
  */
 export function descriptorToElement(desc: HydrationDescriptor, ns: string | null = null): Element {
   const tag = desc.tag;
-  const own = ns ?? (tag === 'svg' ? SVG_NS : tag === 'math' ? MATHML_NS : null);
+  // An svg opens SVG wherever it appears, as it does for the parser; math is
+  // MathML by name in h().
+  const own = tag === 'svg' ? SVG_NS : ns;
   // An SVG or MathML element exists before its children, which take their
   // namespace from it (contentNs); an HTML element's children are HTML content.
   const el = own ? document.createElementNS(own, tag) : null;
@@ -664,10 +654,14 @@ function setupShowEffect(
     const node = createRoot((dispose) => {
       branchDispose = dispose;
       return untrack(() => {
-        const raw = factory();
+        // Built in the namespace of the show's parent: an empty region inside
+        // an SVG gets an SVG branch, on the repair and on every toggle.
+        // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a show branch the server left empty, the branches it toggles to, and fresh keyed rows"
+        const ns = contentNs(start.parentNode);
+        const raw = withNamespace(ns, factory);
         // ensureNode covers a factory that returns a descriptor (possible when
         // the branch was pre-computed during hydration mode).
-        return raw instanceof Node ? raw : ensureNode(raw);
+        return raw instanceof Node ? raw : ensureNode(raw, ns);
       });
     });
     if (!node) {
@@ -925,7 +919,7 @@ function adoptListRegion(desc: ListDescriptor, start: Comment, end: Comment): vo
       try {
         element = createRoot((dispose) => {
           rowDispose = dispose;
-          return untrack(() => listRenderFn(item, getIndex));
+          return untrack(() => withNamespace(contentNs(end.parentNode), () => listRenderFn(item, getIndex)));
         });
         end.parentNode!.insertBefore(element, end);
       } finally {
@@ -980,7 +974,7 @@ function adoptListRegion(desc: ListDescriptor, start: Comment, end: Comment): vo
           let rowDispose!: () => void;
           const element = createRoot((dispose) => {
             rowDispose = dispose;
-            return untrack(() => listRenderFn(item, getIndex));
+            return untrack(() => withNamespace(contentNs(listParent), () => listRenderFn(item, getIndex)));
           });
           cache.set(key, { getIndex, setIndex, dispose: rowDispose });
           return element;

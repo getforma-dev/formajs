@@ -10,6 +10,7 @@
 
 import { internalEffect, __DEV__ } from 'forma/reactive';
 import { hydrating } from './hydrate.js';
+import { SVG_NS, MATHML_NS, contentNs, getNamespace, insertNs, withNamespace } from './namespace.js';
 import { isFormControlProperty, writeFormControlProperty } from './form-control.js';
 import {
   isDangerousUrl,
@@ -33,38 +34,37 @@ export const Fragment: (props: { children?: unknown }) => DocumentFragment =
 // SVG namespace and tag detection
 // ---------------------------------------------------------------------------
 
-export const SVG_NS = 'http://www.w3.org/2000/svg';
+export { SVG_NS, MATHML_NS };
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 /**
  * Tags that exist in BOTH HTML and SVG, so their namespace must be resolved by
- * context (not by name). Without an SVG context these resolve to HTML.
+ * where they go, not by name: the content namespace of their parent (see
+ * namespace.ts), HTML when that is not known.
  */
 const DUAL_USE_SVG_TAGS = new Set(['a', 'title', 'script', 'style', 'font']);
 
-/** The namespace active for the current synchronous `svg()` build, if any. */
-let currentNamespace: string | null = null;
-
 /**
- * Run `build()` with the SVG namespace active so nested `h()` calls create
- * SVG-namespaced elements — including dual-use tags like `<a>` that `h()` would
- * otherwise create as HTML. `h()` resolves tags by this explicit context (there
- * is no automatic parent-walk); a `foreignObject` creates the SVG element but
- * does not auto-switch its descendants back to HTML (author those with plain
- * `h()` outside `svg()`). MathML is not supported.
+ * Run `build()` with SVG as the namespace of the content being built, so the
+ * tags that are both HTML and SVG (`a`, `title`, `script`, `style`, `font`)
+ * are created in SVG.
+ *
+ * `h()` builds a child before its parent exists, so in a hand-written tree
+ * such a tag is HTML unless the tree is built inside `svg()`. Where the parent
+ * is known, `h()` takes its namespace without `svg()`: a reactive child, a
+ * control-flow helper's renders once it is in the document, a portal into an
+ * SVG, `mount()` into an SVG element, and what adoption creates. Inside
+ * `svg()`, build a `foreignObject`'s, `desc`'s or `title`'s content outside it,
+ * where it is HTML.
  *
  * ```ts
  * const icon = svg(() => h('svg', { viewBox: '0 0 10 10' }, h('a', { href: '#' })));
  * ```
+ *
+ * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a title or an a passed to h() before its svg parent exists stays HTML, and is SVG inside svg()"
  */
 export function svg<T extends Node>(build: () => T): T {
-  const prev = currentNamespace;
-  currentNamespace = SVG_NS;
-  try {
-    return build();
-  } finally {
-    currentNamespace = prev;
-  }
+  return withNamespace(SVG_NS, build);
 }
 
 /** Known SVG tag names for O(1) lookup. */
@@ -114,6 +114,31 @@ const SVG_TAGS = new Set([
   'desc',
   'title',
   'metadata',
+  'mpath',
+  'view',
+  'feComponentTransfer',
+  'feFuncR',
+  'feFuncG',
+  'feFuncB',
+  'feFuncA',
+  'feConvolveMatrix',
+  'feDiffuseLighting',
+  'feSpecularLighting',
+  'feDistantLight',
+  'fePointLight',
+  'feSpotLight',
+  'feTile',
+  'feDropShadow',
+]);
+
+/**
+ * MathML Core's element names, created in the MathML namespace wherever they
+ * appear, as `SVG_TAGS` are in SVG. None is an HTML element name.
+ */
+const MATHML_TAGS = new Set([
+  'math', 'maction', 'annotation', 'annotation-xml', 'merror', 'mfrac', 'mi', 'mmultiscripts', 'mn', 'mo',
+  'mover', 'mpadded', 'mphantom', 'mprescripts', 'mroot', 'mrow', 'ms', 'mspace', 'msqrt', 'mstyle', 'msub',
+  'msubsup', 'msup', 'mtable', 'mtd', 'mtext', 'mtr', 'munder', 'munderover', 'semantics', 'mglyph', 'malignmark',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -785,6 +810,10 @@ function appendChild(parent: Node, child: unknown): void {
     let currentFragChildren: Node[] | null = null;
     let warnedArray = false;
     const DEBUG = typeof (globalThis as any).__FORMA_DEBUG__ !== 'undefined';
+    // The parent is known here, so what the child builds takes its content's
+    // namespace from the start.
+    // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a function child inside an svg builds in the SVG namespace on every run"
+    const ns = insertNs(parent);
 
     // Helper: remove all tracked fragment children or the single current node
     const clearCurrent = () => {
@@ -801,7 +830,7 @@ function appendChild(parent: Node, child: unknown): void {
     };
 
     internalEffect(() => {
-      const v = (child as () => unknown)();
+      const v = withNamespace(ns, child as () => unknown);
 
       // Array return (e.g. from .map()) → wrap in DocumentFragment
       let resolved: unknown = v;
@@ -941,26 +970,26 @@ export function h(
   // that copies the element's internal state without parsing the tag string.
   // Skip the SVG Set lookup entirely when the tag is in the proto cache (hot path).
   let el: Element;
-  // When an svg() context is active, consult SVG membership BEFORE the proto
-  // cache so dual-use tags (notably <a>) get the SVG namespace instead of
-  // resolving to their cached HTML prototype.
-  const svgCtx = currentNamespace === SVG_NS;
-  if (svgCtx && (SVG_TAGS.has(tagName) || DUAL_USE_SVG_TAGS.has(tagName))) {
-    el = document.createElementNS(SVG_NS, tagName);
-  } else if (!svgCtx && DUAL_USE_SVG_TAGS.has(tagName)) {
-    // Dual-use tags (a, title, script, style, font) default to HTML with no
-    // svg() context, even though they are also in SVG_TAGS.
-    el = getProto(tagName).cloneNode(false) as HTMLElement;
+  // A dual-use tag (a, title, script, style, font) is checked before the proto
+  // cache, which holds its HTML prototype: it takes the namespace of the
+  // content being built (namespace.ts), which is HTML for a child built
+  // before its parent exists, unless the tree is inside svg().
+  if (DUAL_USE_SVG_TAGS.has(tagName)) {
+    const ns = getNamespace();
+    el = ns ? document.createElementNS(ns, tagName) : getProto(tagName).cloneNode(false) as HTMLElement;
   } else if (ELEMENT_PROTOS && ELEMENT_PROTOS[tagName]) {
     el = ELEMENT_PROTOS[tagName]!.cloneNode(false) as HTMLElement;
   } else if (SVG_TAGS.has(tagName)) {
     el = document.createElementNS(SVG_NS, tagName);
+  } else if (MATHML_TAGS.has(tagName)) {
+    el = document.createElementNS(MATHML_NS, tagName);
   } else {
     el = getProto(tagName).cloneNode(false) as HTMLElement;
   }
 
   return fillElement(el, props, children) as unknown as HTMLElement;
 }
+
 
 /**
  * The half of h() that runs once the element exists: props, children, live
