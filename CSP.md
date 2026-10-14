@@ -160,4 +160,5 @@ Verified by `src/__tests__/docs-truth.test.ts` > "CSP.md's version history ends 
 | 2.0.0 | The regex parser and the fallback are **deleted**. Every build evaluates expressions with an allowlist AST interpreter — arrow-function callbacks, object literals, `$event`, bare method-call handlers and the frozen `Math`/`JSON`/`Object`/`Array` namespaces all run with no `unsafe-eval` — and anything outside the grammar is reported with a code and a column instead of silently dropped. **Fully CSP-safe, no `unsafe-inline` and no `unsafe-eval`, with nothing left to misconfigure.** |
 | 2.0.1 | No CSP-affecting changes since 2.0.0. |
 | 2.0.2 | No CSP-affecting changes since 2.0.1. |
-| Unreleased | No CSP-affecting changes since 2.0.2. |
+| 2.0.3 | No CSP-affecting changes since 2.0.2. |
+| Unreleased | No CSP-affecting changes since 2.0.3. |
