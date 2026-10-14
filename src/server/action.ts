@@ -78,6 +78,8 @@ export interface Action<Args extends unknown[], Result> {
  * // Use:
  * await addTodo('Buy milk');
  * ```
+ *
+ * @deprecated `@getforma/core/server` is removed in 3.0.0 (FORMA_W_DEPRECATED_SERVER): serve the call from a route in the application's Rust server.
  */
 export function createAction<Args extends unknown[], Result>(
   serverFn: (...args: Args) => Promise<Result>,
