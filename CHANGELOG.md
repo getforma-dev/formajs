@@ -81,6 +81,34 @@ All notable changes to this project will be documented in this file.
     production flag keeps the warning". The exact export-surface test still
     lists all three entries until 3.0.0 removes them.
 
+### Fixed
+
+- **SVG and MathML namespaces where `h()` knows the parent** (FORMA-026,
+  DR-9). A tag that is both HTML and SVG (`title`, `a`, `script`, `style`,
+  `font`) now takes the namespace of the content it is built in. Where its
+  parent is known, that is the parent's, as the HTML parser gives it: a
+  reactive child, a `createShow` branch, `createList` row or `createSwitch`
+  case rendered once the helper is in the document, a portal into an SVG,
+  `mount()` into an SVG element, and what adoption creates (a show branch it
+  repairs, a fresh keyed row). Before, all of these created such a tag as
+  HTML inside an SVG. Content at the parser's HTML integration points is HTML:
+  a `foreignObject`, `desc` or `title`, a MathML token element, an HTML
+  `annotation-xml`. `h()` also creates MathML Core's elements (`math`,
+  `mrow`, `mi`, …) in MathML, and more SVG names (`feDropShadow`, `mpath`,
+  `view`, the remaining filter primitives) in SVG.
+  A child passed to `h()` is still built before its parent exists. In
+  `h('svg', null, h('title'))` the `title` is HTML, as before; build such a
+  tree inside `svg()`, where a helper's first render is SVG too. Shared namespace vectors (`src/__tests__/vectors/namespaces.json`)
+  run through `h()`, `renderToString`, and each browser's parser and adoption
+  in Chromium, Firefox and WebKit.
+  **Size (L-51, DR-35):** core's ESM entry grows by 605 B gzipped (27,806 to
+  28,411 B, gate 30,000 B) and the CDN ESM bundle by 568 B (26,725 to
+  27,293 B, gate 29,000 B); no gate is passed and none rises. A page with one
+  island, bundled from the core entry with esbuild (minified, gzip -9) as
+  DR-35 counts N2, grows by about 456 B: a counter from 12,139 to 12,595 B,
+  a page with a `createShow` and a `createList` from 12,210 to 12,668 B. The
+  CDN runtimes build nothing through `h()` and shrink by 12 B and 13 B.
+
 ### Documentation
 
 - **`docs/ISLANDS.md` states what adoption skips today** (FORMA-016): a plain
