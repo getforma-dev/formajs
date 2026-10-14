@@ -452,6 +452,43 @@ if (typeof runtimeConfig.diagnostics === 'boolean') {
 }
 const _autoContainment = runtimeConfig.autoContainment === true;
 
+/**
+ * The page's mount switch (FORMA-128): `data-forma-mount="manual"` on a
+ * `<script>` element turns every tierless binding path off, so only
+ * `mountMarkup()` binds: no auto-mount on load, no `body` observer, and
+ * `mount()`, `initRuntime()` and `reconcile()` throw `FORMA_E_MOUNT_MANUAL`.
+ * Without it the runtime auto-mounts as at 2.0.x.
+ *
+ * It is read once, here, when the runtime first runs, before any bind, and
+ * never again: removing or changing the attribute later changes nothing. It
+ * comes from the runtime's own `<script>` element where there is one (the
+ * CDN builds, `document.currentScript`), else from any `<script>` that
+ * carries it (an ESM build has no element of its own; the switch goes on the
+ * module script that loads the application). Only `manual` counts, and any
+ * one element saying so is enough, so the switch only ever removes binding
+ * paths: markup cannot use it to turn one back on. It needs no inline script.
+ *
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
+ * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "the mount switch is read once, from the runtime's own script element"
+ */
+function readMountSwitch(): boolean {
+  if (typeof document === 'undefined') return false;
+  const own = document.currentScript as HTMLScriptElement | null;
+  if (own?.getAttribute('data-forma-mount') === 'manual') return true;
+  return document.querySelector('script[data-forma-mount="manual"]') !== null;
+}
+const _manualMount = readMountSwitch();
+
+/** Refuse a tierless binding call on a page whose mount switch is `manual`. */
+function assertTierless(what: string): void {
+  if (_manualMount) {
+    throw mountError(
+      'FORMA_E_MOUNT_MANUAL',
+      `${what} binds with every power, and this page mounts only through mountMarkup() (data-forma-mount="manual")`,
+    );
+  }
+}
+
 // ── Mount boundaries ──
 //
 // What a tiered mount (FORMA-128; decision brief DR-14, DR-15, L-36, L-47)
@@ -2643,6 +2680,8 @@ function hasAnyPrefix(set: Set<string>, ...prefixes: string[]): boolean {
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "a mount nested in another binds with its own grants, and the outer one never binds its markup"
  */
 function mountScope(root: Element, mount: MountCtx | null = null): void {
+  // On a page whose mount switch is `manual`, no tierless path binds anything.
+  if (mount === null && _manualMount) return;
   if (ownerOf(root) !== mount) return;
   // Idempotency guard — never double-bind
   if ((root as any).__formaDisposers) {
@@ -2850,6 +2889,7 @@ function stopObserver(): void {
 // ── Main init ──
 
 function initRuntime(): void {
+  assertTierless('initRuntime()');
   if (_autoContainment) {
     applyContainmentHints(document, { skipIfAlreadySet: true });
   }
@@ -2894,6 +2934,7 @@ function destroyRuntime(): void {
  * @param el - The root element to scan (checks itself and all descendants).
  */
 function mount(el: Element): void {
+  assertTierless('mount()');
   if (el.hasAttribute('data-forma-state')) {
     mountScope(el);
   }
@@ -2919,8 +2960,10 @@ function unmount(el: Element): void {
   }
 }
 
-// Auto-init in browser contexts on DOMContentLoaded (or immediately if already loaded).
-if (typeof document !== 'undefined') {
+// Auto-init in browser contexts on DOMContentLoaded (or immediately if already
+// loaded): the tierless auto-mount, unless the page's mount switch is `manual`.
+// Verified by: src/__tests__/runtime-tiered-mount.test.ts > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
+if (typeof document !== 'undefined' && !_manualMount) {
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initRuntime);
   } else {
@@ -3058,6 +3101,7 @@ function getReconciler() {
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "reconcile behaves as at 2.0.x and warns once in development"
  */
 function reconcile(container: Element, html: string): void {
+  assertTierless('reconcile()');
   if ((typeof __FORMA_DEV_BUILD__ === 'boolean' && __FORMA_DEV_BUILD__)
     || (typeof __FORMA_DEV_BUILD__ !== 'boolean' && sourceIsDev())) {
     warnDeprecated('FORMA_W_DEPRECATED_RECONCILE');
@@ -3091,9 +3135,10 @@ function reconcile(container: Element, html: string): void {
  * The shared responsibility (v2 10.1): the application chooses the tier and
  * passes grants only for content whose hash matches what its reviewer
  * approved (L-47); Forma enforces what the mount grants. In 2.x the tierless
- * paths (the auto-mount, the `body` observer, `reconcile()`) still run where
- * the page loads them; none of them binds or disposes anything under a tiered
- * root.
+ * paths (the auto-mount, the `body` observer, `mount()`, `reconcile()`) still
+ * run where the page loads them, unless it sets `data-forma-mount="manual"`
+ * (see `readMountSwitch`); none of them binds or disposes anything under a
+ * tiered root.
  *
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "binds only under the root it is handed: markup injected outside it stays unbound"
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount refuses any origin but an opaque one, and any grant"

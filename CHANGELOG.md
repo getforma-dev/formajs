@@ -37,12 +37,21 @@ All notable changes to this project will be documented in this file.
     name and its tier), whatever any diagnostics switch says, counted per
     mount;
   - an `unreviewed` mount refuses every origin but an opaque one, and takes no
-    grants.
+    grants;
+  - a page turns every tierless path off with `data-forma-mount="manual"` on
+    the runtime's own `<script>` (a CDN build) or on the module script that
+    loads the application (an ESM build): no auto-mount, no `body` observer,
+    and `mount()`, `initRuntime()` and `reconcile()` throw
+    `FORMA_E_MOUNT_MANUAL`, so only `mountMarkup()` binds and markup injected
+    outside a tiered root stays unbound (SR16, in 2.x). The switch is read
+    once, before the first bind; only `manual` counts and one element is
+    enough, so it can only take binding paths away; it needs no inline script.
+    The default stays 2.0.x's auto-mount.
 
   Leaving out `grants` gives every grant, the bridge to 3.0.0's none
-  (FORMA-108); a development build reports what each mount used. In 2.x the
-  tierless paths still bind markup injected outside a tiered root wherever a
-  page loads the runtime. SECURITY.md lists what a mount does not bound
+  (FORMA-108); a development build reports what each mount used. Without the
+  switch, the tierless paths still bind markup injected outside a tiered root
+  wherever a page loads the runtime, until 3.0.0 removes them. SECURITY.md lists what a mount does not bound
   (`$dispatch`, focus and scroll, `data-persist`'s shared keys, inherited
   pseudo-class bits, redirects). Tests: `src/__tests__/runtime-tiered-mount.test.ts`
   (SR16: "binds only under the root it is handed: markup injected outside it
@@ -58,11 +67,12 @@ All notable changes to this project will be documented in this file.
   `runtime/reconcile-no-deprecation`), all caught. The allowlist snapshot
   gains `element:needs-navigate.click` and the four `element:selector.*`
   methods: a restriction recorded where the capabilities are, not a new one.
-- **Size** (L-51): the CDN runtime grows by 3,279 B gzipped (35,540 to 38,819
-  B) and the hardened runtime by 3,265 B (34,542 to 37,807 B); their gates
-  rise from 36,000 to 39,000 B and from 35,000 to 38,000 B. The bytes are the
-  mount, its grant checks and the selector check (about 450 B). The core entry
-  and the browser ESM bundle are unchanged.
+- **Size** (L-51): the CDN runtime grows by 3,494 B gzipped (35,540 to 39,034
+  B) and the hardened runtime by 3,483 B (34,542 to 38,025 B); their gates
+  rise from 36,000 to 39,500 B and from 35,000 to 38,500 B. The bytes are the
+  mount, its grant checks, the selector check (about 450 B) and the page's
+  mount switch (about 215 B). The core entry and the browser ESM bundle are
+  unchanged.
 
 - **Operators that build or read strings are charged before they run**
   (FORMA-028, DR-16). Core 2.0.3 charged every built-in call but no operator,

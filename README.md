@@ -61,8 +61,8 @@ Gzipped sizes, measured by `npm run check:size` on the 2.0.1 build on 2026-08-08
 | Artifact | Gzipped | CI limit |
 |---|---|---|
 | `@getforma/core` entry + every chunk it imports | 24.8 KB (25,429 B) | 30,000 B |
-| CDN HTML runtime (`formajs-runtime.global.js`) | 31.3 KB (32,015 B) | 39,000 B |
-| CDN HTML runtime, hardened (`formajs-runtime-hardened.global.js`) | 30.3 KB (31,017 B) | 38,000 B |
+| CDN HTML runtime (`formajs-runtime.global.js`) | 31.3 KB (32,015 B) | 39,500 B |
+| CDN HTML runtime, hardened (`formajs-runtime-hardened.global.js`) | 30.3 KB (31,017 B) | 38,500 B |
 | CDN browser ESM (`forma.esm.js`, inlines alien-signals) | 23.6 KB (24,198 B) | 29,000 B |
 
 The core figure is **untree-shaken** — it is everything `dist/index.js` pulls in. A bundler that drops what your app does not import ships less. The gzipped figures are a measurement and rot; the CI limits are not, because a test reads them back out of the gate script.

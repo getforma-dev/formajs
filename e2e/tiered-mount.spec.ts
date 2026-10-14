@@ -130,3 +130,38 @@ test('the production build has no grant report and reconcile() warns nothing', a
   await expect(page.locator('#n')).toHaveText('1');
   expect(warnings.filter((w) => w.includes('FORMA_W_'))).toEqual([]);
 });
+
+test("SR16 in 2.x: with data-forma-mount=\"manual\" on the runtime's script, only mountMarkup binds", async ({ page }) => {
+  await page.route('**/manual-mount.html', (route) => route.fulfill({
+    contentType: 'text/html',
+    body: '<!doctype html><html><head><meta charset="utf-8"><title>manual</title></head><body>' +
+      `<div data-forma-state='{"n":1}'><p id="served" data-text="{n}">raw</p></div><div id="root"></div>` +
+      '<script src="/formajs-runtime.global.js" data-forma-mount="manual"></script></body></html>',
+  }));
+  await page.goto('/manual-mount.html');
+  const result = await page.evaluate(async () => {
+    const { FormaRuntime } = window as unknown as { FormaRuntime: Runtime & { mount(el: Element): void } };
+    FormaRuntime.mountMarkup(document.getElementById('root')!,
+      `<div data-forma-state='{"w":3}'><p id="inside" data-text="{w}">-</p></div>`, { tier: 'reviewed', grants: {} });
+    const inject = (id: string) => document.body.insertAdjacentHTML('beforeend',
+      `<div data-forma-state='{"n":2}'><p id="${id}" data-text="{n}">raw</p></div>`);
+    inject('outside');
+    // The switch is read once: removing it later turns nothing back on.
+    document.querySelector('script[data-forma-mount]')!.removeAttribute('data-forma-mount');
+    inject('later');
+    await new Promise((r) => setTimeout(r, 100));
+    const refused: string[] = [];
+    for (const call of [() => FormaRuntime.mount(document.body), () => FormaRuntime.reconcile(document.createElement('div'), '<p></p>')]) {
+      try { call(); } catch (err) { refused.push(String((err as { code?: string }).code)); }
+    }
+    const text = (id: string) => document.getElementById(id)!.textContent;
+    return { inside: text('inside'), served: text('served'), outside: text('outside'), later: text('later'), refused };
+  });
+  expect(result).toEqual({
+    inside: '3',
+    served: 'raw',
+    outside: 'raw',
+    later: 'raw',
+    refused: ['FORMA_E_MOUNT_MANUAL', 'FORMA_E_MOUNT_MANUAL'],
+  });
+});

@@ -2613,5 +2613,65 @@
   "find": "    else if (c === ')' && --depth < 0) return false;",
   "replace": "    else if (c === ')') --depth;",
   "note": "a selector that closes what it did not open (.x)) counts as local, a malformed selector not failing closed. Verified by: src/expr/__tests__/selector.test.ts > \"refuses every selector that reads past the element\""
+ },
+ {
+  "id": "tiered/mount-switch-ignored",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "const _manualMount = readMountSwitch();",
+  "replace": "const _manualMount = false;",
+  "note": "data-forma-mount=\"manual\" is ignored: the page auto-mounts and watches body, so markup injected outside a tiered root is bound (SR16 in 2.x). Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound\""
+ },
+ {
+  "id": "tiered/mount-switch-own-script-unread",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (own?.getAttribute('data-forma-mount') === 'manual') return true;\n",
+  "replace": "",
+  "note": "a CDN build ignores the switch on its own script element, the place the docs tell a page to put it. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"the mount switch is read once, from the runtime's own script element\""
+ },
+ {
+  "id": "tiered/mount-switch-esm-unread",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return document.querySelector('script[data-forma-mount=\"manual\"]') !== null;",
+  "replace": "  return false;",
+  "note": "an ESM build, which has no script element of its own, never sees the switch on the application's module script. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound\""
+ },
+ {
+  "id": "tiered/mount-switch-auto-init",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "if (typeof document !== 'undefined' && !_manualMount) {",
+  "replace": "if (typeof document !== 'undefined') {",
+  "note": "a page with the switch still runs the auto-mount on load. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound\""
+ },
+ {
+  "id": "tiered/mount-switch-calls-bind",
+  "file": "src/runtime.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (_manualMount) {\n    throw mountError(",
+  "replace": "  if (false) {\n    throw mountError(",
+  "note": "on a page with the switch, mount(), initRuntime() and reconcile() still bind with every power. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound\""
+ },
+ {
+  "id": "tiered/mount-switch-any-value",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (own?.getAttribute('data-forma-mount') === 'manual') return true;",
+  "replace": "  if (own?.hasAttribute('data-forma-mount')) return true;",
+  "note": "any value of the switch turns the auto-mount off, so data-forma-mount=\"auto\" breaks a page that meant the default. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"the mount switch is read once, from the runtime's own script element\""
  }
 ]

@@ -339,18 +339,43 @@ approved, keeping the hash, the grants and the approver together (L-47);
 markup whose hash differs mounts only in tier `'unreviewed'`. Forma enforces
 what the mount grants. It cannot check which tier content deserves.
 
-**In 2.x the tierless paths still run.** `@getforma/core/runtime` still binds
-the page's `data-forma-state` on load and watches `body`, and `reconcile()`
-still binds what it is given with every power, as in 2.0.x; markup injected
-outside a tiered root is bound by those paths where a page loads them. None of
-them binds or disposes anything under a tiered root, and a tierless scope
-around one never binds the mount's elements or hands out `$refs` to them.
+**In 2.x the tierless paths still run, unless the page turns them off.** By
+default `@getforma/core/runtime` binds the page's `data-forma-state` on load and
+watches `body`, and `mount()`, `initRuntime()` and `reconcile()` bind what they
+are given with every power, as in 2.0.x; markup injected outside a tiered root
+is bound by those paths. None of them binds or disposes anything under a
+tiered root, and a tierless scope around one never binds the mount's elements
+or hands out `$refs` to them.
+
+A page that hosts tiered mounts turns every tierless path off with
+`data-forma-mount="manual"` on a `<script>` element:
+
+```html
+<!-- CDN build: on the runtime's own script element -->
+<script src="/vendor/formajs-runtime.global.js" data-forma-mount="manual"></script>
+<!-- ESM build: on the module script that loads the application -->
+<script type="module" src="/app.js" data-forma-mount="manual"></script>
+```
+
+Then nothing binds but `mountMarkup()`: no auto-mount on load, no `body`
+observer, and `mount()`, `initRuntime()` and `reconcile()` throw
+`FORMA_E_MOUNT_MANUAL` before touching the page, so markup injected outside a
+tiered root stays unbound (SR16, in 2.x). The switch is read once, when the
+runtime first runs, before it binds anything: from its own `<script>` element in
+a CDN build, else from any `<script>` that carries it, since an ESM build has
+no element of its own. Only `manual` counts, and one element saying it is
+enough, so the switch can only take binding paths away; removing or changing
+the attribute later changes nothing. It is an attribute, so it needs no inline
+script. Without it, 3.0.0 makes this the only behaviour (FORMA-108).
+
 `reconcile()` is deprecated: a development build logs
 `FORMA_W_DEPRECATED_RECONCILE` on its first call, and 3.0.0 removes it with
 the auto-mount and the observer. A mount's own `update()` re-renders its whole
 root, including the root of a mount nested in it: unmount nested mounts first.
 
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "no tierless path binds markup under a tiered root"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "with the page's mount switch only mountMarkup binds: markup injected outside a tiered root stays unbound"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "the mount switch is read once, from the runtime's own script element"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "reconcile behaves as at 2.0.x and warns once in development"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "bindings a tierless path made under the root go first, with what they rendered"
 
