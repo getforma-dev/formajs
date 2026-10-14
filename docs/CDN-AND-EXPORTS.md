@@ -60,6 +60,10 @@ Available from `unpkg.com/@getforma/core@VERSION/dist/` and
 URL only — none of them is behind an `exports` subpath, because the IIFE
 bundles are classic scripts that must not go through a module resolver.
 
+All five are production builds, and none has a development twin: a page that
+loads core from a CDN gets none of core's development warnings. The
+[development build](#development-build) is reached through the npm package.
+
 Verified by `src/__tests__/docs-truth.test.ts` > "the All builds table lists exactly the CDN artifacts the build emits"
 Verified by `src/__tests__/build-config.test.ts` > "builds a self-contained browser ESM bundle for the CDN recipe"
 
@@ -107,6 +111,103 @@ doubled.get(); // 10
 ```
 
 Verified by `src/__tests__/docs-truth.test.ts` > "the tc39 subpath exports State and Computed, not a Signal namespace"
+
+---
+
+## Development build
+
+Every subpath above has a development twin. Each `import` and `require`
+branch reads:
+
+```json
+"import": {
+  "types": "./dist/index.d.ts",
+  "development": "./dist/dev/index.js",
+  "default": "./dist/index.js"
+}
+```
+
+The file under `dist/dev/` is built from the same sources with the same
+options as its production twin, except that `__DEV__` is `true`, so it keeps
+the warnings a production build drops: hydration mismatches, props the
+renderer drops, raw-HTML sinks, the `FORMA_W_DEPRECATED_` codes
+([STABILITY.md](STABILITY.md#development-builds)). The type declarations are
+shared, so TypeScript sees one package either way.
+
+Whether a resolver asks for the condition is its own convention, and two ask
+by default where you might not expect it: **Vitest** and **Bun's bundler**.
+
+| Resolver | Selects the development build |
+|---|---|
+| Vite, dev server (`vite`) | Yes, by itself |
+| Vite, `vite build` | Only with `NODE_ENV=development`. Vite chooses by `NODE_ENV`, not by mode: `vite build --mode development` selects production |
+| Vite, server-side rendering (`ssrLoadModule`; core externalized, the default) | Only with `ssr.resolve.externalConditions: ['development']` **and** Node run with `--conditions=development`. The first covers your code's imports of core, the second an external dependency's; with one alone they load different builds |
+| Vitest | **Yes, by itself**, for your tests' imports and for external dependencies. See [Vitest](#vitest) |
+| webpack 5 | With `mode: 'development'`; not with `'production'` or `'none'` |
+| Rollup (`@rollup/plugin-node-resolve`) | Only with `exportConditions: ['development']` |
+| esbuild | Only with `conditions: ['development', 'module']`. Listing any condition drops esbuild's automatic `module`, so list it too |
+| Bun's bundler (`bun build`, `Bun.build`) | **Yes, by itself, also when minifying**, unless `bun build --production` or `NODE_ENV=production` (`Bun.build`: `NODE_ENV=production`, or `define: { 'process.env.NODE_ENV': '"production"' }`). Without one of these a production bundle ships `dist/dev/` |
+| Bun's runtime (`bun run`) | Only with `--conditions=development` |
+| Deno (`deno run`, `deno bundle`) | Only with `--conditions=development` |
+| `@getforma/build` | In watch mode |
+| Node (scripts, server rendering) | Only with `node --conditions=development` (or the same in `NODE_OPTIONS`) |
+
+Checked with Vite 8.3.4, Vitest 4.1.10 and 5.0.4, webpack 5.111, Rollup 4.64
+with node-resolve 16, esbuild 0.28, Bun 1.4.3, Deno 2.9 and Node 22; another
+version may choose differently. A resolver that does not ask for the
+condition resolves exactly the files it resolved before the development build
+existed, and those files are byte for byte what they were.
+
+### Vitest
+
+Vitest asks for `development` unless `NODE_ENV` is `production`, and passes it
+to Node for the dependencies it does not bundle. A test suite therefore loads
+core's development build, and core's warnings (`[forma] …`) appear in its
+output; a suite that fails on console output fails on them. To keep a suite on
+the production build, run it with `NODE_ENV=production`, or remove the
+condition in its config:
+
+```js
+// vitest.config.js: resolve without the `development` condition, for every package
+const withoutDevelopmentCondition = {
+  name: 'without-development-condition',
+  configEnvironment(name, config) {
+    if (config.resolve?.conditions) {
+      config.resolve.conditions = config.resolve.conditions.filter(
+        (c) => c !== 'development|production' && c !== 'development',
+      );
+    }
+  },
+};
+
+export default { plugins: [withoutDevelopmentCondition] };
+```
+
+Setting `resolve.conditions` or `ssr.resolve.conditions` is not enough: Vitest
+appends its own list, which carries the condition, to yours. (Checked with
+Vitest 4.1.10 and 5.0.4, in the `node` and `happy-dom` environments.)
+
+**One build per process.** Core keeps its reactive state in module scope, so
+two copies in one process are two unrelated states. A resolver applies one set
+of conditions to every specifier, and a development file imports only
+development files, so one resolver always loads one build. Two resolvers in
+one process can disagree, as in Vite's server-side rendering above with only
+one of its two settings. Give both the same conditions. That removes mixed
+builds, not every second copy: a bundler that inlines core while Node loads it
+for an external dependency (Vite's `ssr.noExternal`, Vitest's
+`server.deps.inline`) has loaded two copies since before this build existed,
+and still does. Either way core logs *"Duplicate @getforma/core instance
+detected"*.
+
+The development build is slower where `__DEV__` checks something on every
+call, such as `createList`'s duplicate-key check
+([PERFORMANCE.md](PERFORMANCE.md)). It adds the JavaScript of every subpath a
+second time to the package, without source maps: the files keep their
+identifiers and one statement a line, so they read as they are.
+
+Verified by `src/__tests__/development-build.test.ts` > "every subpath resolves to production files without the condition and to their development twins with it"
+Verified by `src/__tests__/development-build.test.ts` > "a process resolving with the development condition loads one copy of core, and it is the development build"
+Verified by `src/__tests__/development-build.test.ts` > "a process that loads both builds is told so by the duplicate-instance warning"
 
 ---
 

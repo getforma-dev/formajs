@@ -216,12 +216,33 @@ function eventName(key: string): string {
 
 const ABORT_SYM = Symbol.for('forma-abort');
 
-/** Get or lazily create an AbortController for an element. */
-function getAbortController(el: Element): AbortController {
+/**
+ * While an adoption walks the server's DOM: the elements that got a listener
+ * controller, whether adoption bound the server's element or built one through
+ * h(), so an adoption that fails part-way can detach them all (hydrate.ts).
+ */
+let listened: Element[] | null = null;
+
+/**
+ * @internal Start recording, into `into`, the elements that get a listener
+ * controller (null stops). Returns the previous recorder, to restore.
+ */
+export function recordListeners(into: Element[] | null): Element[] | null {
+  const prev = listened;
+  listened = into;
+  return prev;
+}
+
+/**
+ * @internal Get or lazily create the AbortController an element's listeners
+ * are attached with, the one {@link cleanup} aborts. h() and adoption share it.
+ */
+export function getAbortController(el: Element): AbortController {
   let controller = (el as any)[ABORT_SYM] as AbortController | undefined;
   if (!controller) {
     controller = new AbortController();
     (el as any)[ABORT_SYM] = controller;
+    listened?.push(el);
   }
   return controller;
 }

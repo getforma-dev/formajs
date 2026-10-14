@@ -9,7 +9,8 @@
 
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
 import { reportError } from '../reactive/dev.js';
-import { h, Fragment, fillElement } from './element.js';
+import { openBatch, closeBatchWithoutRoot } from '../reactive/batch.js';
+import { h, Fragment, fillElement, cleanup, getAbortController, recordListeners } from './element.js';
 import { SVG_NS, contentNs, withNamespace } from './namespace.js';
 import {
   adoptFormControlProperty,
@@ -24,9 +25,6 @@ import { htmlOf, warnRawAttr } from './trusted-html.js';
 import { createShow } from './show.js';
 import { isEventHandlerAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
 
-// Same symbol identity as element.ts — Symbol.for() guarantees cross-module
-// sharing so cleanup(el) in element.ts aborts controllers created here.
-const ABORT_SYM = Symbol.for('forma-abort');
 
 
 // ---------------------------------------------------------------------------
@@ -348,14 +346,9 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
     // Skip non-function values — they are static and already in the SSR HTML
     if (typeof value !== 'function') continue;
 
-    // Event handlers: onXxx — use AbortController so cleanup(el) removes them
+    // Event handlers: onXxx — on h()'s controller, so cleanup(el) removes them
     if (key.charCodeAt(0) === 111 /* o */ && key.charCodeAt(1) === 110 /* n */ && key.length > 2) {
-      let ac = (el as any)[ABORT_SYM] as AbortController | undefined;
-      if (!ac) {
-        ac = new AbortController();
-        (el as any)[ABORT_SYM] = ac;
-      }
-      el.addEventListener(key.slice(2).toLowerCase(), value as EventListener, { signal: ac.signal });
+      el.addEventListener(key.slice(2).toLowerCase(), value as EventListener, { signal: getAbortController(el).signal });
       continue;
     }
 
@@ -871,8 +864,23 @@ function adoptListRegion(desc: ListDescriptor, start: Comment, end: Comment): vo
   // Read current items without tracking (we set up our own effect below)
   const currentItems = untrack(() => desc.items()) as unknown[];
 
-  // Fallback: if no SSR elements have data-forma-key, match by index
-  const useIndexFallback = ssrKeyMap.size === 0 && ssrElements.length > 0;
+  // Rows without data-forma-key are matched by index, which is right only when
+  // the client's array is the one the server rendered. A count that differs
+  // means it is not (ksx's #5: rows absent from an array not yet seeded from
+  // the server's data were removed), so until keys reach the format (decision brief DR-8)
+  // the island fails here, before any row is adopted, removed or rendered: the
+  // server's rows stay as served, and the code is logged in every build.
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "marks the island error with FORMA_E_HYDRATE_LIST_COUNT and removes or adds no row"
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a server region with no rows and a client array with items fails the island and inserts nothing"
+  const useIndexFallback = ssrKeyMap.size === 0;
+  if (useIndexFallback && ssrElements.length !== currentItems.length) {
+    throw hydrateError(
+      HYDRATE_LIST_COUNT_ERROR,
+      `the server rendered ${count(ssrElements.length, 'row')} without data-forma-key, but the client's array has ` +
+      `${count(currentItems.length, 'item')}, so its rows were kept as served and nothing was activated. ` +
+      "Seed the list's signal from the server's data.",
+    );
+  }
 
   // key → row state, so index signals can be updated after reconcileList
   // reorders items and each row's root can be disposed with the row
@@ -880,7 +888,6 @@ function adoptListRegion(desc: ListDescriptor, start: Comment, end: Comment): vo
   let cache = new Map<string | number, AdoptedRow>();
   const adoptedNodes: Node[] = [];
   const adoptedItems: unknown[] = [];
-  const usedIndices = new Set<number>();
 
   for (let i = 0; i < currentItems.length; i++) {
     const item = currentItems[i];
@@ -888,11 +895,8 @@ function adoptListRegion(desc: ListDescriptor, start: Comment, end: Comment): vo
 
     let ssrNode: HTMLElement | undefined;
     if (useIndexFallback) {
-      // Index-based matching: SSR elements lack keys, adopt by position
-      if (i < ssrElements.length) {
-        ssrNode = ssrElements[i];
-        usedIndices.add(i);
-      }
+      // Index-based matching: the counts are equal, so every row has its item
+      ssrNode = ssrElements[i];
     } else {
       // Key-based matching: SSR keys from getAttribute() are always strings
       ssrNode = ssrKeyMap.get(String(key));
@@ -930,19 +934,13 @@ function adoptListRegion(desc: ListDescriptor, start: Comment, end: Comment): vo
     adoptedItems.push(item);
   }
 
-  // Remove unused SSR nodes (keys that weren't matched, or excess index-based)
-  if (useIndexFallback) {
-    for (let i = 0; i < ssrElements.length; i++) {
-      if (!usedIndices.has(i) && ssrElements[i]!.parentNode) {
-        ssrElements[i]!.parentNode!.removeChild(ssrElements[i]!);
-      }
-    }
-  } else {
-    for (const [unusedKey, unusedNode] of ssrKeyMap) {
-      if (__DEV__) console.warn(`[FormaJS] Hydration: removing extra SSR list item with key "${unusedKey}"`);
-      if (unusedNode.parentNode) {
-        unusedNode.parentNode.removeChild(unusedNode);
-      }
+  // Remove SSR rows whose key no client item matched. Index matching leaves
+  // none over (the count check above), and its map is empty.
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "rows that carry data-forma-key keep matching by key when the counts differ"
+  for (const [unusedKey, unusedNode] of ssrKeyMap) {
+    if (__DEV__) console.warn(`[FormaJS] Hydration: removing extra SSR list item with key "${unusedKey}"`);
+    if (unusedNode.parentNode) {
+      unusedNode.parentNode.removeChild(unusedNode);
     }
   }
 
@@ -1372,21 +1370,36 @@ function adoptChildren(
 /** The code of a component's return value that adoption cannot use. */
 export const HYDRATE_NODE_ERROR = 'FORMA_E_HYDRATE_NODE';
 
-/** Whether `err` is the coded error raised for a detached DOM node. */
-export function isHydrateNodeError(err: unknown): err is Error {
-  return err instanceof Error && (err as { code?: unknown }).code === HYDRATE_NODE_ERROR;
+/** The code of a list whose rows, matched by index, differ in count from the client's array. */
+export const HYDRATE_LIST_COUNT_ERROR = 'FORMA_E_HYDRATE_LIST_COUNT';
+
+/** `n` and `noun`, plural unless `n` is 1. */
+const count = (n: number, noun: string): string => `${n} ${noun}${n === 1 ? '' : 's'}`;
+
+/** A coded adoption error, which the callers of hydrateIslandOrFail report. */
+function hydrateError(code: string, message: string): Error {
+  const err = new Error(`[forma] ${code}: ${message}`);
+  (err as Error & { code: string }).code = code;
+  return err;
+}
+
+/** Whether `err` is one of adoption's coded errors. */
+export function isHydrateError(err: unknown): err is Error {
+  const code = err instanceof Error && (err as { code?: unknown }).code;
+  return code === HYDRATE_NODE_ERROR || code === HYDRATE_LIST_COUNT_ERROR;
 }
 
 /**
- * Report a `FORMA_E_HYDRATE_NODE` error (activation reports its
- * `FORMA_E_ISLAND_PROPS` through here too): logged in every build (in production
- * an island's `error` status would otherwise be its only trace), and passed to
- * the `onError` handlers with the source `'hydration'`, for an application's
- * error reporting.
+ * Report a coded adoption error, `FORMA_E_HYDRATE_NODE` or
+ * `FORMA_E_HYDRATE_LIST_COUNT` (activation reports its `FORMA_E_ISLAND_PROPS`
+ * through here too): logged in every build (in production an island's `error`
+ * status would otherwise be its only trace), and passed to the `onError`
+ * handlers with the source `'hydration'`, for an application's error reporting.
  *
  * Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "onError receives FORMA_E_HYDRATE_NODE from activateIslands, mount() and hydrateIsland()"
+ * Verified by: src/dom/__tests__/list-adoption-count.test.ts > "onError receives FORMA_E_HYDRATE_LIST_COUNT from activateIslands, mount() and hydrateIsland(), and each keeps the server rows"
  */
-export function reportHydrateNodeError(err: Error, where = ''): void {
+export function reportHydrateError(err: Error, where = ''): void {
   console.error(err.message + where);
   reportError(err, 'hydration');
 }
@@ -1403,12 +1416,14 @@ export function reportHydrateNodeError(err: Error, where = ''): void {
  * element when the CSR fallback fires (empty island shell replaced by the
  * component's own root element).
  *
- * A component that returns a DOM node outside `target` cannot be adopted: the
- * coded error (`FORMA_E_HYDRATE_NODE`) is logged in every build, `target` keeps
- * the server's DOM and its `data-forma-ssr`, and `target` is returned. It does
- * not throw in 2.0.x.
+ * A component that returns a DOM node outside `target` cannot be adopted, nor
+ * can a list whose unkeyed server rows differ in count from the client's array:
+ * the coded error (`FORMA_E_HYDRATE_NODE`, `FORMA_E_HYDRATE_LIST_COUNT`) is
+ * logged in every build, `target` keeps the server's DOM and its
+ * `data-forma-ssr`, and `target` is returned. It does not throw in 2.x.
  *
  * Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "hydrateIsland called directly with a detached node logs the code and keeps the server DOM"
+ * Verified by: src/dom/__tests__/list-adoption-count.test.ts > "onError receives FORMA_E_HYDRATE_LIST_COUNT from activateIslands, mount() and hydrateIsland(), and each keeps the server rows"
  *
  * @param component  A function that builds the UI (calls h(), createShow, etc.)
  * @param target     The container element with `data-forma-ssr` attribute
@@ -1417,16 +1432,16 @@ export function hydrateIsland(component: () => unknown, target: Element): Elemen
   try {
     return hydrateIslandOrFail(component, target);
   } catch (err) {
-    if (!isHydrateNodeError(err)) throw err;
-    reportHydrateNodeError(err);
+    if (!isHydrateError(err)) throw err;
+    reportHydrateError(err);
     return target;
   }
 }
 
 /**
- * {@link hydrateIsland}, except that a detached DOM node throws its coded
- * error, for the caller to handle: `activateIslands` marks the island `error`,
- * and `mount()` disposes its root and reports.
+ * {@link hydrateIsland}, except that a coded adoption error is thrown, for the
+ * caller to handle: `activateIslands` marks the island `error`, and `mount()`
+ * disposes its root and reports.
  */
 export function hydrateIslandOrFail(component: () => unknown, target: Element): Element {
   // Check if the island has SSR content to hydrate against.
@@ -1477,7 +1492,50 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
     setHydrating(false);
   }
 
-  // 4. Walk descriptor tree top-down against SSR DOM.
+  // 4. Walk descriptor tree top-down against SSR DOM. Adoption that fails
+  // part-way (a list's row count, or an effect that throws) leaves the island
+  // `error` and inert: the listeners attached during the walk are detached,
+  // on the server's elements and on those it built through h() (a tag-drift
+  // replacement, a fresh keyed row, a show branch the server left empty), and
+  // the walk runs in its own root, disposed on failure, so no binding adopted
+  // before the failure stays live, even for a hydrateIsland() caller whose
+  // own root lives on. On success that root is owned by the caller's.
+  //
+  // The walk runs in a batch that ends after recording stops, and ends with no
+  // current root. A signal the walk's own code writes (in a ref, say) still
+  // updates at once, but the effects it triggers elsewhere (another island, a
+  // second mount() root) run after the walk, so everything recorded is this
+  // walk's own, and the rows they create are not owned by this island's root.
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "an island failed by the row count keeps no handler or binding that adoption attached before the list"
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "an island failed by the row count answers no click on the nodes adoption built fresh before the list"
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "hydrateIsland() called directly keeps no binding it adopted before the list failed"
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a failing mount() whose ref writes a shared signal does not detach a second mount() root's new row"
+  // Verified by: src/dom/__tests__/list-adoption-count.test.ts > "a failing island's ref that writes a shared signal does not detach another island's new list row"
+  const attached: Element[] = [];
+  const outer = recordListeners(attached);
+  let disposeWalk: (() => void) | undefined;
+  openBatch();
+  try {
+    createRoot((dispose) => {
+      disposeWalk = dispose;
+      adopt(descriptor, target);
+    });
+  } catch (err) {
+    disposeWalk?.();
+    for (const el of attached) cleanup(el);
+    throw err;
+  } finally {
+    recordListeners(outer);
+    closeBatchWithoutRoot();
+  }
+
+  // 5. Remove SSR marker
+  target.removeAttribute('data-forma-ssr');
+  return target;
+}
+
+/** Step 4 of {@link hydrateIslandOrFail}: adopt the component's result against `target`. */
+function adopt(descriptor: unknown, target: Element): void {
   if (isDescriptor(descriptor)) {
     // For island activation: the target IS the island root element (has
     // data-forma-island). Adopt directly on target.
@@ -1502,12 +1560,11 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
     // server's nodes, and reporting success would leave the server's DOM inert
     // behind a removed data-forma-ssr.
     // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns a detached DOM node is marked error with its code, its sibling unaffected"
-    const err = new Error(
-      `[forma] ${HYDRATE_NODE_ERROR}: the component returned a DOM node that is not part of the ` +
+    throw hydrateError(
+      HYDRATE_NODE_ERROR,
+      'the component returned a DOM node that is not part of the ' +
       'server-rendered HTML, so nothing was adopted. Build the tree with h().',
     );
-    (err as Error & { code: string }).code = HYDRATE_NODE_ERROR;
-    throw err;
   }
   // Anything else has nothing to adopt: nothing at all (an island that sets up
   // its own effects), the target or a node inside it (the component adopted
@@ -1516,8 +1573,4 @@ export function hydrateIslandOrFail(component: () => unknown, target: Element): 
   // pattern).
   // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that returns its own element stays active and keeps updating"
   // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "an island that appends a fragment into its element and returns it, now empty, stays active"
-
-  // 5. Remove SSR marker
-  target.removeAttribute('data-forma-ssr');
-  return target;
 }
