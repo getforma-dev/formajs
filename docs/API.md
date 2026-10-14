@@ -400,31 +400,63 @@ createSuspense(
 
 ---
 
-## SVG
+## SVG and MathML
 
-`h()` creates HTML elements. Wrap a tree in `svg()` to create it in the SVG
-namespace instead — nested elements inherit the namespace for the duration of
-the callback.
+`h()` creates each element in the namespace the HTML parser gives it in the
+server's markup, so a client-rendered icon and an adopted server-rendered one
+are the same nodes.
+
+- The SVG tags it knows by name (`svg`, `path`, `circle`, `clipPath`,
+  `feDropShadow`, …) are SVG, and MathML Core's (`math`, `mrow`, `mi`, `mo`,
+  `mn`, …) are MathML, wherever they appear.
+- A tag that is both HTML and SVG (`title`, `a`, `script`, `style`, `font`)
+  takes its parent's content namespace. That is SVG inside an SVG element.
+  It is HTML inside a `foreignObject`, `desc` or `title` (the parser's HTML
+  integration points), inside a MathML `mi`, `mo`, `mn`, `ms` or `mtext`, and in
+  HTML.
+- `h()` builds a child before its parent, so a `title` written for an `svg`
+  starts as HTML. It is rebuilt as SVG when `h()` inserts it, with its props,
+  handlers and reactive children. The discarded element's bindings are disposed.
+  Its `ref` is called again with the rebuilt element.
+- Content built once its parent exists is built in the parent's namespace from
+  the start: a reactive child, a `createShow` branch, `createList` rows,
+  `createSwitch` cases, a portal into an SVG, and `mount()` into an SVG
+  element. A helper passed to `h()` renders before its parent exists; `h()`
+  has it render again in the parent's namespace when it inserts it.
 
 ```ts
-import { svg, h } from "@getforma/core";
+import { h } from "@getforma/core";
 
-const icon = svg(() =>
-  h("svg", { viewBox: "0 0 24 24", width: 24 },
+const icon = h("svg", { viewBox: "0 0 24 24", width: 24 },
+  h("title", null, "Close"),               // an SVG title
+  h("a", { href: "#close" },               // an SVG link
     h("circle", { cx: 12, cy: 12, r: 10, fill: "currentColor" }),
   ),
 );
 ```
 
-Without `svg()`, `h()` still creates the SVG tags it knows by name (`svg`,
-`path`, `circle`, `clipPath`, …) in the SVG namespace, but a tag HTML also has
-(`title`, `a`, `script`, `style`, `font`) is created as HTML, because it is
-built before the `svg` it goes into. An icon with a `title` or a link
-belongs inside `svg()`; that is what the server's HTML parses to, and what
-adoption keeps (see [ISLANDS.md](ISLANDS.md)).
+`svg()` builds in the SVG namespace from the start, which saves the rebuild.
+Use it for SVG you insert yourself with `appendChild`, which no rebuild reaches:
 
-Verified by `src/dom/__tests__/svg-namespace.test.ts` > "h() creates an svg and its SVG-only children in the SVG namespace without svg()"
-Verified by `src/dom/__tests__/svg-namespace.test.ts` > "h(a) with NO svg context stays HTML (no regression)"
+```ts
+import { svg, h } from "@getforma/core";
+
+document.querySelector("svg")!.appendChild(svg(() => h("title", null, "Close")));
+```
+
+The shared namespace vectors (`src/__tests__/vectors/namespaces.json`) are run
+through `h()`, `renderToString`, and each browser's parser and adoption in
+Chromium, Firefox and WebKit.
+
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "builds a title and an a inside an svg in the SVG namespace without svg(), as the parser does"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a rebuilt element keeps its handlers, its reactive props and children, and its ref, and the discarded one stops updating"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "keeps an a and a title in HTML outside an svg, and inside a foreignObject or a desc, even when built in svg()"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a createShow inside an svg creates SVG elements on its first render and on every toggle"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "list rows inside an svg are SVG when first rendered, when added and when moved, 40 and more"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "createSwitch cases inside an svg are SVG, cached cases included"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "a portal into an svg, and mount() into an svg, create SVG elements"
+Verified by `src/dom/__tests__/namespace-resolution.test.ts` > "h() creates math and its elements in the MathML namespace, and HTML inside a token element, as the parser does"
+Verified by `src/__tests__/renderer-contract.test.ts` > "h() builds every element in the namespace the parser gives it, with the same markup"
 Verified by `src/dom/__tests__/svg-namespace.test.ts` > "an icon built in svg() has the namespaces and markup the parser gives the server HTML"
 
 ---

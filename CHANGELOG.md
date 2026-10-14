@@ -4,6 +4,39 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **Client-rendered SVG and MathML get the parser's namespaces without `svg()`**
+  (FORMA-026, DR-9). `h()` builds a child before its parent, so a tag that is
+  both HTML and SVG (`title`, `a`, `script`, `style`, `font`) was created as
+  HTML inside an `svg`, where the server's markup parses to SVG. Content built
+  after activation inside an SVG (a `createShow` branch, list rows, a switch
+  case, a show branch adoption repairs) was built the same way. Now:
+  - such a tag takes its parent's content namespace. It is SVG inside an SVG
+    element, and HTML inside a `foreignObject`, `desc` or `title`, inside a
+    MathML token element, and in HTML;
+  - an element built before its parent is rebuilt when `h()` inserts it, with
+    its props, handlers and reactive children. The discarded element's bindings
+    are disposed, and its `ref` is called again with the rebuilt one;
+  - reactive children, `createShow`, `createList`, `createSwitch`, portals and
+    `mount()` build in the namespace of the element they insert into, and a
+    helper passed to `h()` renders again there;
+  - `h()` creates MathML Core's elements (`math`, `mrow`, `mi`, …) in the
+    MathML namespace, and more SVG names (`feDropShadow`, `mpath`, `view`, the
+    remaining filter primitives) in SVG;
+  - adoption creates content at the parser's HTML integration points (an SVG
+    `title` or `desc`, a MathML token element, an HTML `annotation-xml`) in
+    HTML, and an `svg` in SVG anywhere.
+
+  `svg()` still builds in SVG from the start and remains the way to build SVG
+  you insert with `appendChild` yourself. Shared namespace vectors
+  (`src/__tests__/vectors/namespaces.json`) run through `h()`,
+  `renderToString`, and each browser's parser and adoption in Chromium, Firefox
+  and WebKit. Core's ESM entry grows by 1,402 B gzipped (29,105 B, gate
+  30,000 B) and the CDN ESM bundle by 1,330 B (27,944 B, gate 29,000 B); no
+  gate is passed. The CDN runtimes build no elements through `h()` and are
+  unchanged.
+
 ### CI
 
 - **Actions pinned to commits; every job declares its token** (DR-32, SR21,

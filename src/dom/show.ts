@@ -15,6 +15,7 @@
 
 import { internalEffect, untrack, createRoot, registerDisposer } from 'forma/reactive';
 import { hydrating } from './hydrate.js';
+import { NS_SYM, getNamespace, insertNs, withNamespace } from './namespace.js';
 
 /**
  * Conditionally render content based on a reactive boolean.
@@ -57,26 +58,13 @@ export function createShow(
   let currentNode: Node | null = null;
   let lastTruthy: boolean | null = null;
   let currentDispose: (() => void) | null = null;
+  // The namespace the branch is built in: its parent's content namespace once
+  // the markers are in an element; until then (the first render, into this
+  // fragment) the one being built in when createShow was called.
+  let ns = getNamespace();
 
-  const showDispose = internalEffect(() => {
-    const truthy = !!when();
-    const DEBUG = typeof (globalThis as any).__FORMA_DEBUG__ !== 'undefined';
-    const DEBUG_LABEL = DEBUG ? thenFn.toString().slice(0, 60) : '';
-
-    if (truthy === lastTruthy) {
-      if (DEBUG) console.log('[forma:show] skip (same)', truthy, DEBUG_LABEL);
-      return;
-    }
-    if (DEBUG) console.log('[forma:show]', lastTruthy, '→', truthy, DEBUG_LABEL);
-    lastTruthy = truthy;
-
-    const parent = startMarker.parentNode;
-    if (!parent) {
-      if (DEBUG) console.warn('[forma:show] parentNode is null! skipping.', DEBUG_LABEL);
-      return;
-    }
-    if (DEBUG) console.log('[forma:show] parent:', parent.nodeName, 'inDoc:', document.contains(parent as any));
-
+  /** Replace the content between the markers with the `truthy` branch, built in `ns`. */
+  const render = (truthy: boolean, parent: Node) => {
     // Dispose previous branch's inner effects
     if (currentDispose) {
       currentDispose();
@@ -105,7 +93,7 @@ export function createShow(
       let branchDispose!: () => void;
       currentNode = createRoot((dispose) => {
         branchDispose = dispose;
-        return untrack(() => branchFn());
+        return untrack(() => withNamespace(ns, branchFn));
       });
       currentDispose = branchDispose;
     } else {
@@ -115,7 +103,43 @@ export function createShow(
     if (currentNode) {
       parent.insertBefore(currentNode, endMarker);
     }
+  };
+
+  const showDispose = internalEffect(() => {
+    const truthy = !!when();
+    const DEBUG = typeof (globalThis as any).__FORMA_DEBUG__ !== 'undefined';
+    const DEBUG_LABEL = DEBUG ? thenFn.toString().slice(0, 60) : '';
+
+    if (truthy === lastTruthy) {
+      if (DEBUG) console.log('[forma:show] skip (same)', truthy, DEBUG_LABEL);
+      return;
+    }
+    if (DEBUG) console.log('[forma:show]', lastTruthy, '→', truthy, DEBUG_LABEL);
+    lastTruthy = truthy;
+
+    const parent = startMarker.parentNode;
+    if (!parent) {
+      if (DEBUG) console.warn('[forma:show] parentNode is null! skipping.', DEBUG_LABEL);
+      return;
+    }
+    if (DEBUG) console.log('[forma:show] parent:', parent.nodeName, 'inDoc:', document.contains(parent as any));
+    const into = insertNs(parent);
+    if (into !== undefined) ns = into;
+    render(truthy, parent);
   });
+
+  // Inserted by h() into content of another namespace than the branch was
+  // built in (the first render happens in this fragment, before the parent is
+  // known): build the branch again there.
+  // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a createShow inside an svg creates SVG elements on its first render and on every toggle"
+  (startMarker as any)[NS_SYM] = (to: string | null): null => {
+    const parent = startMarker.parentNode;
+    if (to !== ns && lastTruthy !== null && parent) {
+      ns = to;
+      render(lastTruthy, parent);
+    }
+    return null;
+  };
 
   // Defense-in-depth: when the parent root is disposed, explicitly null
   // closure references so GC can reclaim them. The branch root is already

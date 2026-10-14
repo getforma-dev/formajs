@@ -1,4 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
+import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 
 // Adoption in a real browser (FORMA-003; decision brief DR-5 and DR-7). The
@@ -361,4 +362,113 @@ test("a bound iframe src the server already rendered is not set again, so the fr
   // A real change still navigates the frame.
   await page.evaluate(() => (window as any).setSrc('/frame.html?next'));
   await expect(page.frameLocator('#frame').locator('p')).toHaveText('frame ?next');
+});
+
+// FORMA-026 (decision brief DR-9): the shared namespace vectors through each
+// engine's parser. src/__tests__/renderer-contract.test.ts runs the same file
+// through h() and renderToString; here the browser parses the server markup,
+// h() builds the tree, and adoption binds the parsed markup.
+type NsTree = [string, Record<string, unknown> | null, ...unknown[]];
+const NS_VECTORS = (JSON.parse(readFileSync(new URL('../src/__tests__/vectors/namespaces.json', import.meta.url), 'utf8')) as {
+  vectors: Array<{ name: string; server: string; tree: NsTree; namespaces: string[] }>;
+}).vectors;
+
+test('the namespace vectors: the parser, h() and adoption agree on every element and on the markup', async ({ page }) => {
+  await serve(page, NS_VECTORS.map((v, i) => `<div class="ssr" id="ssr${i}" data-forma-ssr>${v.server}</div><div id="csr${i}"></div>`).join(''));
+  const results = await page.evaluate(async (vectors) => {
+    const { h, mount } = await import('/adoption-core.mjs' as string);
+    const short: Record<string, string> = {
+      'http://www.w3.org/1999/xhtml': 'html', 'http://www.w3.org/2000/svg': 'svg', 'http://www.w3.org/1998/Math/MathML': 'mathml',
+    };
+    const build = ([tag, props, ...children]: NsTree): unknown =>
+      h(tag, props, ...children.map((c) => (typeof c === 'string' ? c : build(c as NsTree))));
+    const namespaces = (root: Element) =>
+      [root, ...Array.from(root.querySelectorAll('*'))].map((el) => `${el.localName}:${short[el.namespaceURI ?? ''] ?? el.namespaceURI}`);
+    return vectors.map((v, i) => {
+      const ssr = document.getElementById(`ssr${i}`)!;
+      const parsedRoot = ssr.firstElementChild!;
+      const parsed = namespaces(parsedRoot);
+      const parsedHtml = parsedRoot.outerHTML;
+      mount(() => build(v.tree), `#csr${i}`);
+      const built = document.getElementById(`csr${i}`)!.firstElementChild!;
+      const writes: string[] = [];
+      const observer = new MutationObserver(() => {});
+      observer.observe(ssr, { subtree: true, childList: true, attributes: true, characterData: true });
+      mount(() => build(v.tree), `#ssr${i}`);
+      for (const r of observer.takeRecords()) writes.push(`${r.type}:${(r.target as Element).id || (r.target as Element).localName}:${r.attributeName ?? ''}`);
+      observer.disconnect();
+      return {
+        name: v.name, parsed, built: namespaces(built), adopted: namespaces(ssr.firstElementChild!),
+        sameNode: ssr.firstElementChild === parsedRoot, parsedHtml, builtHtml: built.outerHTML, writes,
+      };
+    });
+  }, NS_VECTORS);
+
+  for (const [i, r] of results.entries()) {
+    const v = NS_VECTORS[i]!;
+    expect({ name: r.name, parsed: r.parsed }).toEqual({ name: v.name, parsed: v.namespaces });
+    expect({ name: r.name, built: r.built }).toEqual({ name: v.name, built: v.namespaces });
+    expect({ name: r.name, html: r.builtHtml }).toEqual({ name: v.name, html: r.parsedHtml });
+    expect({ name: r.name, html: r.builtHtml }).toEqual({ name: v.name, html: v.server });
+    expect({ name: r.name, adopted: r.adopted, sameNode: r.sameNode, writes: r.writes }).toEqual({
+      name: v.name, adopted: v.namespaces, sameNode: true, writes: [`attributes:ssr${i}:data-forma-ssr`],
+    });
+  }
+});
+
+test('content built inside an svg after activation is SVG: a createShow branch, list rows, switch cases, a portal; a foreignObject holds HTML', async ({ page }) => {
+  await serve(page, '<div id="app"></div><svg id="target"></svg>' +
+    '<div id="adopt" data-forma-ssr><svg viewBox="0 0 10 10"><g id="show"><!--f:s0--><!--/f:s0--></g>' +
+    '<g id="rows"><!--f:l0--><a data-forma-key="a" href="#a"><title>a</title></a><!--/f:l0--></g></svg></div>');
+  const steps = await page.evaluate(async () => {
+    const { h, mount, createSignal, createShow, createList, createSwitch, createPortal } = await import('/adoption-core.mjs' as string);
+    const SVG = 'http://www.w3.org/2000/svg';
+    const nonSvg = (root: Element) =>
+      Array.from(root.querySelectorAll('*')).filter((el) => el.namespaceURI !== SVG && !el.closest('foreignObject')).map((el) => el.localName);
+    const [on, setOn] = createSignal(true);
+    const [keys, setKeys] = createSignal(['a', 'b']);
+    const [tab, setTab] = createSignal('a');
+    mount(() => h('svg', { id: 'built', viewBox: '0 0 10 10' },
+      h('g', { id: 'g-show' }, createShow(on, () => h('title', null, 'On'), () => h('a', { href: '#off' }, h('circle', { r: '1' })))),
+      h('g', { id: 'g-rows' }, createList(keys, (k: string) => k, (k: string) => h('a', { href: `#${k}` }, h('title', null, k)))),
+      h('g', { id: 'g-switch' }, createSwitch(tab, [
+        { match: 'a', render: () => h('a', { href: '#a' }, 'A') },
+        { match: 't', render: () => h('title', null, 'T') },
+      ], () => h('style', null, 'circle{}'))),
+      h('foreignObject', { width: '10', height: '10' }, h('div', null, h('a', { href: '#html' }, 'html'))),
+    ), '#app');
+    createPortal(() => h('title', null, 'Portaled'), document.getElementById('target')!);
+    const warn = console.warn;
+    console.warn = () => {};
+    const [aOn, setAOn] = createSignal(true);
+    const [aKeys, setAKeys] = createSignal(['a', 'b']);
+    mount(() => h('svg', { viewBox: '0 0 10 10' },
+      h('g', { id: 'show' }, createShow(aOn, () => h('title', null, 'On'), () => h('a', { href: '#off' }, 'Off'))),
+      h('g', { id: 'rows' }, createList(aKeys, (k: string) => k, (k: string) => h('a', { 'data-forma-key': k, href: `#${k}` }, h('title', null, k)))),
+    ), '#adopt');
+    console.warn = warn;
+
+    const built = document.getElementById('built')!;
+    const snapshot = (label: string) => ({
+      label,
+      nonSvg: [...nonSvg(built), ...nonSvg(document.getElementById('target')!), ...nonSvg(document.querySelector('#adopt svg')!)],
+      htmlInForeignObject: Array.from(built.querySelectorAll('foreignObject *'), (el) => `${el.localName}:${el.namespaceURI === SVG ? 'svg' : 'html'}`),
+      shown: [built.querySelector('#g-show')!.firstElementChild?.localName, document.querySelector('#adopt #show')!.firstElementChild?.localName],
+    });
+    const out = [snapshot('first render')];
+    setOn(false); setKeys(['c', 'a', 'b']); setTab('t'); setAOn(false); setAKeys(['c', 'a', 'b']);
+    out.push(snapshot('after one update'));
+    setOn(true); setKeys(['b']); setTab('other'); setAOn(true); setAKeys(['b', 'd']);
+    out.push(snapshot('after two'));
+    setOn(false); setTab('a'); setAOn(false);
+    out.push(snapshot('after three'));
+    return out;
+  });
+  expect(steps.map((s) => s.label)).toEqual(['first render', 'after one update', 'after two', 'after three']);
+  for (const s of steps) {
+    expect({ label: s.label, nonSvg: s.nonSvg, foreign: s.htmlInForeignObject }).toEqual({
+      label: s.label, nonSvg: [], foreign: ['div:html', 'a:html'],
+    });
+  }
+  expect(steps.map((s) => s.shown)).toEqual([['title', 'title'], ['a', 'a'], ['title', 'title'], ['a', 'a']]);
 });

@@ -692,3 +692,58 @@ describe('renderer contract: SSR emits exactly these bytes', () => {
     ).toBe('<ul class="l"><li>1</li><li>two</li>tail</ul>');
   });
 });
+
+// ---------------------------------------------------------------------------
+// Namespaces: every renderer builds what the parser builds from the markup
+// (decision brief DR-9, FORMA-026)
+// ---------------------------------------------------------------------------
+
+/** A vector's tree: tag, props, children (a string child is text). */
+type NsTree = [string, Record<string, unknown> | null, ...unknown[]];
+
+/**
+ * The shared namespace vectors. The same file drives the three-engine e2e
+ * (`e2e/adoption.spec.ts`), where each engine's parser reads the markup and
+ * adoption binds it; here h() and renderToString render the tree. happy-dom's
+ * parser has no MathML and keeps HTML integration points' content in SVG, so
+ * the parsed side is the browsers', not happy-dom's.
+ */
+const NS_VECTORS = (JSON.parse(readFileSync(resolve(__dirname, 'vectors/namespaces.json'), 'utf8')) as {
+  vectors: Array<{ name: string; server: string; tree: NsTree; namespaces: string[] }>;
+}).vectors;
+
+const NS_URI: Record<string, string> = {
+  html: 'http://www.w3.org/1999/xhtml',
+  svg: 'http://www.w3.org/2000/svg',
+  mathml: 'http://www.w3.org/1998/Math/MathML',
+};
+
+const buildWith = <N>(make: (tag: string, props: Record<string, unknown> | null, ...children: unknown[]) => N) => {
+  const build = ([tag, props, ...children]: NsTree): N =>
+    make(tag, props, ...children.map((c) => (typeof c === 'string' ? c : build(c as NsTree))));
+  return build;
+};
+
+describe('renderer contract: namespaces match the parsed server markup (shared vectors)', () => {
+  it('the vectors cover SVG, its HTML integration points, a name h() did not know, and MathML', () => {
+    expect(NS_VECTORS.length).toBeGreaterThanOrEqual(7);
+    const all = NS_VECTORS.flatMap((v) => v.namespaces);
+    for (const ns of ['svg', 'html', 'mathml']) expect(all.some((e) => e.endsWith(`:${ns}`))).toBe(true);
+  });
+
+  describe.each(NS_VECTORS.map((v) => [v.name, v] as const))('%s', (_name, vector) => {
+    it('h() builds every element in the namespace the parser gives it, with the same markup', () => {
+      const built = buildWith(h)(vector.tree) as unknown as Element;
+      const namespaces = [built, ...Array.from(built.querySelectorAll('*'))].map((el) => `${el.localName}:${el.namespaceURI}`);
+      expect(namespaces).toEqual(vector.namespaces.map((e) => {
+        const [name, ns] = e.split(':');
+        return `${name}:${NS_URI[ns!]}`;
+      }));
+      expect(built.outerHTML).toBe(vector.server);
+    });
+
+    it('renderToString writes the same markup', () => {
+      expect(renderToString(buildWith(sh)(vector.tree))).toBe(vector.server);
+    });
+  });
+});

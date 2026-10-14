@@ -176,6 +176,46 @@
   "note": "reactive xlink:href writes javascript: URLs"
  },
  {
+  "id": "element/dual-use-never-rebuilt",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (to === ns) return null;\n    stop();",
+  "replace": "    return null;\n    stop();",
+  "note": "a title or an a built before its svg parent stays HTML inside it. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"builds a title and an a inside an svg in the SVG namespace without svg(), as the parser does\""
+ },
+ {
+  "id": "element/function-child-outside-namespace",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      const v = withNamespace(ns, child as () => unknown);",
+  "replace": "      const v = (child as () => unknown)();",
+  "note": "a reactive child inside an svg builds a title or an a as HTML on its later runs. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a function child inside an svg builds in the SVG namespace on every run\""
+ },
+ {
+  "id": "element/no-mathml",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  } else if (MATHML_TAGS.has(tagName)) {\n    el = document.createElementNS(MATHML_NS, tagName);\n",
+  "replace": "",
+  "note": "h() creates math and its elements as HTML unknown elements, which browsers do not render as MathML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"h() creates math and its elements in the MathML namespace, and HTML inside a token element, as the parser does\""
+ },
+ {
+  "id": "element/rebuild-keeps-discarded-effects",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (to === ns) return null;\n    stop();",
+  "replace": "    if (to === ns) return null;",
+  "note": "a dual-use element rebuilt in SVG leaves its discarded HTML twin subscribed, reading its signals on every update. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a rebuilt element keeps its handlers, its reactive props and children, and its ref, and the discarded one stops updating\""
+ },
+ {
   "id": "expr/array-index-write-unbounded",
   "file": "src/expr/interp.ts",
   "tags": [
@@ -737,23 +777,13 @@
  },
  {
   "id": "hydrate/fallback-ignores-parent-namespace",
-  "file": "src/dom/hydrate.ts",
+  "file": "src/dom/namespace.ts",
   "tags": [
    "correctness"
   ],
-  "find": "  return (ns === SVG_NS && (parent as Element).localName !== 'foreignObject') || ns === MATHML_NS ? ns : null;",
-  "replace": "  return null;",
+  "find": "  const ns = el && el.namespaceURI;",
+  "replace": "  const ns = null as string | null;",
   "note": "what adoption creates inside an adopted SVG ignores its parent: a title or an a it adds is an HTML element (FORMA-020)"
- },
- {
-  "id": "hydrate/fallback-no-mathml",
-  "file": "src/dom/hydrate.ts",
-  "tags": [
-   "correctness"
-  ],
-  "find": "tag === 'math' ? MATHML_NS : null",
-  "replace": "null",
-  "note": "MathML that adoption must create is built as HTML unknown elements (FORMA-020)"
  },
  {
   "id": "hydrate/fallback-through-h-only",
@@ -777,12 +807,12 @@
  },
  {
   "id": "hydrate/foreignObject-content-in-svg",
-  "file": "src/dom/hydrate.ts",
+  "file": "src/dom/namespace.ts",
   "tags": [
    "correctness"
   ],
-  "find": "(ns === SVG_NS && (parent as Element).localName !== 'foreignObject')",
-  "replace": "(ns === SVG_NS)",
+  "find": "    return name === 'foreignObject' || name === 'desc' || name === 'title' ? null : SVG_NS;",
+  "replace": "    return name === 'desc' || name === 'title' ? null : SVG_NS;",
   "note": "content adoption creates inside a foreignObject, server-rendered or created by adoption, lands in the SVG namespace instead of HTML (FORMA-020)"
  },
  {
@@ -895,6 +925,16 @@
   "find": "    adoptChildren(desc.children, regionStart.parentNode as Element, regionStart.nextSibling, regionEnd);",
   "replace": "    void 0;",
   "note": "a Fragment branch of createShow is not adopted: its server nodes keep no handlers until the branch is rebuilt"
+ },
+ {
+  "id": "hydrate/show-repair-branch-html",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "        const raw = withNamespace(ns, factory);",
+  "replace": "        const raw = factory();",
+  "note": "a show branch adoption builds for an empty region inside an svg, and on later toggles, is HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a show branch the server left empty, the branches it toggles to, and fresh keyed rows\""
  },
  {
   "id": "hydrate/svg-row-rebuilt-as-html",
@@ -1021,6 +1061,16 @@
   "note": "duplicate keys all collapse onto the first occurrence"
  },
  {
+  "id": "list/first-rows-not-rebuilt",
+  "file": "src/dom/list.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (to !== ns && parent) {\n      ns = to;\n      for (const node of currentNodes) {",
+  "replace": "    if (false) {\n      ns = to;\n      for (const node of currentNodes) {",
+  "note": "a createList passed to h() inside an svg keeps its first rows in HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"list rows inside an svg are SVG when first rendered, when added and when moved, 40 and more\""
+ },
+ {
   "id": "list/lis-flag-inverted",
   "file": "src/dom/list.ts",
   "tags": [
@@ -1080,6 +1130,16 @@
   "all": true
  },
  {
+  "id": "list/rows-outside-namespace",
+  "file": "src/dom/list.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "        return untrack(() => withNamespace(ns, () => renderFn(item, getIndex)));",
+  "replace": "        return untrack(() => renderFn(item, getIndex));",
+  "note": "list rows added inside an svg are HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"list rows inside an svg are SVG when first rendered, when added and when moved, 40 and more\""
+ },
+ {
   "id": "list/small-threshold-1",
   "file": "src/dom/list.ts",
   "tags": [],
@@ -1096,6 +1156,16 @@
   "replace": "  if (oldLen < 100000) {",
   "note": "large-list Map path never taken — all lists go through the flat scan",
   "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+ },
+ {
+  "id": "mount/container-namespace-ignored",
+  "file": "src/dom/mount.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      return withNamespace(contentNs(target), component);",
+  "replace": "      return component();",
+  "note": "mount() into an svg element builds an a as HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a portal into an svg, and mount() into an svg, create SVG elements\""
  },
  {
   "id": "mount/detached-node-leaks-effects",
@@ -1169,6 +1239,36 @@
   "note": "public registerResource() does nothing"
  },
  {
+  "id": "namespace/desc-content-svg",
+  "file": "src/dom/namespace.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    return name === 'foreignObject' || name === 'desc' || name === 'title' ? null : SVG_NS;",
+  "replace": "    return name === 'foreignObject' ? null : SVG_NS;",
+  "note": "an a inside an SVG desc or title is SVG, where the parser makes it HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"keeps an a and a title in HTML outside an svg, and inside a foreignObject or a desc, even when built in svg()\""
+ },
+ {
+  "id": "namespace/fragment-children-unsettled",
+  "file": "src/dom/namespace.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (ns) for (let n = child.firstChild; n; n = settleOne(n, ns).nextSibling);",
+  "replace": "",
+  "note": "an element or control-flow content inside a fragment appended into an svg keeps the namespace it was built in. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"an element inside a Fragment child of an svg is SVG\""
+ },
+ {
+  "id": "namespace/mathml-token-content-mathml",
+  "file": "src/dom/namespace.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    return MATHML_TEXT_POINTS.has(name) ||",
+  "replace": "    return false ||",
+  "note": "the content of a MathML mi, mo, mn, ms or mtext is built as MathML, where the parser makes it HTML. Verified by: src/__tests__/renderer-contract.test.ts > \"h() builds every element in the namespace the parser gives it, with the same markup\""
+ },
+ {
   "id": "observe/onIntersect-noop",
   "file": "src/dom-utils/observe.ts",
   "tags": [],
@@ -1209,6 +1309,16 @@
   "find": "    return () => {\n      removeMountedNode();\n    };",
   "replace": "    return () => { /* mutation: portal never detaches its node */ };",
   "note": "portal never detaches the previous node — the target accumulates on every re-render and on dispose"
+ },
+ {
+  "id": "portal/target-namespace-ignored",
+  "file": "src/dom/portal.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    const node = withNamespace(ns, children);",
+  "replace": "    const node = children();",
+  "note": "a portal into an svg builds a title as HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a portal into an svg, and mount() into an svg, create SVG elements\""
  },
  {
   "id": "portal/target-string-ignored",
@@ -1433,6 +1543,26 @@
   "find": "const normalized = value.replace(URL_IGNORED_CHARS_RE, '');",
   "replace": "const normalized = value;",
   "note": "control-char scheme smuggling no longer normalized (java\\tscript:)"
+ },
+ {
+  "id": "show/branch-outside-namespace",
+  "file": "src/dom/show.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "        return untrack(() => withNamespace(ns, branchFn));",
+  "replace": "        return untrack(() => branchFn());",
+  "note": "a createShow branch built after a toggle inside an svg is HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a createShow inside an svg creates SVG elements on its first render and on every toggle\""
+ },
+ {
+  "id": "show/first-render-not-rebuilt",
+  "file": "src/dom/show.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (to !== ns && lastTruthy !== null && parent) {",
+  "replace": "    if (false) {",
+  "note": "a createShow passed to h() inside an svg keeps its first branch in HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"a createShow inside an svg creates SVG elements on its first render and on every toggle\""
  },
  {
   "id": "show/hydrating-branch-wrong",
@@ -1697,6 +1827,26 @@
   "find": "      let entry = cache.get(val);",
   "replace": "      let entry = undefined as any;",
   "note": "switch branch cache disabled — new node identity each visit"
+ },
+ {
+  "id": "switch/cases-outside-namespace",
+  "file": "src/dom/switch.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "          return untrack(() => withNamespace(ns, matchedCase.render));",
+  "replace": "          return untrack(() => matchedCase.render());",
+  "note": "a createSwitch case built inside an svg is HTML. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"createSwitch cases inside an svg are SVG, cached cases included\""
+ },
+ {
+  "id": "switch/first-render-not-rebuilt",
+  "file": "src/dom/switch.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (to !== ns && currentMatch !== UNSET && parent) {",
+  "replace": "    if (false) {",
+  "note": "a createSwitch passed to h() inside an svg keeps its first case cached in HTML, and switching back re-inserts it. Verified by: src/dom/__tests__/namespace-resolution.test.ts > \"createSwitch cases inside an svg are SVG, cached cases included\""
  },
  {
   "id": "switch/no-scoop-back",

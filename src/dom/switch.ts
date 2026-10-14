@@ -14,6 +14,7 @@
  */
 
 import { internalEffect, untrack, createRoot, registerDisposer } from 'forma/reactive';
+import { NS_SYM, getNamespace, insertNs, withNamespace } from './namespace.js';
 
 /** A single branch for {@link createSwitch}. */
 export interface SwitchCase<T> {
@@ -60,6 +61,9 @@ export function createSwitch<T>(
   const cache = new Map<T, CachedBranch>();
   let currentNode: Node | null = null;
   let currentMatch: T | typeof UNSET = UNSET;
+  // The namespace cases are built in: the parent's content namespace once the
+  // markers are in an element; until then the one createSwitch was called in.
+  let ns = getNamespace();
 
   const switchDispose = internalEffect(() => {
     const val = value();
@@ -75,6 +79,18 @@ export function createSwitch<T>(
       if (DEBUG) console.warn('[forma:switch] markers not in DOM yet, skipping');
       return;
     }
+    const into = insertNs(parent);
+    if (into !== undefined && into !== ns) {
+      // Cached cases were built in the old namespace.
+      for (const entry of cache.values()) entry.dispose();
+      cache.clear();
+      ns = into;
+    }
+    show(val, parent, DEBUG);
+  });
+
+  /** Swap the content between the markers for the case matching `val`. */
+  function show(val: T, parent: Node, DEBUG: boolean): void {
 
     // Remove current content between markers.
     // If currentNode was a DocumentFragment, its children transferred to the
@@ -115,7 +131,7 @@ export function createSwitch<T>(
         let branchDispose!: () => void;
         const node = createRoot((dispose) => {
           branchDispose = dispose;
-          return untrack(() => matchedCase.render());
+          return untrack(() => withNamespace(ns, matchedCase.render));
         });
         entry = { node, dispose: branchDispose };
         cache.set(val, entry);
@@ -127,7 +143,7 @@ export function createSwitch<T>(
     } else {
       // Fallback — not cached, effects are owned by the switch effect
       // and correctly torn down on next re-run.
-      currentNode = fallback?.() ?? null;
+      currentNode = fallback ? withNamespace(ns, fallback) : null;
       if (DEBUG) console.log('[forma:switch] no match, using fallback');
     }
 
@@ -135,7 +151,26 @@ export function createSwitch<T>(
       parent.insertBefore(currentNode, endMarker);
       if (DEBUG) console.log('[forma:switch] inserted', currentNode.nodeName, 'before end marker');
     }
-  });
+  }
+
+  // Inserted by h() into content of another namespace than the cases were
+  // built in (the first render happens in this fragment): drop the cache and
+  // build the current case again there.
+  // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "createSwitch cases inside an svg are SVG, cached cases included"
+  (startMarker as any)[NS_SYM] = (to: string | null): null => {
+    const parent = startMarker.parentNode;
+    if (to !== ns && currentMatch !== UNSET && parent) {
+      ns = to;
+      for (const entry of cache.values()) entry.dispose();
+      cache.clear();
+      currentNode = null;
+      while (startMarker.nextSibling && startMarker.nextSibling !== endMarker) {
+        parent.removeChild(startMarker.nextSibling);
+      }
+      show(currentMatch as T, parent, false);
+    }
+    return null;
+  };
 
   // Defense-in-depth: when the parent root is disposed, explicitly dispose
   // all cached branches and clear references. The branch roots are already

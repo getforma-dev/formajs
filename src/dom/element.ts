@@ -8,8 +8,20 @@
  * Provides event listener cleanup via AbortController.
  */
 
-import { internalEffect, __DEV__ } from 'forma/reactive';
+import { internalEffect, registerDisposer, runWithOwner, __DEV__, type Owner } from 'forma/reactive';
 import { hydrating } from './hydrate.js';
+import {
+  SVG_NS,
+  MATHML_NS,
+  NS_SYM,
+  contentNs,
+  getNamespace,
+  insertNs,
+  settle,
+  settleChildren,
+  unsettled,
+  withNamespace,
+} from './namespace.js';
 import { isFormControlProperty, writeFormControlProperty } from './form-control.js';
 import {
   isDangerousUrl,
@@ -33,38 +45,34 @@ export const Fragment: (props: { children?: unknown }) => DocumentFragment =
 // SVG namespace and tag detection
 // ---------------------------------------------------------------------------
 
-export const SVG_NS = 'http://www.w3.org/2000/svg';
+export { SVG_NS, MATHML_NS };
 const XLINK_NS = 'http://www.w3.org/1999/xlink';
 
 /**
  * Tags that exist in BOTH HTML and SVG, so their namespace must be resolved by
- * context (not by name). Without an SVG context these resolve to HTML.
+ * where they go, not by name: the content namespace of their parent (see
+ * namespace.ts), HTML when that is not known.
  */
 const DUAL_USE_SVG_TAGS = new Set(['a', 'title', 'script', 'style', 'font']);
 
-/** The namespace active for the current synchronous `svg()` build, if any. */
-let currentNamespace: string | null = null;
-
 /**
- * Run `build()` with the SVG namespace active so nested `h()` calls create
- * SVG-namespaced elements — including dual-use tags like `<a>` that `h()` would
- * otherwise create as HTML. `h()` resolves tags by this explicit context (there
- * is no automatic parent-walk); a `foreignObject` creates the SVG element but
- * does not auto-switch its descendants back to HTML (author those with plain
- * `h()` outside `svg()`). MathML is not supported.
+ * Run `build()` with SVG as the namespace of the content being built, so the
+ * tags that are both HTML and SVG (`a`, `title`, `script`, `style`, `font`)
+ * are created in SVG from the start.
+ *
+ * Since FORMA-026 `h()` gives these tags their parent's namespace without it:
+ * one built before its parent existed is rebuilt when `h()`, a control-flow
+ * helper, a portal or `mount()` inserts it into SVG content, and the content of
+ * a `foreignObject`, `desc` or `title` is HTML, as the parser makes it. `svg()`
+ * still saves that rebuild, and covers a node you insert yourself with
+ * `appendChild`, which no rebuild reaches.
  *
  * ```ts
  * const icon = svg(() => h('svg', { viewBox: '0 0 10 10' }, h('a', { href: '#' })));
  * ```
  */
 export function svg<T extends Node>(build: () => T): T {
-  const prev = currentNamespace;
-  currentNamespace = SVG_NS;
-  try {
-    return build();
-  } finally {
-    currentNamespace = prev;
-  }
+  return withNamespace(SVG_NS, build);
 }
 
 /** Known SVG tag names for O(1) lookup. */
@@ -114,6 +122,31 @@ const SVG_TAGS = new Set([
   'desc',
   'title',
   'metadata',
+  'mpath',
+  'view',
+  'feComponentTransfer',
+  'feFuncR',
+  'feFuncG',
+  'feFuncB',
+  'feFuncA',
+  'feConvolveMatrix',
+  'feDiffuseLighting',
+  'feSpecularLighting',
+  'feDistantLight',
+  'fePointLight',
+  'feSpotLight',
+  'feTile',
+  'feDropShadow',
+]);
+
+/**
+ * MathML Core's element names, created in the MathML namespace wherever they
+ * appear, as `SVG_TAGS` are in SVG. None is an HTML element name.
+ */
+const MATHML_TAGS = new Set([
+  'math', 'maction', 'annotation', 'annotation-xml', 'merror', 'mfrac', 'mi', 'mmultiscripts', 'mn', 'mo',
+  'mover', 'mpadded', 'mphantom', 'mprescripts', 'mroot', 'mrow', 'ms', 'mspace', 'msqrt', 'mstyle', 'msub',
+  'msubsup', 'msup', 'mtable', 'mtd', 'mtext', 'mtr', 'munder', 'munderover', 'semantics', 'mglyph', 'malignmark',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -729,7 +762,9 @@ function appendChild(parent: Node, child: unknown): void {
   // (The earlier version of this comment asserted "70%+ of children are Nodes"
   // and "saves 3-5 comparisons"; neither figure was ever measured.)
   if (child instanceof Node) {
-    parent.appendChild(child);
+    // A node built before its parent existed may be in another namespace than
+    // the parent's content: settle rebuilds or re-renders it there.
+    parent.appendChild(settle(parent, child));
     return;
   }
 
@@ -764,6 +799,10 @@ function appendChild(parent: Node, child: unknown): void {
     let currentFragChildren: Node[] | null = null;
     let warnedArray = false;
     const DEBUG = typeof (globalThis as any).__FORMA_DEBUG__ !== 'undefined';
+    // The parent is known here, so what the child builds takes its content's
+    // namespace from the start.
+    // Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a function child inside an svg builds in the SVG namespace on every run"
+    const ns = insertNs(parent);
 
     // Helper: remove all tracked fragment children or the single current node
     const clearCurrent = () => {
@@ -780,7 +819,7 @@ function appendChild(parent: Node, child: unknown): void {
     };
 
     internalEffect(() => {
-      const v = (child as () => unknown)();
+      const v = withNamespace(ns, child as () => unknown);
 
       // Array return (e.g. from .map()) → wrap in DocumentFragment
       let resolved: unknown = v;
@@ -804,18 +843,19 @@ function appendChild(parent: Node, child: unknown): void {
       }
 
       if (resolved instanceof Node) {
+        const node = settle(parent, resolved);
         // Clear previous state (fragment children or single node)
         clearCurrent();
 
         // Track fragment children before appendChild empties the fragment
-        const isNewFrag = resolved instanceof DocumentFragment;
+        const isNewFrag = node instanceof DocumentFragment;
         if (isNewFrag) {
-          currentFragChildren = Array.from(resolved.childNodes);
+          currentFragChildren = Array.from(node.childNodes);
         }
 
         // Insert the new node/fragment
-        parent.appendChild(resolved);
-        currentNode = isNewFrag ? null : (resolved as Node);
+        parent.appendChild(node);
+        currentNode = isNewFrag ? null : node;
       } else if (resolved == null || resolved === false || resolved === true) {
         // Null/false/true/empty array — remove current content
         clearCurrent();
@@ -920,26 +960,87 @@ export function h(
   // that copies the element's internal state without parsing the tag string.
   // Skip the SVG Set lookup entirely when the tag is in the proto cache (hot path).
   let el: Element;
-  // When an svg() context is active, consult SVG membership BEFORE the proto
-  // cache so dual-use tags (notably <a>) get the SVG namespace instead of
-  // resolving to their cached HTML prototype.
-  const svgCtx = currentNamespace === SVG_NS;
-  if (svgCtx && (SVG_TAGS.has(tagName) || DUAL_USE_SVG_TAGS.has(tagName))) {
-    el = document.createElementNS(SVG_NS, tagName);
-  } else if (!svgCtx && DUAL_USE_SVG_TAGS.has(tagName)) {
-    // Dual-use tags (a, title, script, style, font) default to HTML with no
-    // svg() context, even though they are also in SVG_TAGS.
-    el = getProto(tagName).cloneNode(false) as HTMLElement;
-  } else if (ELEMENT_PROTOS && ELEMENT_PROTOS[tagName]) {
+  // A dual-use tag (a, title, script, style, font) is checked before the proto
+  // cache, which holds its HTML prototype: it takes the namespace of the
+  // content being built, HTML where that is not known yet.
+  if (DUAL_USE_SVG_TAGS.has(tagName)) {
+    const ns = getNamespace();
+    el = ns ? document.createElementNS(ns, tagName) : getProto(tagName).cloneNode(false) as HTMLElement;
+    return fillDual(el, tagName, ns, props, children) as unknown as HTMLElement;
+  }
+  if (ELEMENT_PROTOS && ELEMENT_PROTOS[tagName]) {
     el = ELEMENT_PROTOS[tagName]!.cloneNode(false) as HTMLElement;
   } else if (SVG_TAGS.has(tagName)) {
     el = document.createElementNS(SVG_NS, tagName);
+  } else if (MATHML_TAGS.has(tagName)) {
+    el = document.createElementNS(MATHML_NS, tagName);
   } else {
     el = getProto(tagName).cloneNode(false) as HTMLElement;
   }
 
   return fillElement(el, props, children) as unknown as HTMLElement;
 }
+
+/**
+ * The rest of h() for a tag that is both HTML and SVG, built in `ns` (null:
+ * HTML). Where h(), a control-flow helper, a portal or mount() inserts it into
+ * content of another namespace, it is rebuilt there from the same props and
+ * children (the namespace of an element cannot change). Its own effects run in
+ * an owner of their own, so a rebuild disposes them: the discarded element
+ * neither updates nor stays subscribed. Its children are moved, not rebuilt,
+ * and a `ref` is called again with the rebuilt element.
+ *
+ * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "builds a title and an a inside an svg in the SVG namespace without svg(), as the parser does"
+ * Verified by: src/dom/__tests__/namespace-resolution.test.ts > "a rebuilt element keeps its handlers, its reactive props and children, and its ref, and the discarded one stops updating"
+ */
+function fillDual(
+  el: Element,
+  tag: string,
+  ns: string | null,
+  props: Record<string, unknown> | null | undefined,
+  children: unknown[],
+): Element {
+  // A fragment child empties itself into the element, so a rebuild moves the
+  // nodes it delimited, read again then: a control-flow fragment's content
+  // between its markers may have changed since.
+  let kids = children;
+  for (const child of children) {
+    if (child instanceof DocumentFragment) {
+      kids = children.map((k) => (k instanceof DocumentFragment ? span(k) : k));
+      break;
+    }
+  }
+  const owner: Owner = { disposers: [] };
+  runWithOwner(owner, () => fillElement(el, props, children));
+  const stop = () => { for (const d of owner.disposers.splice(0)) d(); };
+  if (owner.disposers.length) registerDisposer(stop);
+
+  (el as any)[NS_SYM] = (to: string | null): Node | null => {
+    if (to === ns) return null;
+    stop();
+    const next = withNamespace(to, () =>
+      unsettled(() => h(tag, props as Record<string, unknown> | null, ...kids.map((k) => (k instanceof Span ? k.nodes() : k))))) as unknown as Element;
+    // The moved children were built for this element's old namespace.
+    settleChildren(next);
+    el.parentNode?.replaceChild(next, el);
+    return next;
+  };
+  return el;
+}
+
+/** The nodes a fragment held, from its first to its last. */
+class Span {
+  constructor(private a: Node | null, private b: Node | null) {}
+  nodes(): Node[] {
+    const out: Node[] = [];
+    for (let n = this.a; n; n = n.nextSibling) {
+      out.push(n);
+      if (n === this.b) break;
+    }
+    return out;
+  }
+}
+const span = (f: DocumentFragment): Span => new Span(f.firstChild, f.lastChild);
 
 /**
  * The half of h() that runs once the element exists: props, children, live
