@@ -486,27 +486,54 @@ All notable changes to this project will be documented in this file.
   → A shows A again** (FORMA-176; DR-5, DR-9, DR-19). Adoption treated the
   prop as an attribute: a reactive one wrote `dangerouslysetinnerhtml="[object
   Object]"` and never touched the content, where client rendering writes it,
-  and a static one was skipped though the walker ships such an element empty.
-  It now binds the prop as h() does, through one writer
-  (`bindInnerHTML` in `src/dom/element.ts`): the content through the raw sink
-  (a `trustedHtml()` value typed, a string with `FORMA_W_RAW_INNER_HTML` in
-  development), never an attribute, writing nothing where the server's element
-  already holds the markup, and not walking that markup as children. And a
-  reactive value going A → null → A left the element empty, in h() as in
+  and a static one was skipped though a walker can ship such an element empty.
+  It now binds the prop as h() does, through one writer (`bindInnerHTML` in
+  `src/dom/element.ts`):
+  - the content goes through the raw sink (a `trustedHtml()` value typed, a
+    string with `FORMA_W_RAW_INNER_HTML` in development), never an attribute;
+  - a static `null`, `undefined` or `false` (the `cond && { __html }` pattern)
+    is no prop, as in h() and `./ssr`: the server's children are adopted and
+    bound;
+  - adoption writes nothing where the server's element already holds the
+    markup, judged by parsing the markup through a `<template>` and comparing
+    it with the server's content as the browser serialises both, so markup
+    `./ssr` wrote as given (`<br/>`, single quotes, `&#39;`, an unclosed `<p>`,
+    a `<table>` without `<tbody>`) is not rewritten: an iframe in it does not
+    reload, and text typed into it before activation survives;
+  - a reactive prop whose first value is `null` keeps the server's content
+    (its children, adopted and bound) until markup arrives, as h() shows its
+    children until then;
+  - markup is recorded as current only once written, so a string a page
+    enforcing Trusted Types refused does not block the same markup sent later
+    as `trustedHtml()`.
+
+  A reactive value going A → null → A left the element empty, in h() as in
   adoption: the `null` branch kept A's markup as the current one, so A again
-  read as no change; `null` now forgets it. Tests:
-  `src/dom/__tests__/adopt-inner-html.test.ts` (eight: both server outputs,
+  read as no change; `null` now forgets it.
+
+  **Children given beside the prop** are a mistake the renderers disagree on:
+  h() renders the markup and then the children, until the markup next changes
+  and replaces them; `./ssr` renders only the markup; the compiler's walker
+  renders only the children. Adoption keeps the markup and binds none of the
+  children (in 2.0.3 it adopted the children and wrote the prop as an
+  attribute). h() and adoption now log `FORMA_W_INNER_HTML_CHILDREN` once in
+  development; give the element one or the other.
+
+  Tests: `src/dom/__tests__/adopt-inner-html.test.ts` (both server outputs,
   the walker's empty element and `./ssr`'s markup, matched against client
-  rendering through every transition; no write where the server agrees; the
-  string warning); `src/dom/__tests__/trusted-html.test.ts` > "an adopted
-  island's dangerouslySetInnerHTML writes trustedHtml() typed, as content and
-  never as an attribute"; `e2e/adoption.spec.ts` > "a reactive
-  dangerouslySetInnerHTML is adopted as content, follows its signal through
-  null and back, and matches client rendering", and the Trusted Types sink
-  test's adopted island, in Chromium, Firefox and WebKit. Size: the core entry
-  grows by 100 B gzipped (29,285 to 29,385 B of its 30,000 B gate) and the
-  browser ESM bundle by 92 B (28,143 to 28,235 B); the CDN runtimes, which do
-  not adopt, do not change.
+  rendering through every transition; the three falsy values with a bound
+  child; sixteen non-canonical markups not rewritten; typed text kept; the
+  `null`-first fallback child; the children warning);
+  `src/dom/__tests__/trusted-html.test.ts` > "an adopted island's
+  dangerouslySetInnerHTML writes trustedHtml() typed, as content and never as
+  an attribute" and "a refused string does not block the same markup sent
+  later as trustedHtml(), client-rendered and adopted"; `e2e/adoption.spec.ts`
+  (four tests, among them twenty-one non-canonical markups, the review's
+  among them, adopted without one DOM write) and the Trusted Types sink test's adopted
+  island, in Chromium, Firefox and WebKit. Size: the core entry grows by 223 B
+  gzipped (29,285 to 29,508 B of its 30,000 B gate) and the browser ESM bundle
+  by 215 B (28,143 to 28,358 B of 29,000 B); the CDN runtimes, which do not
+  adopt, do not change.
 - **SVG and MathML namespaces where `h()` knows the parent** (FORMA-026,
   DR-9). A tag that is both HTML and SVG (`title`, `a`, `script`, `style`,
   `font`) now takes the namespace of the content it is built in. Where its
