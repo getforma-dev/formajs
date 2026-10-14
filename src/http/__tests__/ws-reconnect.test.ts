@@ -157,6 +157,23 @@ describe('createWebSocket reconnect delay', () => {
     expect(latest('ws://default').at - t).toBe(250);
   });
 
+  it('a random option that is not a function, and a draw outside [0, 1), fall back to Math.random', async () => {
+    vi.spyOn(Math, 'random').mockReturnValue(0.25);
+    const cases: Array<[string, unknown]> = [
+      ['number', 0.5], ['string', '0.5'], ['one', () => 1], ['two', () => 2], ['negative', () => -1],
+      ['nan', () => NaN], ['huge', () => 1e9],
+    ];
+    for (const [name, random] of cases) {
+      const url = `ws://fallback-${name}`;
+      createWebSocket(url, { random: random as () => number });
+      const t = Date.now();
+      expect(() => latest(url).socket.fail()).not.toThrow();
+      await vi.advanceTimersByTimeAsync(60_000);
+      expect(count(url)).toBe(2);
+      expect(latest(url).at - t).toBe(250); // Math.random's 0.25 of the 1 s cap
+    }
+  });
+
   it('close() during the jittered wait cancels the reconnect', async () => {
     const ws = createWebSocket('ws://closing', { random: () => 0.9 });
     latest('ws://closing').socket.fail();

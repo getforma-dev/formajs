@@ -97,6 +97,51 @@ describe('data-fetch timeout', () => {
     expect(text(container, 'items')).toBe('loaded');
   });
 
+  it('unmount() stops a stalled request: its 30 s timer is cleared and the request aborted', async () => {
+    vi.stubGlobal('fetch', stalled);
+    container.innerHTML = page('/api/stalled');
+    runtime.mount(container);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(vi.getTimerCount()).toBe(1);
+    expect(requests[0]!.init.signal!.aborted).toBe(false);
+
+    runtime.unmount(container);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(requests[0]!.init.signal!.aborted).toBe(true);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(requests).toHaveLength(1);
+  });
+
+  it('unmount() stops every in-flight request of a polling data-fetch, and removing the element does too', async () => {
+    vi.stubGlobal('fetch', stalled);
+    const polling = `
+      <div data-forma-state='{}'>
+        <div data-fetch="GET /api/poll → items |error:failed |poll:5000"></div>
+      </div>`;
+    container.innerHTML = polling;
+    runtime.mount(container);
+    await vi.advanceTimersByTimeAsync(12_000); // requests at 0, 5 and 10 s
+    expect(requests).toHaveLength(3);
+    runtime.unmount(container);
+    expect(vi.getTimerCount()).toBe(0);
+    expect(requests.map((r) => r.init.signal!.aborted)).toEqual([true, true, true]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(requests).toHaveLength(3);
+
+    // The same scope removed from the document instead of unmounted.
+    requests = [];
+    const host = document.createElement('div');
+    host.innerHTML = polling;
+    container.appendChild(host);
+    runtime.mount(host);
+    await vi.advanceTimersByTimeAsync(7_000); // requests at 0 and 5 s
+    expect(requests).toHaveLength(2);
+    host.remove();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(requests.map((r) => r.init.signal!.aborted)).toEqual([true, true]);
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
   it('each request of a polling data-fetch has its own 30 s', async () => {
     vi.stubGlobal('fetch', stalled);
     container.innerHTML = `

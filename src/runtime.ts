@@ -1933,21 +1933,31 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
 
       // A request the server never answers is aborted after FETCH_TIMEOUT_MS,
       // its own timer per request, and the abort lands in the error: target.
-      // Only the timer aborts the controller, and the message is written here:
-      // an engine rejects with its own AbortError (WebKit ignores a reason).
+      // The timer is the only thing that aborts a live request, and the message
+      // is written here: an engine rejects with its own AbortError (WebKit
+      // ignores a reason). Tearing the scope down stops every request in
+      // flight: its timer is cleared and the request aborted. (Rationale: a
+      // request checks it is still in flight before writing, so a stopped one
+      // does not write into the disposed scope's signals.)
       // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch to a stalled endpoint aborts at 30 s into its error: target"
       // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "a data-fetch answered before 30 s lands in its target and is never aborted"
+      // Verified by: src/__tests__/runtime-fetch-timeout.test.ts > "unmount() stops every in-flight request of a polling data-fetch, and removing the element does too"
+      const inflight = new Set<() => void>();
       const doFetch = () => {
         if (loadingTarget) scope.setters[loadingTarget]!(true);
         const ctrl = new AbortController();
         const timer = setTimeout(() => ctrl.abort(), FETCH_TIMEOUT_MS);
+        const stop = () => { clearTimeout(timer); ctrl.abort(); };
+        inflight.add(stop);
         fetch(url, { method, signal: ctrl.signal })
           .then(r => r.json())
           .then(data => {
+            if (!inflight.has(stop)) return;
             setTarget(data);
             if (loadingTarget) scope.setters[loadingTarget]!(false);
           })
           .catch(err => {
+            if (!inflight.has(stop)) return;
             if (errorTarget) {
               scope.setters[errorTarget]!(
                 ctrl.signal.aborted ? `data-fetch timed out after ${FETCH_TIMEOUT_MS} ms` : err.message,
@@ -1955,8 +1965,12 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
             }
             if (loadingTarget) scope.setters[loadingTarget]!(false);
           })
-          .finally(() => clearTimeout(timer));
+          .finally(() => { clearTimeout(timer); inflight.delete(stop); });
       };
+      disposers.push(() => {
+        for (const stop of inflight) stop();
+        inflight.clear();
+      });
 
       // Register in $refetch registry if data-fetch-id is present
       const fetchId = el.getAttribute('data-fetch-id');
