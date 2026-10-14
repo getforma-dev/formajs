@@ -193,6 +193,10 @@ describe('h() raw-HTML attributes', () => {
     const el = h('iframe', { srcdoc: '<p>trusted</p>', sandbox: '' });
     // Deliberately NOT blocked: a sandboxed srcdoc iframe is a legitimate pattern.
     expect(el.getAttribute('srcdoc')).toBe('<p>trusted</p>');
-    expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('raw-HTML sink'));
+    // A plain string is the 2.x form of a raw entry (DR-19): one coded
+    // warning, which says why escaping is no defence here.
+    expect(warnSpy).toHaveBeenCalledWith(expect.stringMatching(
+      /^\[forma\] FORMA_W_RAW_SRCDOC: .*escaping does not neutralize/,
+    ));
   });
 });

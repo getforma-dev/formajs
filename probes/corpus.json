@@ -37,7 +37,7 @@
   ],
   "find": "const FORBIDDEN_PROP_KEYS = new Set(['__proto__', 'constructor', 'prototype']);",
   "replace": "const FORBIDDEN_PROP_KEYS = new Set<string>([]);",
-  "note": "SECURITY.md 'Island props sanitized' — stripping removed"
+  "note": "SECURITY.md 'Island props sanitized' \u2014 stripping removed"
  },
  {
   "id": "activate/props-reviver-recursive",
@@ -75,7 +75,7 @@
   "tags": [],
   "find": "  startBatch();\n  try {\n    fn();\n  } finally {\n    endBatch();\n  }",
   "replace": "  fn();",
-  "note": "batch() no longer batches — effects run per write"
+  "note": "batch() no longer batches \u2014 effects run per write"
  },
  {
   "id": "bus/emit-no-snapshot",
@@ -83,7 +83,7 @@
   "tags": [],
   "find": "      for (const handler of [...set]) {",
   "replace": "      for (const handler of set) {",
-  "note": "bus emit iterates live Set — off() during emit corrupts iteration"
+  "note": "bus emit iterates live Set \u2014 off() during emit corrupts iteration"
  },
  {
   "id": "bus/once-no-off",
@@ -117,7 +117,7 @@
   "tags": [],
   "find": "      const camel = prop.replace(/-([a-z])/g, (_, c: string) => c.toUpperCase());",
   "replace": "      const camel = prop;",
-  "note": "kebab-case CSS props no longer camelised — string styles silently drop"
+  "note": "kebab-case CSS props no longer camelised \u2014 string styles silently drop"
  },
  {
   "id": "el/static-onattr-guard-off",
@@ -125,8 +125,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);\n\n  // true → empty string attribute, else stringified value",
-  "replace": "  if (__DEV__ && isRawHtmlAttr(key)) warnRawHtmlAttr(el, key);\n\n  // true → empty string attribute, else stringified value",
+  "find": "  if (isEventHandlerAttr(key)) {\n    if (__DEV__) warnDropped(el, key, 'inline-event-handler');\n    return;\n  }\n  warnRawAttr(key, value);\n\n  // true \u2192 empty string attribute, else stringified value",
+  "replace": "  warnRawAttr(key, value);\n\n  // true \u2192 empty string attribute, else stringified value",
   "note": "h() static path writes ONCLICK as an inline handler"
  },
  {
@@ -145,8 +145,8 @@
   "tags": [
    "security"
   ],
-  "find": "  if (isUrlAttr(key) && isDangerousUrl(strVal, el.localName)) {\n    if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n    return;\n  }\n  el.setAttribute(key, strVal);",
-  "replace": "  el.setAttribute(key, strVal);",
+  "find": "  if (isUrlAttr(key) && isDangerousUrl(strVal, el.localName)) {\n    if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n    return;\n  }\n  // The string the URL guard checked",
+  "replace": "  // The string the URL guard checked",
   "note": "h() static attribute path writes javascript: URLs"
  },
  {
@@ -383,7 +383,7 @@
   ],
   "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
   "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u214f]/);",
-  "note": "the case-mapped letterlike symbols (Ω U+2126, K U+212A, Å U+212B) are charged as symbols that map to themselves. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+  "note": "the case-mapped letterlike symbols (\u03a9 U+2126, K U+212A, \u00c5 U+212B) are charged as symbols that map to themselves. Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
  },
  {
   "id": "expr/costly-set-too-broad",
@@ -403,7 +403,7 @@
   ],
   "find": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff\\u2000-\\u20cf\\u2100-\\u2125]/);",
   "replace": "const costly = RegExp.prototype.exec.bind(/[^\\x00-\\xff]/);",
-  "note": "one curly apostrophe, dash, € or ™ puts a record's lowercasing in the costly tier, refusing an ordinary English search past about 1,700 records (review R4-1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
+  "note": "one curly apostrophe, dash, \u20ac or \u2122 puts a record's lowercasing in the costly tier, refusing an ordinary English search past about 1,700 records (review R4-1). Verified by: src/expr/__tests__/native-cost.test.ts > \"a text search over records is answered as on main\"; Verified by: src/expr/__tests__/native-cost.test.ts > \"case mapping is charged by the costliest character of its receiver\""
  },
  {
   "id": "expr/data-args-charged",
@@ -701,7 +701,7 @@
   "tags": [],
   "find": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V {",
   "replace": "function cloneEntry<V>(v: V, seen?: WeakSet<object>): V { if (v && typeof v === 'object') return v;",
-  "note": "history entries alias live objects — undo/redo returns mutated state"
+  "note": "history entries alias live objects \u2014 undo/redo returns mutated state"
  },
  {
   "id": "http/ws-random-unchecked",
@@ -730,8 +730,8 @@
    "correctness",
    "contract"
   ],
-  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, str);",
-  "replace": "        el.setAttribute(attrKey, str);",
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);",
+  "replace": "        el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);",
   "note": "adoption rewrites every reactive attribute the server already holds: a DOM write per binding, and an iframe's src reloads (FORMA-020, DR-5)"
  },
  {
@@ -771,7 +771,7 @@
   "tags": [
    "security"
   ],
-  "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) — use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
+  "find": "    if (isEventHandlerAttr(attrKey)) {\n      if (__DEV__) console.warn(`[forma] Hydration: dropped \"${attrKey}\" on <${el.localName}> (inline-event-handler) \u2014 use the lowercase on* prop form for listeners`);\n      el.removeAttribute(attrKey);\n      continue;\n    }",
   "replace": "",
   "note": "hydration writes ONCLICK as an inline handler"
  },
@@ -1102,7 +1102,7 @@
   "tags": [],
   "find": "  if (e.ctrlKey !== parsed.ctrl) return false;",
   "replace": "",
-  "note": "ctrl modifier ignored — 's' fires a 'ctrl+s' binding"
+  "note": "ctrl modifier ignored \u2014 's' fires a 'ctrl+s' binding"
  },
  {
   "id": "keyboard/no-meta-check",
@@ -1138,7 +1138,7 @@
   ],
   "find": "      if (lisFlags[i]) {",
   "replace": "      if (!lisFlags[i]) {",
-  "note": "the LIS rows are the ones skipped-as-in-place — final order corrupted",
+  "note": "the LIS rows are the ones skipped-as-in-place \u2014 final order corrupted",
   "all": true
  },
  {
@@ -1149,7 +1149,7 @@
   ],
   "find": "  for (const li of lisOfReused) {\n    lisFlags[reusedPositions[li]!] = 1;\n  }",
   "replace": "",
-  "note": "every reused row is moved — LIS optimisation dead",
+  "note": "every reused row is moved \u2014 LIS optimisation dead",
   "all": true
  },
  {
@@ -1158,7 +1158,7 @@
   "tags": [],
   "find": "export function longestIncreasingSubsequence(arr: number[]): number[] {",
   "replace": "export function longestIncreasingSubsequence(arr: number[]): number[] { if (arr.length > 1) return [];",
-  "note": "LIS always empty — every keyed item moves (O(n) DOM churn, identity loss)"
+  "note": "LIS always empty \u2014 every keyed item moves (O(n) DOM churn, identity loss)"
  },
  {
   "id": "list/no-onInsert-hook",
@@ -1205,8 +1205,8 @@
   "tags": [],
   "find": "  if (oldLen < SMALL_LIST_THRESHOLD) {",
   "replace": "  if (oldLen < 1) {",
-  "note": "small-list path never taken — all lists go through the Map path",
-  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+  "note": "small-list path never taken \u2014 all lists go through the Map path",
+  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes \u2014 that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
  },
  {
   "id": "list/small-threshold-huge",
@@ -1214,8 +1214,8 @@
   "tags": [],
   "find": "  if (oldLen < SMALL_LIST_THRESHOLD) {",
   "replace": "  if (oldLen < 100000) {",
-  "note": "large-list Map path never taken — all lists go through the flat scan",
-  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes — that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
+  "note": "large-list Map path never taken \u2014 all lists go through the flat scan",
+  "equivalent": "reconcileSmall and the Map+LIS path produce identical DOM for every input (src/dom/__tests__/list-keyed-reconciliation.test.ts > \"produces the same DOM either side of SMALL_LIST_THRESHOLD\" pins that). The threshold selects between two behaviourally equal algorithms, so only complexity changes \u2014 that is gated by bench/list.bench.ts > \"shuffle 1000 rows (one full reorder)\" and docs/performance-baseline.json, not by the suite."
  },
  {
   "id": "mount/container-namespace-ignored",
@@ -1262,7 +1262,7 @@
   "find": "    if (value !== undefined) {\n      (el.style as any)[key] = value;\n    }",
   "replace": "    (el.style as any)[key] = value;",
   "note": "undefined style values written through",
-  "equivalent": "CSSOM stringifies an assigned value, and \"undefined\" is not a valid declaration value, so the property is left unchanged either way. The guard saves a wasted assignment, not a wrong one — see the note on setStyle in src/dom-utils/mutate.ts."
+  "equivalent": "CSSOM stringifies an assigned value, and \"undefined\" is not a valid declaration value, so the property is left unchanged either way. The guard saves a wasted assignment, not a wrong one \u2014 see the note on setStyle in src/dom-utils/mutate.ts."
  },
  {
   "id": "mutate/setText-uses-innerHTML",
@@ -1358,7 +1358,7 @@
   "tags": [],
   "find": "    return () => {\n      removeMountedNode();\n    };",
   "replace": "    return () => { /* mutation: portal never detaches its node */ };",
-  "note": "portal never detaches the previous node — the target accumulates on every re-render and on dispose"
+  "note": "portal never detaches the previous node \u2014 the target accumulates on every re-render and on dispose"
  },
  {
   "id": "portal/target-namespace-ignored",
@@ -1376,7 +1376,7 @@
   "tags": [],
   "find": "  const resolvedTarget = typeof target === 'string'\n    ? document.querySelector(target)\n    : (target ?? document.body);",
   "replace": "  const resolvedTarget = typeof target === 'string'\n    ? document.body\n    : (target ?? document.body);",
-  "note": "string portal selector ignored — always body"
+  "note": "string portal selector ignored \u2014 always body"
  },
  {
   "id": "reactive/batch-flush-under-caller-root",
@@ -1394,7 +1394,7 @@
   "tags": [],
   "find": "export function untrack",
   "replace": "export function untrackDISABLED_UNUSED_SHIM_NOT_EXPORTED_PLACEHOLDER",
-  "note": "compile-break sentinel (expect CAUGHT — harness sanity check)"
+  "note": "compile-break sentinel (expect CAUGHT \u2014 harness sanity check)"
  },
  {
   "id": "reconcile/remove-all-skips-hook",
@@ -1552,7 +1552,7 @@
   ],
   "find": "const DANGEROUS_SCHEME_RE = /^(?:javascript|vbscript|data:text\\/html)/i;",
   "replace": "const DANGEROUS_SCHEME_RE = /(?:javascript|vbscript|data:text\\/html)/i;",
-  "note": "substring match — https://example.com/guides/javascript now blocked"
+  "note": "substring match \u2014 https://example.com/guides/javascript now blocked"
  },
  {
   "id": "sec/svg-any-tag-is-image",
@@ -1764,7 +1764,7 @@
   ],
   "find": "    .replace(/&/g, '&amp;')\n    .replace(/\"/g, '&quot;')\n    .replace(/</g, '&lt;')",
   "replace": "    .replace(/</g, '&lt;')",
-  "note": "SSR attribute values no longer escape double quotes — attribute breakout"
+  "note": "SSR attribute values no longer escape double quotes \u2014 attribute breakout"
  },
  {
   "id": "ssr/escapeAttr-drop-lt",
@@ -1784,7 +1784,7 @@
   ],
   "find": "    .replace(/&/g, '&amp;')\n    .replace(/</g, '&lt;')\n    .replace(/>/g, '&gt;')\n    .replace(/\"/g, '&quot;')\n    .replace(/'/g, '&#x27;');",
   "replace": "    .replace(/\"/g, '&quot;');",
-  "note": "SSR text nodes no longer escape < > & ' — raw XSS"
+  "note": "SSR text nodes no longer escape < > & ' \u2014 raw XSS"
  },
  {
   "id": "ssr/escapeHtml-drop-apos",
@@ -1854,7 +1854,7 @@
   ],
   "find": "  if (typeof node === 'string') { parts.push(escapeHtml(node)); return; }",
   "replace": "  if (typeof node === 'string') { parts.push(node); return; }",
-  "note": "SSR text children emitted raw — live <script> in the page"
+  "note": "SSR text children emitted raw \u2014 live <script> in the page"
  },
  {
   "id": "ssr/void-element-closed",
@@ -1892,7 +1892,7 @@
   ],
   "find": "  if ((v as any)[PROXY]) return false;\n  return true;\n}",
   "replace": "  if ((v as any)[PROXY]) return false;\n  return !Array.isArray(v);\n}",
-  "note": "arrays no longer plain — array reactivity path dead"
+  "note": "arrays no longer plain \u2014 array reactivity path dead"
  },
  {
   "id": "store/deepClone-identity",
@@ -1900,7 +1900,7 @@
   "tags": [],
   "find": "function deepClone(obj: unknown, seen?: WeakSet<object>): unknown {",
   "replace": "function deepClone(obj: unknown, seen?: WeakSet<object>): unknown { if (obj && typeof obj === 'object') return obj;",
-  "note": "store deepClone becomes identity — snapshots alias live state"
+  "note": "store deepClone becomes identity \u2014 snapshots alias live state"
  },
  {
   "id": "store/no-array-method-patch",
@@ -1916,7 +1916,7 @@
   "tags": [],
   "find": "      let entry = cache.get(val);",
   "replace": "      let entry = undefined as any;",
-  "note": "switch branch cache disabled — new node identity each visit"
+  "note": "switch branch cache disabled \u2014 new node identity each visit"
  },
  {
   "id": "switch/cases-outside-namespace",
@@ -1934,7 +1934,7 @@
   "tags": [],
   "find": "        let scooped = 0;\n        while (startMarker.nextSibling && startMarker.nextSibling !== endMarker) {\n          currentNode.appendChild(startMarker.nextSibling);\n          scooped++;\n        }",
   "replace": "        let scooped = 0;",
-  "note": "cached fragment branch not scooped back — 3rd visit renders empty/duplicated"
+  "note": "cached fragment branch not scooped back \u2014 3rd visit renders empty/duplicated"
  },
  {
   "id": "traverse/siblings-includes-self",
@@ -2673,5 +2673,295 @@
   "find": "  if (own?.getAttribute('data-forma-mount') === 'manual') return true;",
   "replace": "  if (own?.hasAttribute('data-forma-mount')) return true;",
   "note": "any value of the switch turns the auto-mount off, so data-forma-mount=\"auto\" breaks a page that meant the default. Verified by: src/__tests__/runtime-tiered-mount.test.ts > \"the mount switch is read once, from the runtime's own script element\""
+ },
+ {
+  "id": "trusted/mount-clear-string",
+  "file": "src/dom/mount.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    target.replaceChildren();\n    target.appendChild(dom);",
+  "replace": "    target.innerHTML = '';\n    target.appendChild(dom);",
+  "note": "mount() empties its container by writing a string to innerHTML, which a page requiring Trusted Types reports or refuses (DR-20, FORMA-127). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/unmount-clear-string",
+  "file": "src/dom/mount.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      target.replaceChildren();\n    } else {",
+  "replace": "      target.innerHTML = '';\n    } else {",
+  "note": "the function mount() returns empties the container by writing a string to innerHTML (DR-20, FORMA-127). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/null-clear-string",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (resolved == null) {\n        el.replaceChildren();",
+  "replace": "      if (resolved == null) {\n        el.innerHTML = '';",
+  "note": "a reactive dangerouslySetInnerHTML that becomes null empties the element with a string write (DR-20, FORMA-127). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/reconcile-writes-trusted-as-string",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    const markup = parser ? parser.html : trimmed;",
+  "replace": "    const markup = trimmed;",
+  "note": "reconcile() trims a trustedHtml() value and parses the trimmed string, which a page requiring Trusted Types refuses: the runtime parser's forma-runtime policy is skipped (DR-20). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/srcdoc-stringified",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  el.setAttribute(key, typeof value === 'object' && isRawHtmlAttr(key) && isTrustedHtml(value) ? htmlOf(value) : strVal);",
+  "replace": "  el.setAttribute(key, strVal);",
+  "note": "a static srcdoc given trustedHtml() is written as a string, which a page requiring Trusted Types refuses (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/reactive-srcdoc-stringified",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        el.setAttribute(key, typeof v === 'object' && isRawHtmlAttr(key) && isTrustedHtml(v) ? htmlOf(v) : strVal);",
+  "replace": "        el.setAttribute(key, strVal);",
+  "note": "a reactive srcdoc given trustedHtml() is written as a string (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"core's own writes raise no Trusted Types violation: mount, unmount, the null clear, and every sink given trustedHtml()\""
+ },
+ {
+  "id": "trusted/adoption-srcdoc-stringified",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);",
+  "replace": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, str);",
+  "note": "an adopted island's reactive srcdoc given trustedHtml() is written as a string (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"an adopted island's srcdoc binding writes trustedHtml() typed and warns once for a string\""
+ },
+ {
+  "id": "trusted/policy-per-call",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  if (reg.forma === undefined) {",
+  "replace": "  {",
+  "note": "each trustedHtml() asks the browser for the forma policy again; an enforcing page refuses a second policy of one name, so the second raw entry on a page fails (DR-20). Verified by: src/dom/__tests__/trusted-html.test.ts > \"trustedHtml() returns a TrustedHTML from the forma policy where the browser has Trusted Types\""
+ },
+ {
+  "id": "trusted/look-alike-accepted",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return !!tt && tt.isHTML(value);",
+  "replace": "  return true;",
+  "note": "any object passes for trusted HTML, so a value an attacker shapes reaches a raw sink without trustedHtml() (DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a look-alike object is not trusted HTML\""
+ },
+ {
+  "id": "trusted/stand-in-unrecognised",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  registry().minted.set(standIn, html);\n",
+  "replace": "",
+  "note": "without Trusted Types, what trustedHtml() returns is not recognised by the sinks it was made for. Verified by: src/dom/__tests__/trusted-html.test.ts > \"without Trusted Types it returns a frozen stand-in that core recognises\""
+ },
+ {
+  "id": "trusted/string-warning-silent",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (isTrustedHtml(value)) return htmlOf(value);\n  warnRawString(sink);\n",
+  "replace": "  if (isTrustedHtml(value)) return htmlOf(value);\n",
+  "note": "a string given to a raw sink is written with no development warning, so the 2.x bridge says nothing before 3.0.0 refuses it (L-18, DR-19). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a string to each raw sink still renders, and warns once with the sink's code in development\""
+ },
+ {
+  "id": "trusted/script-warning-silent",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    warnScriptElement(tagName);\n",
+  "replace": "",
+  "note": "h('script') builds a script element with no development warning before 3.0.0 refuses it (DR-19, FORMA-109). Verified by: src/dom/__tests__/trusted-html.test.ts > \"h('script') warns once in development and still builds the element\""
+ },
+ {
+  "id": "trusted/ssr-refuses-trusted",
+  "file": "src/ssr/render.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (isTrustedHtml(html)) return String(html);\n",
+  "replace": "",
+  "note": "./ssr throws on a dangerouslySetInnerHTML given trustedHtml(), so a component shared with the browser cannot take the typed form (L-18). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the SSR renderers write a trustedHtml() value's markup and still refuse a non-string\""
+ },
+ {
+  "id": "trusted/static-attr-second-conversion",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  el.setAttribute(key, typeof value === 'object' && isRawHtmlAttr(key) && isTrustedHtml(value) ? htmlOf(value) : strVal);",
+  "replace": "  el.setAttribute(key, typeof value === 'object' ? htmlOf(value) : strVal);",
+  "note": "h()'s static path writes any object as itself, so setAttribute converts it again after the URL guard passed its first string: a toString that changes writes javascript: (formajs#29 review B1). Verified by: src/__tests__/renderer-contract.test.ts > \"writes %s as the string the URL guard checked, not a second conversion\""
+ },
+ {
+  "id": "trusted/reactive-attr-second-conversion",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        el.setAttribute(key, typeof v === 'object' && isRawHtmlAttr(key) && isTrustedHtml(v) ? htmlOf(v) : strVal);",
+  "replace": "        el.setAttribute(key, typeof v === 'object' ? htmlOf(v) : strVal);",
+  "note": "h()'s reactive path converts an object a second time after the URL guard (formajs#29 review B1). Verified by: src/__tests__/renderer-contract.test.ts > \"writes %s as the string the URL guard checked, not a second conversion\""
+ },
+ {
+  "id": "trusted/adoption-attr-second-conversion",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' && isRawHtmlAttr(attrKey) && isTrustedHtml(v) ? htmlOf(v) : str);",
+  "replace": "        if (el.getAttribute(attrKey) !== str) el.setAttribute(attrKey, typeof v === 'object' ? htmlOf(v) : str);",
+  "note": "adoption converts an object a second time after the URL guard (formajs#29 review B1). Verified by: src/__tests__/renderer-contract.test.ts > \"writes %s as the string the URL guard checked, not a second conversion\""
+ },
+ {
+  "id": "trusted/reconcile-srcdoc-unminted",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      const minted = parser && attr.name === 'srcdoc' ? parser.srcdoc(newEl) : null;",
+  "replace": "      const minted = null;",
+  "note": "reconcile()'s diff writes a changed srcdoc of trusted markup as a string, which an enforcing page refuses (formajs#29 review S1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src\""
+ },
+ {
+  "id": "trusted/reconcile-writes-script-attrs",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (trusted && isScriptAttr(liveEl, attr.name)) {\n        liveEl.removeAttribute(attr.name);\n        continue;\n      }\n",
+  "replace": "",
+  "note": "reconcile()'s diff writes a changed on* handler or script src, a Trusted Types script sink core writes nowhere else (formajs#29 review S1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"reconcile()'s diff mints a changed srcdoc of trusted markup and writes no on* or script src\""
+ },
+ {
+  "id": "trusted/runtime-handle-mints-strings",
+  "file": "src/dom/runtime-parser.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "      if (!tt || typeof trusted !== 'object' || trusted === null || !tt.isHTML(trusted)) return null;",
+  "replace": "      if (!tt) return null;",
+  "note": "the shared forma-runtime handle on globalThis mints a string, so any script launders markup past Trusted Types with no trustedHtml() in its source (formajs#29 review S2). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the shared registry holds no policy, and its forma-runtime handle mints nothing from a string\""
+ },
+ {
+  "id": "trusted/runtime-parser-mints-any-srcdoc",
+  "file": "src/dom/runtime-parser.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "          const doc = parsed.has(el) ? el.getAttribute('srcdoc') : null;",
+  "replace": "          const doc = el.getAttribute('srcdoc');",
+  "note": "the runtime parser mints the srcdoc of any element, so a string planted on a div is minted (formajs#29 review S2). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the shared registry holds no policy, and its forma-runtime handle mints nothing from a string\""
+ },
+ {
+  "id": "trusted/registry-exposes-policy",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "    reg.forma = forma && ((markup: string) => forma.createHTML(markup));",
+  "replace": "    reg.forma = forma && ((markup: string) => forma.createHTML(markup)); (reg as Record<string, unknown>).policies = { forma };",
+  "note": "the registry on globalThis holds a live policy (formajs#29 review S2). Verified by: src/dom/__tests__/trusted-html.test.ts > \"the shared registry holds no policy, and its forma-runtime handle mints nothing from a string\""
+ },
+ {
+  "id": "trusted/registry-has-prototype",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "  return host[REGISTRY_KEY] ??= Object.assign(Object.create(null) as Registry, {",
+  "replace": "  return host[REGISTRY_KEY] ??= Object.assign({} as Registry, {",
+  "note": "the registry inherits from Object.prototype, so a polluted Object.prototype.forma stands in for the policy (formajs#29 review S2). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a polluted Object.prototype does not stand in for a policy\""
+ },
+ {
+  "id": "trusted/reconcile-records-before-write",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    const markup = parser ? parser.html : trimmed;",
+  "replace": "    lastHtmlByContainer.set(container, trimmed);\n    const markup = parser ? parser.html : trimmed;",
+  "note": "reconcile() records markup before writing it, so after a refused string write the same markup as trustedHtml() is skipped as unchanged and the DOM stays stale (formajs#29 review N3). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a reconcile the page refused is not recorded, so the same markup as trustedHtml() is written\""
+ },
+ {
+  "id": "trusted/policy-refused-silent",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    warnPolicyRefused(name);\n",
+  "replace": "",
+  "note": "a refused policy name falls back to strings with no development warning (formajs#29 review N4). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a refused policy name warns once in development, and the sinks then write strings the page refuses\""
+ },
+ {
+  "id": "trusted/factory-trusts-any-object",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  return tt && typeof tt.createPolicy === 'function' && typeof tt.isHTML === 'function' ? tt : undefined;",
+  "replace": "  return tt;",
+  "note": "an element clobbered onto window.trustedTypes is taken for Trusted Types (formajs#29 review N5). Verified by: src/dom/__tests__/trusted-html.test.ts > \"an element named trustedTypes is not Trusted Types\""
+ },
+ {
+  "id": "trusted/look-alike-silent",
+  "file": "src/dom/trusted-html.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (isTrustedHtml(value)) return htmlOf(value);\n  warnRawString(sink);\n",
+  "replace": "  if (isTrustedHtml(value)) return htmlOf(value);\n  if (typeof value === 'string') warnRawString(sink);\n",
+  "note": "a look-alike object or a String object at a raw sink is written untyped with no development warning (formajs#29 review N1). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a look-alike object or a String object is written as before and warns as a string does\""
+ },
+ {
+  "id": "trusted/runtime-bind-srcdoc-silent",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "          warnRuntimeSrcdoc(attrName);\n",
+  "replace": "",
+  "note": "data-bind:srcdoc writes a document from an expression with no development warning (formajs#29 review S3). Verified by: src/__tests__/runtime-srcdoc.test.ts > \"data-bind:srcdoc writes its string and warns once with the runtime code\""
+ },
+ {
+  "id": "trusted/runtime-row-srcdoc-silent",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "          warnRuntimeSrcdoc(attr.name);\n",
+  "replace": "",
+  "note": "a list row's srcdoc writes a document from row data with no development warning (formajs#29 review S3). Verified by: src/__tests__/runtime-srcdoc.test.ts > \"a list row's srcdoc writes its string and warns once with the runtime code\""
+ },
+ {
+  "id": "trusted/reconcile-string-script-attrs-removed",
+  "file": "src/dom/reconcile.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      if (trusted && isScriptAttr(liveEl, attr.name)) {",
+  "replace": "      if (isScriptAttr(liveEl, attr.name)) {",
+  "note": "a string reconcile()'s diff removes a changed on* handler or script src, where 2.0.3 wrote it (formajs#29 second review R1, L-18). Verified by: src/dom/__tests__/trusted-html.test.ts > \"a string reconcile()'s diff writes a changed on*, script src and srcdoc as 2.0 did\""
  }
 ]

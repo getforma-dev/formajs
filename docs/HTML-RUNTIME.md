@@ -202,6 +202,19 @@ diagnostic, including the last three, which needed the eval fallback until the
 allowlist interpreter landed. A row whose example stops parsing fails the suite
 by name.
 
+**`data-bind:srcdoc`, and `{item…}` in a list row's `srcdoc`, are raw-HTML
+sinks.** The browser parses an iframe's `srcdoc` as a document, so the value,
+an expression's or a row's data (a `data-fetch` response among them), is
+markup, and escaping does not neutralize it. They write it as the string it
+is: no `trustedHtml()` can reach a binding, so a page requiring Trusted Types
+reports or refuses it. A development build of the runtime logs
+`FORMA_W_RAW_RUNTIME_SRCDOC` once, and 3.0.0 refuses `srcdoc` bindings in the
+runtime (FORMA-109): build a frame whose document you vouch for with `h()` and
+`trustedHtml()` ([API.md](API.md#trustedhtml-the-one-raw-entry)).
+
+Verified by `src/__tests__/runtime-srcdoc.test.ts` > "data-bind:srcdoc writes its string and warns once with the runtime code"
+Verified by `src/__tests__/runtime-srcdoc.test.ts` > "a list row's srcdoc writes its string and warns once with the runtime code"
+
 `$el`, `$event` and `$refs` hand expressions a **wrapped** element rather than
 the live node, and the wrapper survives every hop, so `$el.ownerDocument`,
 `$el.innerHTML` and `$refs.myInput.ownerDocument.location.href` are denials with
@@ -249,7 +262,11 @@ widget.unmount(); // every binding disposed, the root emptied
 
 - **Only under the root.** The mount binds the markup it is handed (and what
   `update()` hands it later) under its root, never by watching `body`. The root
-  itself is the application's element, not the mount's.
+  itself is the application's element, not the mount's. The markup is a raw
+  sink, as `reconcile()`'s is: pass `trustedHtml(markup)` for the content your
+  review admitted, which a page enforcing Trusted Types requires; a plain
+  string still works in 2.x and logs `FORMA_W_RAW_RECONCILE` once in a
+  development build.
 - **Configuration only from the call.** The step budget (`config.exprBudget`,
   default 100,000), the expression diagnostics switch (`config.diagnostics`)
   and containment hints (`config.autoContainment`) come from the call; a
@@ -285,6 +302,7 @@ Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant's cook
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a fetch grant's timeout shortens the abort"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "$el.click() is denied without navigate and runs with it"
 Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "a mount call names a known tier, an element and markup, and mounts a root once"
+Verified by `src/__tests__/runtime-tiered-mount.test.ts` > "takes trustedHtml() markup beside a string, and nothing else"
 
 **`$el` stops at the mount root** (L-36). Every hop that yields an element
 (`closest()`, `querySelector()`, `querySelectorAll()`, `children`, the first,

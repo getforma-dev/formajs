@@ -160,6 +160,7 @@
 import { createSignal, internalEffect, createComputed, batch } from './reactive';
 import { reconcileList, type ListTransitionHooks } from './dom/list';
 import { createReconciler } from './dom/reconcile';
+import { isTrustedHtml, trustedHtml, warnRuntimeSrcdoc, type TrustedHtml } from './dom/trusted-html';
 import { isDangerousUrl, isUrlAttr, isEventHandlerAttr } from './security/url-safety';
 import {
   clearExpressionCache,
@@ -579,7 +580,7 @@ export interface MountHandle {
   readonly tier: MountTier;
   readonly name: string;
   /** Render new markup into the root: reconciled, so scopes whose shape is unchanged keep their state. */
-  update(markup: string): void;
+  update(markup: string | TrustedHtml): void;
   /** Dispose every binding of the mount and empty its root. */
   unmount(): void;
   /** Development builds: the grants used so far. Production builds: `null`. */
@@ -1520,6 +1521,10 @@ function cloneAttributeTemplates(el: Element, item: unknown): void {
         if (isUnsafeAttrBinding(attr.name, value, node.tagName.toLowerCase())) {
           node.removeAttribute(attr.name);
         } else {
+          // A row's `srcdoc` is a raw entry no trustedHtml() can reach:
+          // written as the string it is, and warned of (FORMA-126).
+          // Verified by: src/__tests__/runtime-srcdoc.test.ts > "a list row's srcdoc writes its string and warns once with the runtime code"
+          warnRuntimeSrcdoc(attr.name);
           node.setAttribute(attr.name, value);
         }
       }
@@ -2237,6 +2242,10 @@ function bindElement(el: Element, scope: Scope, disposers: (() => void)[]): void
         if (isUnsafeAttrBinding(attrName, str, el.tagName.toLowerCase())) {
           el.removeAttribute(attrName);
         } else {
+          // `data-bind:srcdoc` is a raw entry no trustedHtml() can reach:
+          // written as the string it is, and warned of (FORMA-126).
+          // Verified by: src/__tests__/runtime-srcdoc.test.ts > "data-bind:srcdoc writes its string and warns once with the runtime code"
+          warnRuntimeSrcdoc(attrName);
           el.setAttribute(attrName, str);
         }
       });
@@ -3053,7 +3062,7 @@ function resetScope(element: Element): void {
 
 // ── Reconciler ──
 
-let _reconciler: ((container: Element, html: string) => void) | null = null;
+let _reconciler: ((container: Element, html: string | TrustedHtml) => void) | null = null;
 
 /** The `body` observer pauses while a reconciler patches, so it does not see the patch. */
 function disconnectObserver(): void {
@@ -3090,7 +3099,9 @@ function getReconciler() {
 }
 
 /**
- * Reconcile a container's DOM against a new HTML string.
+ * Reconcile a container's DOM against new markup. A raw sink: pass
+ * `trustedHtml(markup)` (DR-19); a plain string still works in 2.x and warns
+ * once in development.
  *
  * The tierless path: it binds the markup with every power the runtime has,
  * wherever the container is. It behaves as at 2.0.x; in a development build
@@ -3100,7 +3111,7 @@ function getReconciler() {
  * @deprecated Removed in 3.0.0. Use `mountMarkup(root, markup, { tier, grants })`.
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "reconcile behaves as at 2.0.x and warns once in development"
  */
-function reconcile(container: Element, html: string): void {
+function reconcile(container: Element, html: string | TrustedHtml): void {
   assertTierless('reconcile()');
   if ((typeof __FORMA_DEV_BUILD__ === 'boolean' && __FORMA_DEV_BUILD__)
     || (typeof __FORMA_DEV_BUILD__ !== 'boolean' && sourceIsDev())) {
@@ -3144,11 +3155,13 @@ function reconcile(container: Element, html: string): void {
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "an unreviewed mount refuses any origin but an opaque one, and any grant"
  * Verified by: src/__tests__/runtime-tiered-mount.test.ts > "the development report lists exactly the grants a fixture widget used"
  */
-function mountMarkup(root: Element, markup: string, options: MountOptions): MountHandle {
+function mountMarkup(root: Element, markup: string | TrustedHtml, options: MountOptions): MountHandle {
   if (!root || typeof root !== 'object' || root.nodeType !== 1) {
     throw mountError('FORMA_E_MOUNT_ARGS', 'the root must be an element');
   }
-  if (typeof markup !== 'string') throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string');
+  if (typeof markup !== 'string' && !isTrustedHtml(markup)) {
+    throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string or trustedHtml()');
+  }
   const tier = options?.tier;
   if (tier !== 'compiled' && tier !== 'reviewed' && tier !== 'unreviewed') {
     throw mountError('FORMA_E_MOUNT_ARGS', "options.tier must be 'compiled', 'reviewed' or 'unreviewed'");
@@ -3209,8 +3222,8 @@ function mountMarkup(root: Element, markup: string, options: MountOptions): Moun
   const disposeAll = (): void => {
     for (const scope of Array.from(root.querySelectorAll('[data-forma-state]'))) unmountScope(scope, ctx);
   };
-  const render = (html: string): void => {
-    if (!html.trim()) {
+  const render = (html: string | TrustedHtml): void => {
+    if (!String(html).trim()) {
       disposeAll();
       root.replaceChildren();
       return;
@@ -3229,9 +3242,11 @@ function mountMarkup(root: Element, markup: string, options: MountOptions): Moun
     root,
     tier,
     name: ctx.name,
-    update(next: string): void {
+    update(next: string | TrustedHtml): void {
       alive();
-      if (typeof next !== 'string') throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string');
+      if (typeof next !== 'string' && !isTrustedHtml(next)) {
+        throw mountError('FORMA_E_MOUNT_ARGS', 'the markup must be a string or trustedHtml()');
+      }
       render(next);
     },
     unmount(): void {
@@ -3252,6 +3267,8 @@ function mountMarkup(root: Element, markup: string, options: MountOptions): Moun
   };
 }
 
+export type { TrustedHtml };
+
 export {
   initRuntime,
   destroyRuntime,
@@ -3259,6 +3276,7 @@ export {
   unmount,
   reconcile,
   mountMarkup,
+  trustedHtml,
   setDebug,
   yieldToMain,
   applyContainmentHints,

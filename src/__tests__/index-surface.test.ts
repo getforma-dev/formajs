@@ -41,7 +41,7 @@ const SURFACES: Record<string, { load: () => Promise<object>; exports: string[] 
       'prevSibling', 'provide', 'reconcileList', 'removeClass', 'runWithOwner',
       'sanitizePropsDeep', 'setAttr', 'setHTMLUnsafe', 'setStyle', 'setText',
       'siblings', 'svg', 'template', 'templateMany', 'toggleClass',
-      'trackDisposer', 'trigger', 'unprovide', 'untrack', 'value',
+      'trackDisposer', 'trigger', 'trustedHtml', 'unprovide', 'untrack', 'value',
     ],
   },
   './runtime': {
@@ -50,7 +50,7 @@ const SURFACES: Record<string, { load: () => Promise<object>; exports: string[] 
       'applyContainmentHints', 'clearDiagnostics', 'destroyRuntime',
       'getDiagnostics', 'getScopes', 'initRuntime', 'mount', 'mountMarkup', 'reconcile',
       'resetScope', 'setDebug', 'setDiagnostics', 'setDirectiveMap',
-      'setScopeValue', 'unmount', 'yieldToMain',
+      'setScopeValue', 'trustedHtml', 'unmount', 'yieldToMain',
     ],
   },
   './ssr': {

@@ -888,6 +888,17 @@ describe('tiers and configuration', () => {
     expect(oldN.textContent).toBe('1');
   });
 
+  it('takes trustedHtml() markup beside a string, and nothing else', () => {
+    const root = page();
+    const handle = mountOn(root, runtime.trustedHtml(probe('6 * 7')), { tier: 'reviewed', grants: {} });
+    expect(text('out')).toBe('42');
+    handle.update(runtime.trustedHtml(`<div data-forma-state='{"v":"next"}'><p id="out" data-text="{v}">-</p></div>`));
+    expect(text('out')).toBe('next');
+    const lookAlike = { toString: () => probe('1') } as unknown as string;
+    expect(() => handle.update(lookAlike)).toThrow(/FORMA_E_MOUNT_ARGS/);
+    expect(text('out')).toBe('next');
+  });
+
   it('unmount() disposes every binding and empties the root; update() after it throws', () => {
     const root = page();
     const handle = mountOn(root, `<div data-forma-state='{"n":0}'><button id="inc" data-on:click="{n++}">+</button><p id="n" data-text="{n}">-</p></div>`, {
