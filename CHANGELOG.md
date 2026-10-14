@@ -867,8 +867,11 @@ All notable changes to this project will be documented in this file.
   lint's new rule K4 requires it, with two seeds in `--self-test`. WebKit's
   e2e tests get 30 s, 3x the default: a worker fixture shares the timeout of
   the test that starts it, and on a slow runner the first test of each worker
-  timed out setting up WebKit's page, twice. The published package is
-  unchanged.
+  timed out setting up WebKit's page, twice. "data-text of a value heavier
+  than the budget is refused before it is converted" mounts its widget three
+  times and bounds the least at 50 ms: one noisy sample took 169 ms in
+  Firefox, where a conversion that ran would take seconds each time. The
+  published package is unchanged.
 
 ## [2.0.3] - 2026-10-14
 

@@ -138,14 +138,18 @@ test('FORMA-025: data-text of a value heavier than the budget is refused before 
     } as typeof join;
   });
   await page.goto('/runtime-bare.html');
-  const m = await mountWidget(
-    page,
-    '<p data-out data-text="{Array.from({length: 1000}).map(() => s)}">server</p>'
-      + '<p data-out data-text="{Array.from({length: 3}).map(() => s.slice(0, 2))}">server</p>',
-    JSON.stringify({ s: 'x'.repeat(300_000) }),
-  );
-  expect(m.codes).toEqual(['FORMA_E_BUDGET']);
-  expect(m.texts).toEqual(['server', 'xx,xx,xx']);
+  const html = '<p data-out data-text="{Array.from({length: 1000}).map(() => s)}">server</p>'
+    + '<p data-out data-text="{Array.from({length: 3}).map(() => s.slice(0, 2))}">server</p>';
+  // Three mounts, and the 50 ms bound on the least of them (FORMA-179): a
+  // refusal that converted the list would take seconds every time, where one
+  // noisy sample, a collection or a busy runner, once took 169 ms in Firefox,
+  // unthrottled (run 38628163922). The join is counted across all three.
+  const mounts: Mounted[] = [];
+  for (let i = 0; i < 3; i++) mounts.push(await mountWidget(page, html, JSON.stringify({ s: 'x'.repeat(300_000) })));
+  for (const m of mounts) {
+    expect(m.codes).toEqual(['FORMA_E_BUDGET']);
+    expect(m.texts).toEqual(['server', 'xx,xx,xx']);
+  }
   expect(await page.evaluate(() => (window as unknown as { __joined: number }).__joined)).toBe(0);
-  expect(m.mountMs).toBeLessThan(50);
+  expect(Math.min(...mounts.map((m) => m.mountMs)), `mounts: ${mounts.map((m) => m.mountMs.toFixed(1)).join(', ')} ms`).toBeLessThan(50);
 });
