@@ -8,29 +8,47 @@ All notable changes to this project will be documented in this file.
 
 - **A built-in call in an expression is charged before it runs** (FORMA-004,
   DR-16). Every allowlisted native is charged, against one budget per
-  evaluation (`LIMITS.ALLOC_BUDGET`, 400,000 units: array slots and string
+  evaluation (`LIMITS.ALLOC_BUDGET`, 250,000 units: array slots and string
   characters produced or converted, a sixteenth for those only scanned), the
-  weight of its arguments as text and then its row in `src/expr/cost.ts`, and is
-  refused with `FORMA_E_BUDGET` before it runs once the evaluation would pass
-  the budget. An operator that converts an array or object to text (`'' + list`,
-  `` `${list}` ``, `list < 1`, `x += list`, a write to `$el`) is charged the
-  same way. `Array.from({length: 12000000})` used to build a 139 MB array in a
-  300 ms task and only then be refused; it now costs nothing. The budget keeps
-  the costliest call per unit under a 50 ms task at 4x CPU throttling.
+  weight of its arguments as text (or, for the natives that read arguments as
+  data, such as `Object.keys`, `Array.from` and `concat`, their element count)
+  and then its row in `src/expr/cost.ts`, and is refused with `FORMA_E_BUDGET`
+  before it runs once the evaluation would pass the budget. An operator that
+  converts an array or object to text (`'' + list`, `` `${list}` ``,
+  `list < 1`, `x += list`, a write to `$el`) is charged the same way; `x != null`
+  and object-to-object `==` convert nothing and are not. A handler can no longer
+  write an array index at or past 1,000,000, which made a sparse array whose
+  `every`/`some`/`reduce` visited four billion holes. `Array.from({length:
+  12000000})` used to build a 139 MB array in a 300 ms task and only then be
+  refused; it now costs nothing. The budget is sized from the tail of
+  measurements at 4x CPU throttling (the slowest run of the largest call any row
+  allows, plus a full step budget, under 50 ms).
+  The bound is **per evaluation** (one binding or one handler run), not per
+  task: a widget with many bindings can spend one budget in each. A per-task
+  (per-widget) budget is a design change, left to a follow-up ticket.
+  String `+`, template literals, and reads of a long concatenated string are not
+  charged yet (FORMA-028; see SECURITY.md, "Termination and budgets").
   Behaviour change, as DR-16 accepts: the cap may refuse, with
   `FORMA_E_BUDGET`, calls 2.0.1 answered, such as a default `sort()` of more
-  than about 10,000 numbers, `Object.keys`, `values` or `entries` of a string
-  over about 44,000 characters, or a built-in that produces a string or array
-  longer than 400,000 (the 1 MiB and 1,000,000-element result caps still apply
-  to `+` and template literals). Rollback: pin 2.0.1.
+  than about 6,500 numbers or strings (counting everything else the evaluation
+  does), `Object.keys`, `values` or `entries` of a string or object over about
+  15,600 characters or keys, `every`, `some` or `reduce` over more than 250,000
+  elements, or a built-in that produces a string or array longer than 250,000
+  (the 1 MiB and 1,000,000-element result caps still apply to `+` and template
+  literals). `padStart`/`padEnd` with a negative or non-numeric length now
+  return the string unpadded, as JavaScript does, instead of `FORMA_E_BUDGET`.
+  Rollback: pin 2.0.1.
 - **Island props are stripped of `__proto__`, `constructor` and `prototype` at
   every depth while they are parsed** (FORMA-004, DR-21), inline and shared,
   with no opt-out. 2.0.1 stripped the top level only, so a nested key reached
   any island that deep-merged its props. The pass is iterative (a JSON reviver
   would overflow the stack near 5,000 levels); `sanitizePropsDeep` stays
-  exported. Props that are valid JSON but neither an object nor an array
-  (`null`, a number, a string, a boolean), inline or in the shared block, mark
-  the island `error` as they did in 2.0.1, now with the coded message
+  exported. The strip also drops legitimate nested fields named `constructor`
+  or `prototype` (a standings table keyed `constructor`, say): DR-21 accepts
+  this; rename such fields on the server. Props that are valid JSON but
+  neither an object nor an array (`null`, a number, a string, a boolean),
+  inline or in the shared block, mark the island `error` as they did in 2.0.1,
+  now with the coded message
   `FORMA_E_ISLAND_PROPS` logged in every build (2.0.1 threw an uncoded
   `TypeError`, logged in development builds only). An array reaches the island,
   as before, stripped at every depth.

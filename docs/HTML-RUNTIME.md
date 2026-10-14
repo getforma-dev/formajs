@@ -101,7 +101,7 @@ Four properties, each mechanical:
   same case.
 - **No loops, no recursion, no function values that escape their callback
   slot.** Every expression terminates by construction; budgets bound cost. A
-  built-in call is charged before it runs, against 400,000 units (array slots
+  built-in call is charged before it runs, against 250,000 units (array slots
   and string characters) per evaluation, so `Array.from({length: 12000000})`
   is refused with `FORMA_E_BUDGET` without building anything (SECURITY.md,
   "Termination and budgets").

@@ -20,11 +20,14 @@
  */
 
 // Captured once, like the allowlist's intrinsics, so a page script that later
-// replaces Object.values cannot make a cost read low.
+// replaces one of them cannot make a cost read low.
 const isArray = Array.isArray;
 const keysOf = Object.keys;
 const valuesOf = Object.values;
 const log2 = Math.log2;
+const max = Math.max;
+const toNumber = Number;
+const toText = String;
 const NONE: unknown[] = [];
 
 type Cost = (recv: unknown, args: unknown[], room: number) => number;
@@ -33,7 +36,23 @@ type Cost = (recv: unknown, args: unknown[], room: number) => number;
 const len = (v: unknown): number => (typeof v === 'string' || isArray(v) ? v.length : 0);
 
 /** A count argument as the native reads it, never negative. */
-const count = (v: unknown): number => Math.max(0, Number(v) || 0);
+const count = (v: unknown): number => max(0, toNumber(v) || 0);
+
+/**
+ * An argument read as data, not text: a string's or array's length, an
+ * object's enumerable keys (counted without listing them, and only up to
+ * `room`), or 1.
+ */
+const size = (v: unknown, room: number): number => {
+  if (typeof v === 'string' || isArray(v)) return v.length;
+  let n = 0;
+  if (typeof v === 'object' && v) {
+    for (const key in v) {
+      if (key && ++n > room) break;
+    }
+  }
+  return n || 1;
+};
 
 /**
  * Weigh a value without converting it, stopping once the total passes `room`.
@@ -89,23 +108,31 @@ export function weigh(root: unknown, room: number, depth = -1): number {
 }
 
 /**
- * What one replacement adds to the receiver's length, at most. A `$` pattern in
- * the replacement can insert the match or the text before or after it, so each
- * of its characters may stand for the whole receiver.
+ * What one replacement adds to the receiver's length, at most. With a string
+ * pattern only `` $` `` and `$'` can insert the text before or after the match
+ * (up to the whole receiver) and `$&` the match itself; every other `$` form
+ * is literal or shrinks, so it costs its own length.
+ * Verified by: src/expr/__tests__/native-cost.test.ts > "a $ in a replacement is charged only for what it can insert"
  */
 const grow = (r: unknown, args: unknown[]): number => {
-  const by = String(args[1]);
-  return Math.max(0, by.length * (by.includes('$') ? len(r) + 1 : 1) - String(args[0]).length);
+  const what = toText(args[0]);
+  const by = toText(args[1]);
+  const times = (token: string): number => by.split(token).length - 1;
+  return max(0, by.length + times('$&') * what.length + (times('$`') + times("$'")) * len(r) - what.length);
 };
 
 /**
- * Natives that read their arguments as values, never as text, so a large
- * argument costs them nothing: the predicates `items.filter(Boolean)` and its
- * kin apply to every element.
+ * Natives that read their arguments as values, never as text, so their
+ * arguments are not charged as text. The predicates (`items.filter(Boolean)`
+ * applies one to every element) cost nothing; the others have a row that
+ * charges what they read: a shallow count of elements or keys.
  * Verified by: src/expr/__tests__/native-cost.test.ts > "a predicate native reads a large argument for free"
+ * Verified by: src/expr/__tests__/native-cost.test.ts > "a native that reads its argument as data is charged its element count, not its text"
  */
 export const DATA_ARGS: ReadonlySet<string> = new Set([
   'Array.isArray', 'Boolean', 'Number.isFinite', 'Number.isInteger', 'Number.isNaN',
+  'Array.from', 'Object.entries', 'Object.keys', 'Object.values',
+  'array.concat', 'array.includes', 'array.indexOf', 'array.lastIndexOf',
 ]);
 
 /**
@@ -116,10 +143,16 @@ export const DATA_ARGS: ReadonlySet<string> = new Set([
  * - `array.sort` charges n log n comparisons. The default order converts both
  *   elements to text at every comparison, so an element that is an array adds
  *   its text weight each time.
- * - `Array.from` reads an array-like's `length`; the argument was already
- *   charged as text, so converting that `length` here is bounded.
- * - `Object.keys` / `values` / `entries` charge 8 per element: listing a
- *   string's index keys measured several array slots per key.
+ * - `every`, `some` and `reduce` skip holes without calling back, so on a
+ *   sparse array the step budget does not bound them. A hole measured about
+ *   the cost of an array slot, so they cost the receiver's length.
+ * - `includes`, `indexOf` and `lastIndexOf` compare the search value without
+ *   converting it, but convert `fromIndex` to a number: that is weighed as text.
+ * - `Array.from` converts an array-like's `length` to a number, so the
+ *   array-like is weighed as text before that conversion.
+ * - `Object.keys` / `values` / `entries` charge 16 per element or key: listing
+ *   an object's keys, or a string's index keys, measured several array slots
+ *   per key.
  */
 export const COSTS: Readonly<Record<string, Cost>> = Object.create(null) as Record<string, Cost>;
 
@@ -130,19 +163,26 @@ function rows(cost: Cost, names: string): void {
 // The result is a copy of the receiver, or no longer than it.
 rows(
   (r) => len(r),
-  'array.concat array.filter array.flatMap array.map array.reverse array.slice ' +
-    'string.concat string.toLowerCase string.toUpperCase',
+  'array.filter array.flatMap array.map array.reverse array.slice string.concat string.toLowerCase string.toUpperCase',
 );
 // The receiver is scanned or shared, not copied: a sixteenth per element.
 rows(
   (r) => len(r) / 16,
-  'array.includes array.indexOf array.lastIndexOf string.endsWith string.includes string.indexOf ' +
+  'string.endsWith string.includes string.indexOf ' +
     'string.lastIndexOf string.slice string.startsWith string.substring string.trim string.trimEnd string.trimStart',
 );
-rows((r, a) => Math.max(len(r), count(a[0])), 'string.padEnd string.padStart');
-rows((_, a) => 8 * len(a[0]), 'Object.entries Object.keys Object.values');
+rows((r, a, room) => len(r) / 16 + weigh(a[1], room), 'array.includes array.indexOf array.lastIndexOf');
+// Every index is visited, holes included.
+rows((r) => len(r), 'array.every array.reduce array.some');
+rows((r, a) => {
+  let n = len(r);
+  for (const x of a) n += isArray(x) ? x.length : 1;
+  return n;
+}, 'array.concat');
+rows((r, a) => max(len(r), count(a[0])), 'string.padEnd string.padStart');
+rows((_, a, room) => 16 * size(a[0], room / 16), 'Object.entries Object.keys Object.values');
 rows((r, a, room) => weigh(r, room, (a[0] === undefined ? 1 : count(a[0])) + 1), 'array.flat');
-rows((r, a, room) => weigh(r, room) + len(r) * (a[0] === undefined ? 1 : String(a[0]).length), 'array.join');
+rows((r, a, room) => weigh(r, room) + len(r) * (a[0] === undefined ? 1 : toText(a[0]).length), 'array.join');
 rows((r, a, room) => {
   let per = 3 * len(r);
   if (a[0] === undefined && isArray(r)) {
@@ -157,8 +197,10 @@ rows((r, a) => len(r) * count(a[0]), 'string.repeat');
 rows((r, a) => len(r) + grow(r, a), 'string.replace');
 rows((r, a) => len(r) + (len(r) + 1) * grow(r, a), 'string.replaceAll');
 rows((r) => len(r) + 1, 'string.split');
-rows((_, a) => {
+rows((_, a, room) => {
   const x = a[0];
-  return typeof x === 'object' && x !== null && !isArray(x) ? count((x as { length?: unknown }).length) : len(x);
+  if (typeof x === 'string' || isArray(x)) return len(x);
+  const text = weigh(x, room);
+  return text > room ? text : text + count((x as { length?: unknown } | null)?.length);
 }, 'Array.from');
 Object.freeze(COSTS);

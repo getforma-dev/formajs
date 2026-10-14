@@ -49,7 +49,7 @@ const BIG = Array.from({ length: 1000 }, () => LONG);
 const BIG_ARR = Array.from({ length: 500_000 }, (_, i) => i);
 const BIG_STR = 'y'.repeat(500_000);
 /** Over the budget only through the cost row's multiplier or second term. */
-const MID_STR = 'z'.repeat(250_000);
+const MID_STR = 'z'.repeat(150_000);
 const KEYS_STR = 'k'.repeat(60_000);
 const SHORT = 'q'.repeat(1000);
 const SORTABLE = Array.from({ length: 30_000 }, (_, i) => (i * 7919) % 30_000);
@@ -58,9 +58,11 @@ const NESTED = Array.from({ length: 1000 }, () => INNER);
 /** Scans are charged a sixteenth per element, so these are over 16x the budget. */
 const HUGE_ARR = new Array<number>(7_000_000);
 const HUGE_STR = 's'.repeat(7_000_000);
-const WIDE = Array.from({ length: 300_000 }, () => 0);
+const WIDE = Array.from({ length: 150_000 }, () => 0);
+/** 20,000 own keys: a data-argument native reads 16 units per key. */
+const BIG_OBJ = Object.fromEntries(Array.from({ length: 20_000 }, (_, i) => [`k${i}`, i]));
 
-const HOSTILE_OBJECTS = new WeakSet<object>([BIG, BIG_ARR, SORTABLE, NESTED, HUGE_ARR, WIDE]);
+const HOSTILE_OBJECTS = new WeakSet<object>([BIG, BIG_ARR, SORTABLE, NESTED, HUGE_ARR, WIDE, BIG_OBJ]);
 const HOSTILE_STRINGS = new Set<string>([LONG, BIG_STR, MID_STR, KEYS_STR, SHORT, HUGE_STR]);
 
 /** The benign probes the control uses. */
@@ -72,9 +74,11 @@ function isHostile(v: unknown): boolean {
   if (typeof v === 'string') return HOSTILE_STRINGS.has(v);
   if (typeof v !== 'object' || v === null) return false;
   if (HOSTILE_OBJECTS.has(v)) return true;
-  // An array-like built inside the expression, `{length: 12000000}`.
+  // An array-like built inside the expression, `{length: 12000000}` or
+  // `{length: big}`.
   const length = (v as { length?: unknown }).length;
-  return !isArrayOriginal(v) && typeof length === 'number' && length > BUDGET;
+  if (isArrayOriginal(v)) return false;
+  return (typeof length === 'number' && length > BUDGET) || (typeof length === 'object' && length !== null && HOSTILE_OBJECTS.has(length));
 }
 
 function isProbe(v: unknown): boolean {
@@ -86,6 +90,7 @@ function state(): Record<string, unknown> {
     items: PROBE_ARR, s: PROBE_STR, n: PROBE_NUM,
     big: BIG, bigArr: BIG_ARR, bigStr: BIG_STR, midStr: MID_STR, keysStr: KEYS_STR,
     short: SHORT, sortable: SORTABLE, nested: NESTED, hugeArr: HUGE_ARR, hugeStr: HUGE_STR, wide: WIDE,
+    bigObj: BIG_OBJ,
   };
 }
 
@@ -230,7 +235,8 @@ describe('the cost preflight, native by native (DR-16)', () => {
   it('every allowlisted native refuses an argument heavier than the budget before it runs', () => {
     // `big` is 1,000 references to one 300,000-character string. Converting it
     // to text, which nearly every native does with an array argument, would
-    // build 300 MB; weighing it stops after the first element.
+    // build 300 MB; weighing it stops after the first element. The natives
+    // that read arguments as data are covered by their own test below.
     const problems: string[] = [];
     for (const c of CALLABLES) {
       if (DATA_ARGS.has(c.name)) continue;
@@ -242,6 +248,7 @@ describe('the cost preflight, native by native (DR-16)', () => {
   /** One hostile size per cost row: a receiver, a count or a length over the budget. */
   const SIZE_CASES: Record<string, string> = {
     'array.concat': 'bigArr.concat()',
+    'array.every': 'hugeArr.every(x => x)',
     'array.filter': 'bigArr.filter(x => x)',
     'array.flat': 'nested.flat()',
     'array.flatMap': 'bigArr.flatMap(x => x)',
@@ -250,8 +257,10 @@ describe('the cost preflight, native by native (DR-16)', () => {
     'array.join': 'bigArr.join()',
     'array.lastIndexOf': 'hugeArr.lastIndexOf(1)',
     'array.map': 'bigArr.map(x => x)',
+    'array.reduce': 'hugeArr.reduce((a, x) => a, 0)',
     'array.reverse': 'bigArr.reverse()',
     'array.slice': 'bigArr.slice()',
+    'array.some': 'hugeArr.some(x => x)',
     'array.sort': 'sortable.sort()',
     'string.concat': 'bigStr.concat()',
     'string.endsWith': "hugeStr.endsWith('s')",
@@ -298,8 +307,8 @@ describe('the cost preflight, native by native (DR-16)', () => {
     // 600,000 units as text.
     const rows = Array.from({ length: 2000 }, (_, i) => ({ id: i, body: 'b'.repeat(300) }));
     expect(evaluateExpression(compileExpression('rows.filter(Boolean).length'), scopeOf({ rows }))).toBe(2000);
-    // Two-sided: a native that converts its argument is charged per row. Two
-    // rows of one 300,000-character string: the second passes the budget.
+    // Two-sided: a native that converts its argument is charged per row. A row
+    // holding one 300,000-character string passes the budget.
     let code: unknown;
     try {
       evaluateExpression(compileExpression('rows.map(String)'), scopeOf({ rows: [[LONG], [LONG]] }));
@@ -307,13 +316,96 @@ describe('the cost preflight, native by native (DR-16)', () => {
       code = isExprError(e) ? e.code : e;
     }
     expect(code).toBe('FORMA_E_BUDGET');
-    // And each data-argument native answers on `big` at once.
-    for (const name of DATA_ARGS) {
+    // And each predicate (a data-argument native with no cost row) answers on
+    // `big` at once.
+    const predicates = [...DATA_ARGS].filter((name) => !Object.hasOwn(COSTS, name));
+    expect(predicates.sort()).toEqual(['Array.isArray', 'Boolean', 'Number.isFinite', 'Number.isInteger', 'Number.isNaN']);
+    for (const name of predicates) {
       const o = attempt(`${name}(big)`);
       expect(o.code, name).toBe('answered');
       expect(o.value, name).toBe(name === 'Boolean' || name === 'Array.isArray');
       expect(o.ms, name).toBeLessThan(LONG_TASK_MS);
     }
+  });
+
+  /** Data-argument natives with a row: a shallowly huge argument, or a `fromIndex` heavy as text. */
+  const DATA_CASES: Record<string, string> = {
+    'Array.from': 'Array.from(bigArr)',
+    'Object.entries': 'Object.entries(bigArr)',
+    'Object.keys': 'Object.keys(bigArr)',
+    'Object.values': 'Object.values(bigArr)',
+    'array.concat': 'items.concat(bigArr)',
+    'array.includes': 'items.includes(1, big)',
+    'array.indexOf': 'items.indexOf(1, big)',
+    'array.lastIndexOf': 'items.lastIndexOf(1, big)',
+  };
+
+  it('a native that reads its argument as data is charged its element count, not its text', () => {
+    // Refused: arguments with more elements or keys than the budget, a
+    // `fromIndex` that converts through join, and an array-like whose `length`
+    // would. Completeness first: every data-argument native with a row.
+    expect(Object.keys(DATA_CASES).sort())
+      .toEqual([...DATA_ARGS].filter((name) => Object.hasOwn(COSTS, name)).sort());
+    const problems: string[] = [];
+    for (const [name, src] of Object.entries(DATA_CASES)) problems.push(...shortfalls(name, src));
+    problems.push(...shortfalls('Array.from', 'Array.from({length: big})'));
+    problems.push(...shortfalls('Object.keys', 'Object.keys(bigObj)'));
+    expect(problems).toEqual([]);
+    // Answered (2.0.1 answered them; the text weight of these rows is over the
+    // budget, their element count is not): 6,000 records of about 100 characters.
+    const rows = Array.from({ length: 6000 }, (_, i) => ({
+      id: i, name: `Item ${i}`, price: 12.5 + i, tags: ['new', 'sale'], note: 'lorem ipsum dolor sit amet',
+    }));
+    const byId = Object.fromEntries(rows.map((r) => [r.id, r]));
+    expect(weigh(rows, Infinity)).toBeGreaterThan(BUDGET);
+    const cases: Array<[string, unknown]> = [
+      ['Object.keys(byId).length', 6000],
+      ['Object.values(byId).length', 6000],
+      ['Object.entries(byId).length', 6000],
+      ['Array.from(rows).length', 6000],
+      ['rows.concat(rows).length', 12000],
+      ['rows.indexOf(rows[5])', 5],
+      ['rows.includes(rows[5])', true],
+      ['rows.lastIndexOf(rows[5])', 5],
+    ];
+    for (const [src, value] of cases) expect(outcome(src, { rows, byId }), src).toEqual({ value });
+  });
+
+  it('loose equality charges only an operand it converts', () => {
+    // `==` and `!=` convert an object only against a primitive other than null
+    // or undefined. These convert nothing, and 2.0.1 answered them.
+    const rows = Array.from({ length: 4000 }, (_, i) => ({ id: i, name: `Row ${i}`, note: 'x'.repeat(100) }));
+    const data = { items: rows, total: rows.length };
+    const tree = rows.map((r, i) => ({ id: i, parent: i ? rows[i - 1] : null }));
+    expect(weigh(data, Infinity)).toBeGreaterThan(BUDGET);
+    const st = { data, rows, tree, sel: rows[7] };
+    expect(outcome('data != null', st)).toEqual({ value: true });
+    expect(outcome('data == undefined ? 0 : data.total', st)).toEqual({ value: 4000 });
+    expect(outcome('data == data', st)).toEqual({ value: true });
+    expect(outcome('rows.filter(r => r != sel).length', st)).toEqual({ value: 3999 });
+    expect(outcome('tree.filter(n => n.parent != null).length', st)).toEqual({ value: 3999 });
+    // Two-sided: against a primitive, the object is converted, so it is charged.
+    expect(outcome("data == 'x'", st)).toBe('FORMA_E_BUDGET');
+    expect(outcome('1 != data', st)).toBe('FORMA_E_BUDGET');
+  });
+
+  it('a $ in a replacement is charged only for what it can insert', () => {
+    // `$`, `$$` and `$&` insert at most the replacement or the match; only
+    // `` $` `` and `$'` can insert up to the whole receiver.
+    const desc = 'Price 10 USD, shipping 5 USD. '.repeat(24);
+    const cases: Array<[string, unknown]> = [
+      ["desc.replaceAll('USD', '$')", desc.replaceAll('USD', '$')],
+      ["desc.replaceAll('USD', '$$')", desc.replaceAll('USD', '$$')],
+      ["desc.replaceAll('USD', '[$&]')", desc.replaceAll('USD', '[$&]')],
+      ["desc.replace('USD', '$1')", desc.replace('USD', '$1')],
+    ];
+    for (const [src, value] of cases) expect(outcome(src, { desc }), src).toEqual({ value });
+    // Two-sided: the forms that insert the receiver are charged for it, so on
+    // a 1,000-character string at every position they pass the budget.
+    const s = 'a'.repeat(1000);
+    expect(outcome("s.replaceAll('', '$`')", { s })).toBe('FORMA_E_BUDGET');
+    expect(outcome("s.replaceAll('a', \"$'\")", { s })).toBe('FORMA_E_BUDGET');
+    expect(outcome("s.replace('a', \"$'\").length", { s })).toEqual({ value: 1998 });
   });
 });
 
@@ -345,10 +437,76 @@ describe('the allocation budget (DR-16)', () => {
 
   it('flatMap charges each array its callback returns', () => {
     // The receiver has three elements, so the row charges three; the callback
-    // returns a 300,000-element array each time. The second would take the
+    // returns a 150,000-element array each time. The second would take the
     // evaluation past the budget, so it is refused before flatMap copies it.
     expect(outcome('items.flatMap(x => wide).length', { items: [1, 2, 3], wide: WIDE })).toBe('FORMA_E_BUDGET');
     expect(outcome('items.flatMap(x => [x, x])', { items: [1, 2, 3] })).toEqual({ value: [1, 1, 2, 2, 3, 3] });
+  });
+
+  it('a handler cannot write an array index past the array limit', () => {
+    // `items[4294967294] = 1` gave the array a length of 4,294,967,295, and
+    // every/some/reduce skip holes without a callback, so no step was charged:
+    // the scan ran for minutes. The write is refused, and the scans have rows.
+    const scope = scopeOf({ items: [1, 2, 3], n: 0 });
+    const run = (src: string): unknown => {
+      try {
+        runHandler(compileHandler(src), scope);
+        return 'answered';
+      } catch (e) {
+        return isExprError(e) ? e.code : e;
+      }
+    };
+    expect(run('items[4294967294] = 1; n = items.every((x) => true)')).toBe('FORMA_E_BUDGET');
+    expect(run(`items[${LIMITS.MAX_ARRAY_LENGTH}] = 1`)).toBe('FORMA_E_BUDGET');
+    expect(scope.state['items']).toEqual([1, 2, 3]);
+    expect(scope.state['n']).toBe(0);
+    // Two-sided: an index below the limit is written, holes and all.
+    expect(run('items[3] = 4; items[5] = 6; n = items.length')).toBe('answered');
+    expect(scope.state['n']).toBe(6);
+    expect(run('items[99999] = 7; n = items.some((x) => x === 7)')).toBe('answered');
+    expect(scope.state['n']).toBe(true);
+    // At the limit's edge the write is allowed, and a scan of the million holes
+    // is charged a unit per index, so it is refused, at once.
+    expect(run(`items[${LIMITS.MAX_ARRAY_LENGTH - 1}] = 8; n = items.length`)).toBe('answered');
+    expect(scope.state['n']).toBe(LIMITS.MAX_ARRAY_LENGTH);
+    expect(run('n = items.some((x) => x === 8)')).toBe('FORMA_E_BUDGET');
+  });
+
+  it('a DOM host method does not receive an argument heavier than the budget', () => {
+    // A DOM method converts its arguments to strings; `setAttribute(name, big)`
+    // would also convert it in the attribute guard before the DOM call.
+    const original = Array.prototype.join;
+    let joined = 0;
+    Array.prototype.join = new Proxy(original, {
+      apply(target, self, args: unknown[]) {
+        if (self === BIG) joined++;
+        return Reflect.apply(target, self, args);
+      },
+    });
+    const el = document.createElement('div');
+    const scope = scopeOf({ big: BIG });
+    scope.getters['$el'] = () => hostObject('element', el, '$el');
+    const run = (src: string): unknown => {
+      try {
+        runHandler(compileHandler(src), scope);
+        return 'answered';
+      } catch (e) {
+        return isExprError(e) ? e.code : e;
+      }
+    };
+    try {
+      expect(run("$el.setAttribute('title', big)")).toBe('FORMA_E_BUDGET');
+      expect(run('$el.classList.add(big)')).toBe('FORMA_E_BUDGET');
+      expect(el.hasAttribute('title')).toBe(false);
+      expect(el.className).toBe('');
+      expect(joined, 'join ran on the hostile array').toBe(0);
+      // Two-sided: an ordinary argument reaches the DOM.
+      expect(run("$el.setAttribute('title', 'ok'); $el.classList.add('on')")).toBe('answered');
+      expect(el.getAttribute('title')).toBe('ok');
+      expect(el.className).toBe('on');
+    } finally {
+      Array.prototype.join = original;
+    }
   });
 
   it('an operator does not convert a value heavier than the budget', () => {

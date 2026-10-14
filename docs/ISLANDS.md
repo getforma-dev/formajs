@@ -102,7 +102,8 @@ no opt-out (DR-21). Handing props to anything that merges them into another
 object — `createStore`, a deep-merge helper, an `Object.assign` chain — cannot
 carry a nested pollution key into a prototype. The pass is iterative with a
 `WeakSet`, so neither deeply nested nor cyclic props can overflow the stack or
-loop. A shared `__forma_islands` block is parsed and stripped once per page.
+loop. A shared `__forma_islands` block is parsed and stripped once per
+`activateIslands` call.
 Props must be a JSON object or array: any other JSON value (`null`, a number, a
 string, a boolean) marks the island `error`, and `FORMA_E_ISLAND_PROPS` is
 logged in every build.

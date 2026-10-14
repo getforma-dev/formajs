@@ -385,11 +385,6 @@ function guardArgs(method: string, args: unknown[], at: number): void {
     if (!(n >= 0) || n > LIMITS.MAX_REPEAT_COUNT) {
       throw exprError('FORMA_E_BUDGET', `repeat() is capped at ${LIMITS.MAX_REPEAT_COUNT}`, at);
     }
-  } else if (method === 'padStart' || method === 'padEnd') {
-    const n = Number(args[0]);
-    if (!(n >= 0) || n > LIMITS.MAX_STRING_LENGTH) {
-      throw exprError('FORMA_E_BUDGET', 'pad length is too large', at);
-    }
   } else if (method === 'flat') {
     const n = args.length === 0 ? 1 : Number(args[0]);
     if (!Number.isFinite(n) || n < 0 || n > LIMITS.MAX_FLAT_DEPTH) {
@@ -667,7 +662,13 @@ export function evalExpr(node: Expr, ctx: EvalCtx): unknown {
       // Switched through a local so the exhaustiveness check below narrows the
       // OPERATOR to never, not the node it came from.
       const op: BinaryOp = node.op;
-      if (op !== '===' && op !== '!==') {
+      // `==` and `!=` convert an object only against a primitive that is not
+      // null or undefined: `x != null` and object-to-object compare nothing.
+      // Verified by: src/expr/__tests__/native-cost.test.ts > "loose equality charges only an operand it converts"
+      if (
+        op !== '===' && op !== '!==' &&
+        !((op === '==' || op === '!=') && (l == null || r == null || typeof l === typeof r))
+      ) {
         coerce(ctx, l, node.i);
         coerce(ctx, r, node.i);
       }
@@ -769,6 +770,12 @@ function writeMember(recv: unknown, key: string, value: unknown, at: number): vo
   if (kind === 'object' || kind === 'array') {
     if (kind === 'array' && key === 'length') {
       throw exprError('FORMA_E_ASSIGN_DENIED', 'array length is not writable', at);
+    }
+    // An index at or past the array limit would give the array that length,
+    // sparse, and a scan of it would visit every hole.
+    // Verified by: src/expr/__tests__/native-cost.test.ts > "a handler cannot write an array index past the array limit"
+    if (kind === 'array' && /^\d+$/.test(key) && Number(key) >= LIMITS.MAX_ARRAY_LENGTH) {
+      throw exprError('FORMA_E_BUDGET', `array index ${key} is past the ${LIMITS.MAX_ARRAY_LENGTH}-element limit`, at);
     }
     const desc = Object.getOwnPropertyDescriptor(recv as object, key);
     if (desc && !Object.hasOwn(desc, 'value')) {
