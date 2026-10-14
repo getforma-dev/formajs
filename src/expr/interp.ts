@@ -75,6 +75,13 @@ interface Frame {
 export interface Meter {
   steps: number;
   cost: number;
+  /**
+   * The most one charge may be counted to and still be held this task (none
+   * when absent). Set once a binding has had to wait, so the bindings after it
+   * count each charge only this far: a light one fits and runs now, a heavier
+   * one is refused after counting the cap, and waits too (FORMA-173).
+   */
+  cap?: number;
 }
 
 export interface EvalCtx {
@@ -89,6 +96,8 @@ export interface EvalCtx {
   stepsBefore: boolean;
   /** Whether it had spent allocation units: steps spent do not change whether a charge fits. */
   unitsBefore: boolean;
+  /** The task's cap on one charge (`Meter.cap`), or Infinity. */
+  cap: number;
 }
 
 /** Prototype of a plain object literal, captured once. */
@@ -119,7 +128,8 @@ export function makeCtx(scope: ScopeLike, meter?: Meter | null): EvalCtx {
   const base = cur ?? meter;
   const steps = base ? base.steps : 0;
   const cost = base ? base.cost : 0;
-  return { scope, frame: null, steps, budget: stepBudget, cost, stepsBefore: steps > 0, unitsBefore: cost > 0 };
+  const cap = base?.cap ?? Infinity;
+  return { scope, frame: null, steps, budget: stepBudget, cost, stepsBefore: steps > 0, unitsBefore: cost > 0, cap };
 }
 
 /** Make `ctx` the running evaluation; returns the one it was nested in. */
@@ -163,35 +173,40 @@ function step(ctx: EvalCtx, at: number): void {
 const NAMES: Record<string, Record<string, string>> = Object.create(null) as Record<string, Record<string, string>>;
 
 /**
- * Units left in the task's allocation budget, which is as far as a cost is
- * counted. A binding that does not fit is priced only that far: once a task
- * has spent its budget, the bindings waiting for the next one are refused at
- * almost no cost, however heavy their values (FORMA-173). A charge refused
- * with no units spent before it was counted against the whole budget, so its
- * refusal is final (`charge`).
+ * Units left in the task's allocation budget, or the task's cap on one charge
+ * if that is lower: as far as a cost is counted. A binding that does not fit
+ * is priced only that far, so once a task has spent its budget, or a binding
+ * in it has had to wait, the bindings after it are refused at little cost
+ * however heavy their values (FORMA-173). A charge refused with no units
+ * spent before it was counted against the whole budget, so its refusal is
+ * final (`charge`).
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "bindings that each weigh most of the budget are refused cheaply while they wait"
  */
 export function room(ctx: EvalCtx): number {
-  return LIMITS.ALLOC_BUDGET - ctx.cost;
+  return Math.min(LIMITS.ALLOC_BUDGET - ctx.cost, ctx.cap);
 }
 
 /**
  * Charge `units` to the evaluation, or refuse with `FORMA_E_BUDGET`. A NaN or
  * negative charge is refused too, so a cost that cannot be read fails closed.
  * A refused charge is taken back: the call it priced never runs, so it does
- * not count against the task's meter. It is retried in the next task only if
- * the task had spent allocation units before this evaluation, and is not
- * larger than the whole budget (or unreadable): no later task could hold that,
- * so it is reported now (FORMA-028 review, S2).
+ * not count against the task's meter. It is retried in the next task if it
+ * was counted past the task's cap on one charge (a lower bound, never
+ * admitted), or if the task had spent allocation units before this
+ * evaluation; never if it is larger than the whole budget (or unreadable): no
+ * later task could hold that, so it is reported now (FORMA-028 review, S2).
+ * A charge is sized that exactly only when a cost-table row sizes it directly
+ * (`Array.from`'s length); a value weighed late in a busy task is counted only
+ * to the room left, so it waits once and is weighed in full when it runs first.
  * Verified by: src/expr/__tests__/native-cost.test.ts > "the budget is per evaluation and cumulative across its calls"
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "a binding too heavy for any task is priced once and reported once"
  */
 export function charge(ctx: EvalCtx, units: number, what: string, at: number): void {
   const spent = ctx.cost;
-  if (!(units >= 0 && (ctx.cost += units) <= LIMITS.ALLOC_BUDGET)) {
+  if (!(units >= 0 && units <= ctx.cap && (ctx.cost += units) <= LIMITS.ALLOC_BUDGET)) {
     ctx.cost = spent;
     const err = exprError('FORMA_E_BUDGET', `${what} would exceed the ${LIMITS.ALLOC_BUDGET}-unit allocation budget`, at);
-    throw over(err, ctx.unitsBefore && units <= LIMITS.ALLOC_BUDGET);
+    throw over(err, units <= LIMITS.ALLOC_BUDGET && (units > ctx.cap || ctx.unitsBefore));
   }
 }
 

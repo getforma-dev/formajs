@@ -98,8 +98,12 @@ describe('the task budget (FORMA-028)', () => {
     // The middle binding dispatches an event each time it is evaluated, then
     // asks for 300,000 units. Deferring it would price it again in every retry
     // tick until it ran first (review S2); a charge over the whole budget is
-    // final instead. Two-sided: the third binding, which fits a task of its
-    // own, is still deferred and renders in the next one.
+    // final instead. That holds for a charge a cost-table row sizes directly,
+    // as `Array.from`'s length; a weighed value too heavy for any task that
+    // arrives late in a busy task is counted only to the room left, so it
+    // waits once, is weighed in full when it runs first, and is then reported
+    // once. Two-sided: the third binding, which fits a task of its own, is
+    // still deferred and renders in the next one.
     let priced = 0;
     container.addEventListener('priced', () => { priced++; });
     container.innerHTML = `<div data-forma-state='{}'>
@@ -159,6 +163,38 @@ describe('the task budget (FORMA-028)', () => {
     const out = await widget({ a: Array.from({ length: 1250 }, (_, i) => i), b: counted(62_000) }, p('a') + p('b').repeat(20));
     expect(out.slice(1).every((t) => t.length === 360_889)).toBe(true);
     expect(reads.n).toBe((20 * 2 + 1) * 62_000);
+    expect(codes()).toEqual([]);
+  });
+
+  it('a light binding after one that waits renders in the same task', async () => {
+    // FORMA-173's review (G1), its light-delay page: a moderate binding, then a
+    // heavy one that has to wait, then light ones. Once a binding waits, each
+    // later charge is counted only to a cap (10,000 units): a case mapping, a
+    // joined list of fifty names (about 1,150 units) and a binding that
+    // charges nothing all fit and render in the mount task, as before
+    // FORMA-173; with the rest of the task counted as spent they each waited a
+    // retry tick. Two-sided: a 20,000-unit list after the wait is past the cap
+    // and waits too, then renders.
+    const names = Array.from({ length: 50 }, (_, i) => `name-${i}`.padEnd(20, '.'));
+    container.innerHTML = `<div data-forma-state='${JSON.stringify({ label: 'item', names, big: Array.from({ length: 5000 }, (_, i) => i) })}'>
+      <p data-out data-text="{${spending(100_000)}}">server</p>
+      <p data-out data-text="{${spending(200_000)}}">server</p>
+      ${'<p data-out data-text="{label.toUpperCase()}">server</p>'.repeat(200)}
+      ${'<p data-out data-text="{names.join(\', \')}">server</p>'.repeat(50)}
+      ${'<p data-out data-text="{label}">server</p>'.repeat(200)}
+      <p data-out data-text="{big}">server</p>
+    </div>`;
+    runtime.mount(container);
+    const out = texts();
+    const joined = names.join(', ');
+    expect(out.slice(0, 2)).toEqual(['99990', 'server']);
+    expect(out.slice(2, 202).every((t) => t === 'ITEM'), 'case mappings render in the mount task').toBe(true);
+    expect(out.slice(202, 252).every((t) => t === joined), 'joined lists render in the mount task').toBe(true);
+    expect(out.slice(252, 452).every((t) => t === 'item'), 'free bindings render in the mount task').toBe(true);
+    expect(out[452]).toBe('server');
+    await settle();
+    expect(texts()[1]).toBe('199990');
+    expect(texts()[452]).toHaveLength(Array.from({ length: 5000 }, (_, i) => i).join(',').length);
     expect(codes()).toEqual([]);
   });
 

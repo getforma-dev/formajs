@@ -165,7 +165,6 @@ import {
   compileHandler,
   evaluateExpression,
   GROW,
-  LIMITS,
   hostFn,
   hostObject,
   isExprError,
@@ -1201,6 +1200,7 @@ const staleCells = new Set<() => unknown>();
 function begin(e: Event): void {
   if (e !== meterEvent) {
     meter.steps = meter.cost = 0;
+    meter.cap = Infinity;
     meterEvent = e;
   }
   spend();
@@ -1217,6 +1217,7 @@ function spend(): void {
 function nextTask(): void {
   armed = false;
   meter.steps = meter.cost = 0;
+  meter.cap = Infinity;
   meterEvent = null;
   if (!deferred) return;
   deferred = false;
@@ -1229,18 +1230,31 @@ function nextTask(): void {
 }
 
 /**
- * Re-run the binding (or computed) being evaluated in the next task. Its charge
- * did not fit the room left, so the rest of this task's allocation counts as
- * spent: every later binding in the task is refused at its first unit, at
- * almost no cost, instead of each weighing its value up to the room left
- * (FORMA-173: twenty bindings each a little heavier than that room made one
- * 57 ms task). One that charges nothing still renders now.
+ * After a binding has had to wait, the most one charge in this task is counted
+ * to. A light binding after it (a case mapping, a formatted number, a joined
+ * list of fifty names, about 1,150 units) is counted in full and still fits
+ * the room left, so it renders now; a heavier value is refused after counting
+ * this far, and waits too. A list longer than the cap is refused on its
+ * length alone. Without a cap, each binding after the first to wait weighed
+ * its value up to the room left (twenty a little heavier than that room: a
+ * 57 ms task at 4x); with a cap of zero, a light binding waited a retry tick
+ * for every heavy one ahead of it, 1 or 2 frames of stale text (FORMA-173
+ * review, G1). Measured at 4x: with 1,000 the fifty-name join still waited;
+ * with 10,000 it renders in the mount task, and the waiting cases stay under
+ * 30 ms a task.
+ * Verified by: src/__tests__/runtime-task-budget.test.ts > "a light binding after one that waits renders in the same task"
+ */
+const WAITING_CAP = 10_000;
+
+/**
+ * Re-run the binding (or computed) being evaluated in the next task, and cap
+ * each charge the rest of this task counts (`WAITING_CAP`).
  * Verified by: src/__tests__/runtime-task-budget.test.ts > "bindings that each weigh most of the budget are refused cheaply while they wait"
  */
 function later(): void {
   retries();
   deferred = true;
-  meter.cost = LIMITS.ALLOC_BUDGET;
+  meter.cap = WAITING_CAP;
   spend();
 }
 
@@ -2471,6 +2485,7 @@ function destroyRuntime(): void {
   // Nothing mounted is left to retry, and the next init starts a fresh task.
   staleCells.clear();
   meter.steps = meter.cost = 0;
+  meter.cap = Infinity;
 }
 
 /**

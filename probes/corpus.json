@@ -2160,8 +2160,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "    throw over(err, ctx.unitsBefore && units <= LIMITS.ALLOC_BUDGET);",
-  "replace": "    throw over(err, ctx.unitsBefore);",
+  "find": "    throw over(err, units <= LIMITS.ALLOC_BUDGET && (units > ctx.cap || ctx.unitsBefore));",
+  "replace": "    throw over(err, units > ctx.cap || ctx.unitsBefore);",
   "note": "a charge larger than the whole budget is deferred when the task had spent anything, so it is priced again in every retry tick before it is reported (FORMA-028 review, S2). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a binding too heavy for any task is priced once and reported once\""
  },
  {
@@ -2170,7 +2170,7 @@
   "tags": [
    "correctness"
   ],
-  "find": "  return LIMITS.ALLOC_BUDGET - ctx.cost;",
+  "find": "  return Math.min(LIMITS.ALLOC_BUDGET - ctx.cost, ctx.cap);",
   "replace": "  return LIMITS.ALLOC_BUDGET;",
   "note": "a cost is counted to the whole budget, so every binding waiting for the next task weighs its value in full again in every retry tick: twenty such bindings made a 53 ms task at 4x (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"bindings that each weigh most of the budget are refused cheaply while they wait\""
  },
@@ -2180,8 +2180,8 @@
   "tags": [
    "correctness"
   ],
-  "find": "unitsBefore: cost > 0 };",
-  "replace": "unitsBefore: steps + cost > 0 };",
+  "find": "unitsBefore: cost > 0, cap };",
+  "replace": "unitsBefore: steps + cost > 0, cap };",
   "note": "an allocation refusal is deferred because the task spent steps, though steps do not change whether a charge fits, so a binding over the budget on its own is priced again in the next task before it is reported (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"an allocation refusal after a task spent only steps is reported at once\""
  },
  {
@@ -2190,8 +2190,28 @@
   "tags": [
    "correctness"
   ],
-  "find": "  meter.cost = LIMITS.ALLOC_BUDGET;\n  spend();",
+  "find": "  meter.cap = WAITING_CAP;\n  spend();",
   "replace": "  spend();",
-  "note": "after a binding is deferred the room it did not fit stays open, so each later binding a little heavier than it weighs its value up to that room before it is refused: twenty made a 57 ms task at 4x (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"bindings that each weigh most of the budget are refused cheaply while they wait\""
+  "note": "after a binding waits, the bindings after it count each charge to the room left, so each a little heavier than that room weighs its value that far before it is refused: twenty made a 57 ms task at 4x (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"bindings that each weigh most of the budget are refused cheaply while they wait\""
+ },
+ {
+  "id": "runtime/waiting-cap-zero",
+  "file": "src/runtime.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "const WAITING_CAP = 10_000;",
+  "replace": "const WAITING_CAP = 0;",
+  "note": "once a binding waits, every later binding that charges anything waits a retry tick per heavy binding ahead of it, 1 or 2 frames of stale text (FORMA-173 review, G1). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a light binding after one that waits renders in the same task\""
+ },
+ {
+  "id": "expr/cap-admits-lower-bound",
+  "file": "src/expr/interp.ts",
+  "tags": [
+   "security"
+  ],
+  "find": "units >= 0 && units <= ctx.cap && (ctx.cost += units)",
+  "replace": "units >= 0 && (ctx.cost += units)",
+  "note": "a charge counted only to the cap is a lower bound, and is admitted against the room left: a value heavier than the cap is converted in full in a task that had no room for it (FORMA-173). Verified by: src/__tests__/runtime-task-budget.test.ts > \"a light binding after one that waits renders in the same task\""
  }
 ]
