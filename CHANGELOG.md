@@ -171,6 +171,44 @@ All notable changes to this project will be documented in this file.
 
 ### Changed
 
+- **List adoption fails the island on a row-count mismatch instead of deleting
+  rows** (FORMA-123, DR-8). Server rows without `data-forma-key` are matched by
+  index. Before, a client array shorter than the server's rows had the extra
+  rows removed and a longer one had rows rendered fresh, silently (ksx's #5 lost
+  the server rows absent from a list's array before its state was seeded). Now,
+  when the counts differ (including an empty array, or an empty server region
+  with items), no row is adopted, removed or rendered: the island keeps the
+  server's rows and is marked `error`, and `FORMA_E_HYDRATE_LIST_COUNT`, naming
+  both counts, is logged in every build and passed to `onError` handlers
+  (source `'hydration'`). An island in `error` is inert: the listeners attached
+  during adoption are removed, on the server's elements and on any adoption
+  built through `h()` before the failure, and the bindings it adopted are
+  disposed, also for a direct `hydrateIsland()` caller whose root lives on.
+  This holds for any adoption that fails part-way.
+  **Adoption now runs in a batch.** A signal written during adoption (in a
+  `ref`, say) takes its new value at once, but the effects that write triggers
+  in other islands or roots run when the walk ends, not during it. Adoption's
+  own bindings still run when they are created. So a failing island detaches
+  nothing that another island or `mount()` root built. Such a root's new rows
+  are no longer owned by the failing island either; before, they were disposed
+  with it, also on 2.0.x for an island failing by a throwing reactive child. Nodes adoption replaced or
+  added before the failing list (a tag mismatch, a fresh keyed row) stay as it
+  left them. `mount()` and `hydrateIsland()` keep `data-forma-ssr` and do not
+  throw, as for `FORMA_E_HYDRATE_NODE`. Equal counts adopt as before, and rows
+  that carry `data-forma-key` keep matching by key. Applications whose state
+  reaches the island from the server's data see no change.
+  **Migration:** the server writes an empty list region when the list's data
+  is not an array, so a list the client computes for itself inside a
+  server-rendered island was rendered fresh on 2.0.x and now leaves the island
+  inert. Start that list's signal empty and fill it after activation (an empty
+  array adopts the empty region), or render the list in the browser only.
+  Core's ESM entry grows by 365 B gzipped (28,411 to 28,776 B, gate 30,000 B
+  unchanged) and the CDN ESM bundle by 323 B (27,303 to 27,626 B, gate
+  29,000 B). A page with one island, bundled from the core entry with esbuild
+  (minified, gzip -9) as DR-35 counts N2, grows by about 205 B (a counter from
+  12,595 to 12,801 B). The CDN runtimes do not include adoption; each shrinks by
+  8 B, because a module-level `Symbol.for` call in the adoption code, kept in
+  their bundles as a side effect, is gone.
 - **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
   reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
   deploy every client of a server reconnected in the same instant. The delay is

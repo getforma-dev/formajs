@@ -65,6 +65,24 @@ export function runWithOwner<T>(owner: Owner | null, fn: () => T): T {
   }
 }
 
+/**
+ * @internal Run `fn` with no current root and no current owner: the state an
+ * effect re-run normally has, so roots and disposers created by effects that
+ * `fn` flushes belong to no caller (closeBatchWithoutRoot in batch.ts).
+ */
+export function runWithoutRoot<T>(fn: () => T): T {
+  const prevRoot = currentRoot;
+  const prevOwner = currentOwner;
+  currentRoot = null;
+  currentOwner = null;
+  try {
+    return fn();
+  } finally {
+    currentRoot = prevRoot;
+    currentOwner = prevOwner;
+  }
+}
+
 /** @internal — register a disposer directly with a specific owner. */
 export function registerOwnerDisposer(owner: Owner, dispose: () => void): void {
   owner.disposers.push(dispose);
