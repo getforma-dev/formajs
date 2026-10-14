@@ -9,7 +9,7 @@
  */
 
 import { createUnownedRoot } from 'forma/reactive';
-import { hydrateIsland } from './hydrate.js';
+import { hydrateIslandOrFail, isHydrateNodeError, reportHydrateNodeError } from './hydrate.js';
 
 // ---------------------------------------------------------------------------
 // Public API
@@ -61,10 +61,25 @@ export function mount(
   if (target.hasAttribute('data-forma-ssr')) {
     // SSR content present — hydrate in-place using descriptor-based adoption.
     // The component MUST run inside createRoot so effects are tracked.
+    let failure: Error | undefined;
     createUnownedRoot((dispose) => {
       disposeRoot = dispose;
-      active = hydrateIsland(component, target);
+      try {
+        active = hydrateIslandOrFail(component, target);
+      } catch (err) {
+        if (!isHydrateNodeError(err)) throw err;
+        failure = err;
+      }
     });
+    // A detached DOM node from the component cannot be adopted. In 2.0.x that
+    // is reported, not thrown, so the statements after mount() still run: the
+    // server's DOM stays as served, with its data-forma-ssr, and the effects the
+    // component created are disposed.
+    // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "mount() of a detached DOM node keeps the server DOM, logs the code, disposes its effects and does not throw"
+    if (failure) {
+      disposeRoot();
+      reportHydrateNodeError(failure);
+    }
   } else {
     // Normal mount — clear and append
     const dom = createUnownedRoot((dispose) => {

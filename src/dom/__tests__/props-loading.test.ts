@@ -23,9 +23,9 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (_el, props) => {
+      Comp: (el, props) => {
         receivedProps = props;
-        return document.createElement('div');
+        return el;
       },
     });
 
@@ -44,9 +44,9 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (_el, props) => {
+      Comp: (el, props) => {
         receivedProps = props;
-        return document.createElement('div');
+        return el;
       },
     });
 
@@ -64,9 +64,9 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Comp: (_el, props) => {
+      Comp: (el, props) => {
         receivedProps = props;
-        return document.createElement('div');
+        return el;
       },
     });
 
@@ -92,16 +92,20 @@ describe('props loading', () => {
     `;
 
     activateIslands({
-      Broken: () => document.createElement('div'),
-      Working: () => {
+      Broken: (el) => el,
+      // Wires its server DOM itself and returns its own element (2.0.1's
+      // imperative pattern), so it activates like any working island.
+      Working: (el) => {
         siblingActivated = true;
-        return document.createElement('div');
+        return el;
       },
     });
 
     expect(document.querySelector('[data-forma-island="0"]')!
       .getAttribute('data-forma-status')).toBe('error');
     expect(siblingActivated).toBe(true);
+    expect(document.querySelector('[data-forma-island="1"]')!
+      .getAttribute('data-forma-status')).toBe('active');
     errorSpy.mockRestore();
   });
 
@@ -121,9 +125,9 @@ describe('props loading', () => {
     island.setAttribute('data-forma-props', '{"label":"Say \\"hello\\""}');
 
     activateIslands({
-      Comp: (_el, props) => {
+      Comp: (el, props) => {
         receivedProps = props;
-        return document.createElement('div');
+        return el;
       },
     });
 
