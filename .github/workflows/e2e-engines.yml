@@ -31,10 +31,11 @@ jobs:
   e2e:
     name: e2e (${{ matrix.browser }})
     runs-on: ubuntu-latest
-    # Not yet measured in CI for Firefox and WebKit. ci.yml's Chromium e2e job
-    # measured 5.4m end to end; WebKit's `--with-deps` installs more system
-    # packages. Locally (macOS) all three engines run the 45 tests in ~20s.
-    timeout-minutes: 15
+    # MEASURED in CI on the PR that added this (FORMA-027, cold browser
+    # cache): whole job 55s chromium, 1m6s firefox, 1m19s webkit, of which
+    # `install --with-deps` was 26s / 22s / 40s and the 45 tests 13s / 30s /
+    # 25s. 10 is >7x the slowest and bounds a slow apt mirror.
+    timeout-minutes: 10
     strategy:
       # Each engine reports on its own: one red engine does not hide another.
       fail-fast: false
