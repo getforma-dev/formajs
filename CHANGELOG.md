@@ -381,7 +381,7 @@ All notable changes to this project will be documented in this file.
   published file can be inlined as it is. Copying it into an application's
   assets as `forma-runtime.js` is the build's half (FORMA-175). It mints the
   module with `trustedHtml()`, so the frame's policy may require Trusted Types.
-  Size: 38,492 B gzipped, gated at 38,500 B (`scripts/check-size.mjs`, the
+  Size: 38,953 B gzipped, gated at 39,000 B (`scripts/check-size.mjs`, the
   README's table).
   Tests: `src/__tests__/runtime-frame.test.ts` ("takes one port from its
   parent, renders each module in tier (c) and answers only ready, resize and

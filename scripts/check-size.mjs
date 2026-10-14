@@ -75,11 +75,11 @@ export const GATES = [
   },
   {
     // The preview frame's runtime (FORMA-128), written inline into every
-    // preview document. Gated from its first measurement with FORMA-126/127's
-    // trustedHtml (38,492 B), rounded up to the next 500 B, as L-51 sets the
-    // runtime gates.
+    // preview document. Gated from its measurement on `main` with
+    // FORMA-126/127 and FORMA-173 and #30's review fixes (38,953 B), rounded
+    // up to the next 500 B, as L-51 sets the runtime gates.
     entry: 'dist/formajs-frame.global.js',
-    limit: 38500,
+    limit: 39000,
     note: 'preview frame runtime (one classic script, inlined by the server)',
   },
   {
