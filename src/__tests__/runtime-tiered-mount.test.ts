@@ -22,7 +22,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import rawConfig from '../../tsup.config';
 import * as runtime from '../runtime';
-import type { GrantReport, MountHandle, MountOptions } from '../runtime';
+import type { GrantReport, MountHandle, MountOptions, TrustedHtml } from '../runtime';
 import { compileExpression, evaluateExpression, hostObject, isExprError, isHost, type Bound } from '../expr';
 import { ELEMENT_HOST_PROPS, ELEMENT_METHOD_RESULT, EVENT_HOST_PROPS } from '../expr/allowlist';
 import { DEPRECATIONS } from '../deprecated';
@@ -53,7 +53,7 @@ function page(): HTMLElement {
   return document.getElementById('root')!;
 }
 
-function mountOn(root: Element, markup: string, options: MountOptions): MountHandle {
+function mountOn(root: Element, markup: string | TrustedHtml, options: MountOptions): MountHandle {
   const handle = mountMarkup(root, markup, options);
   handles.push(handle);
   return handle;
