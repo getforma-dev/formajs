@@ -106,6 +106,16 @@
   "note": "stale style properties never removed on reactive style change"
  },
  {
+  "id": "el/textarea-text-bound-as-node",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (tagName === 'textarea' && isReactiveTextOnly(children)) {",
+  "replace": "  if (false) {",
+  "note": "h() binds a textarea's reactive text as a text node: Phase 1 and Phase 2 disagree once the user types"
+ },
+ {
   "id": "el/xlink-guard-off",
   "file": "src/dom/element.ts",
   "tags": [
@@ -114,6 +124,86 @@
   "find": "    if (isUnsafeAttrWrite(el.localName, key, strVal)) {\n      if (__DEV__) warnDropped(el, key, 'unsafe-URL');\n      el.removeAttributeNS(XLINK_NS, localName);\n      return;\n    }",
   "replace": "",
   "note": "reactive xlink:href writes javascript: URLs"
+ },
+ {
+  "id": "form-control/adopt-never-repairs",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (isEditedByUser(el, key) || holdsValue(el, key, value)) return;\n  writeFormControlProperty(el, key, value);",
+  "replace": "  if (isEditedByUser(el, key) || holdsValue(el, key, value)) return;",
+  "note": "adoption never writes the client's value, so an untouched control the server got wrong (an older server's select) stays wrong"
+ },
+ {
+  "id": "form-control/adopt-overwrites-edits",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (isEditedByUser(el, key) || holdsValue(el, key, value)) return;",
+  "replace": "  if (holdsValue(el, key, value)) return;",
+  "note": "042e353's adoption-time write: text typed before activation is overwritten (FORMA-003, DR-5)"
+ },
+ {
+  "id": "form-control/adopt-writes-when-agreeing",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (isEditedByUser(el, key) || holdsValue(el, key, value)) return;",
+  "replace": "  if (isEditedByUser(el, key)) return;",
+  "note": "adoption rewrites controls whose server value already equals the client's (DR-5: write nothing on agreement)"
+ },
+ {
+  "id": "form-control/select-first-option-is-an-edit",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (initial < 0 && !(select.size > 1)) {",
+  "replace": "  if (false) {",
+  "note": "a select with no selected option counts its default first option as a user edit, so an older server's select is never repaired"
+ },
+ {
+  "id": "form-control/textarea-default-keeps-markers",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "  if (server !== el.defaultValue) el.defaultValue = server;",
+  "replace": "",
+  "note": "marker text from a pre-FORMA-002 server stays in an edited textarea's default value, so a form reset restores it"
+ },
+ {
+  "id": "form-control/textarea-edit-ignored",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (edited || el.value === text) return;",
+  "replace": "  if (el.value === text) return;",
+  "note": "adoption overwrites text typed into a server-rendered textarea before activation (FORMA-003, DR-5)"
+ },
+ {
+  "id": "form-control/textarea-writes-default-only",
+  "file": "src/dom/form-control.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  if (el.value !== text) el.value = text;",
+  "replace": "",
+  "note": "a textarea's reactive text stops reaching the control after the user types (the dirty value ignores the default)"
+ },
+ {
+  "id": "fragment/hydrating-builds-real-fragment",
+  "file": "src/dom/element.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    if (hydrating) return { type: 'fragment', children } as unknown as DocumentFragment;\n    const frag = document.createDocumentFragment();",
+  "replace": "    const frag = document.createDocumentFragment();",
+  "note": "h(Fragment) builds a detached DocumentFragment while hydrating: a root Fragment stays inert after activation (FORMA-003, DR-7 a)"
  },
  {
   "id": "history/clone-identity",
@@ -142,6 +232,76 @@
   "find": "      if (v === false || v == null) {\n        el.removeAttribute(attrKey);",
   "replace": "      if (v == null) {\n        el.removeAttribute(attrKey);",
   "note": "adoption leaves disabled=\"false\" on the element"
+ },
+ {
+  "id": "hydrate/form-updates-treated-as-adoption",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "          if (adopted) {\n            writeFormControlProperty(el, key, next);",
+  "replace": "          if (adopted) {\n            adoptFormControlProperty(el, key, next);",
+  "note": "every update after activation skips an edited control, so a controlled input stops following its signal"
+ },
+ {
+  "id": "hydrate/nested-fragment-skipped",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "      cursor = adoptChildren(child.children, parent, cursor, rangeEnd);",
+  "replace": "      void 0;",
+  "note": "a nested Fragment is skipped: its nodes stay unbound and every sibling after it is matched one node off"
+ },
+ {
+  "id": "hydrate/node-root-reports-success",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    throw new Error(\n      '[forma] Hydration: the component returned a DOM node, which cannot be adopted. ' +\n      'Build the tree with h() (Fragments included) so it can be matched to the server-rendered HTML.',\n    );",
+  "replace": "    void 0;",
+  "note": "a DOM node returned while hydrating is treated as success: data-forma-ssr removed, island marked active, nothing bound"
+ },
+ {
+  "id": "hydrate/range-root-not-adopted",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "  } else if (isFragmentDescriptor(descriptor) || isShowDescriptor(descriptor) || isListDescriptor(descriptor)) {",
+  "replace": "  } else if (false) {",
+  "note": "hydrateIsland ignores a Fragment root and reports success with nothing adopted (FORMA-003)"
+ },
+ {
+  "id": "hydrate/show-fragment-branch-skipped",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    adoptChildren(desc.children, regionStart.parentNode as Element, regionStart.nextSibling, regionEnd);",
+  "replace": "    void 0;",
+  "note": "a Fragment branch of createShow is not adopted: its server nodes keep no handlers until the branch is rebuilt"
+ },
+ {
+  "id": "hydrate/textarea-title-bound-by-node",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "contract"
+  ],
+  "find": "  if ((ssrEl.localName === 'textarea' || ssrEl.localName === 'title') && isReactiveTextOnly(desc.children)) {",
+  "replace": "  if (false) {",
+  "note": "textarea/title reactive text walked as marker-delimited child nodes, which RCDATA does not have (FORMA-002 output)"
+ },
+ {
+  "id": "hydrate/title-never-written",
+  "file": "src/dom/hydrate.ts",
+  "tags": [
+   "correctness"
+  ],
+  "find": "    } else if (el.textContent !== text) {\n      el.textContent = text;\n    }",
+  "replace": "    }",
+  "note": "a title's reactive text is never written: marker text from an older server stays, updates never show"
  },
  {
   "id": "hydrate/true-as-string",

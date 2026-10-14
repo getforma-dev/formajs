@@ -8,8 +8,16 @@
  */
 
 import { internalEffect, createSignal, untrack, createRoot, registerDisposer, __DEV__ } from 'forma/reactive';
-import { h } from './element.js';
-import { isFormControlProperty, writeFormControlProperty } from './form-control.js';
+import { h, Fragment } from './element.js';
+import {
+  adoptFormControlProperty,
+  adoptTextareaText,
+  childText,
+  isFormControlProperty,
+  isReactiveTextOnly,
+  writeFormControlProperty,
+  writeTextareaText,
+} from './form-control.js';
 import { reconcileList, createList } from './list.js';
 import { createShow } from './show.js';
 import { isEventHandlerAttr, isRawHtmlAttr, isUnsafeAttrWrite } from '../security/url-safety.js';
@@ -63,6 +71,16 @@ export interface ListDescriptor {
   options?: Record<string, unknown>;
 }
 
+/**
+ * Descriptor returned by `h(Fragment, …)` and `fragment(…)` during hydration.
+ * A Fragment has no element of its own on the server: its children are
+ * rendered in place, so adoption walks them as a range of the parent's nodes.
+ */
+export interface FragmentDescriptor {
+  type: 'fragment';
+  children: unknown[];
+}
+
 /** Maps built by collectMarkers() for O(1) marker lookup during adoption. */
 export interface MarkerMap {
   text: Map<number, Text>;
@@ -87,6 +105,11 @@ export function isShowDescriptor(v: unknown): v is ShowDescriptor {
 /** Check if a value is a ListDescriptor. */
 export function isListDescriptor(v: unknown): v is ListDescriptor {
   return v != null && typeof v === 'object' && 'type' in v && v.type === 'list';
+}
+
+/** Check if a value is a FragmentDescriptor. */
+export function isFragmentDescriptor(v: unknown): v is FragmentDescriptor {
+  return v != null && typeof v === 'object' && 'type' in v && v.type === 'fragment';
 }
 
 // ---------------------------------------------------------------------------
@@ -278,12 +301,25 @@ export function applyDynamicProps(el: Element, props: Record<string, unknown> | 
       continue;
     }
 
-    // Form values are live DOM properties, not ordinary SSR attributes.
+    // Form values are live DOM properties, not ordinary SSR attributes. The
+    // first write is an adoption: it keeps what the user entered before
+    // activation and writes nothing when the server already agrees. Every
+    // later update goes through the live-property writer.
+    // Verified by: src/dom/__tests__/form-control-adoption.test.ts > "keeps text typed into an input before activation, then follows later updates"
     if (isFormControlProperty(el, key)) {
       if (typeof value === 'function') {
-        internalEffect(() => writeFormControlProperty(el, key, (value as () => unknown)()));
+        let adopted = false;
+        internalEffect(() => {
+          const next = (value as () => unknown)();
+          if (adopted) {
+            writeFormControlProperty(el, key, next);
+          } else {
+            adopted = true;
+            adoptFormControlProperty(el, key, next);
+          }
+        });
       } else {
-        writeFormControlProperty(el, key, value);
+        adoptFormControlProperty(el, key, value);
       }
       continue;
     }
@@ -361,6 +397,15 @@ export function ensureNode(value: unknown): Node | null {
   if (typeof value === 'string') return new Text(value);
   if (typeof value === 'number') return new Text(String(value));
   if (isDescriptor(value)) return descriptorToElement(value);
+  if (isFragmentDescriptor(value)) {
+    const prevH = hydrating;
+    hydrating = false;
+    try {
+      return h(Fragment, null, ...value.children.map(toLiveChild));
+    } finally {
+      hydrating = prevH;
+    }
+  }
   if (isShowDescriptor(value)) {
     const prevH = hydrating;
     hydrating = false;
@@ -401,18 +446,18 @@ export function descriptorToElement(desc: HydrationDescriptor): Element {
   hydrating = false;
 
   try {
-    // Map children: recurse for nested descriptors, convert Show/List
-    const children = desc.children.map((child) => {
-      if (isDescriptor(child)) return descriptorToElement(child);
-      if (isShowDescriptor(child)) return ensureNode(child);
-      if (isListDescriptor(child)) return ensureNode(child);
-      return child;
-    });
-
-    return h(desc.tag, desc.props, ...children);
+    // Map children: recurse for nested descriptors, convert Show/List/Fragment
+    return h(desc.tag, desc.props, ...desc.children.map(toLiveChild));
   } finally {
     hydrating = prevHydrating;
   }
+}
+
+/** A descriptor child as the real node h() can append; anything else as is. */
+function toLiveChild(child: unknown): unknown {
+  if (isDescriptor(child)) return descriptorToElement(child);
+  if (isShowDescriptor(child) || isListDescriptor(child) || isFragmentDescriptor(child)) return ensureNode(child);
+  return child;
 }
 
 // ---------------------------------------------------------------------------
@@ -973,6 +1018,10 @@ function adoptBranchContent(
       const innerEnd = findClosingMarker(innerStart);
       if (innerEnd) adoptListRegion(desc, innerStart, innerEnd);
     }
+  } else if (isFragmentDescriptor(desc)) {
+    // Fragment branch — its children are the nodes between the show markers.
+    // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a Fragment branch of createShow is adopted between the show markers"
+    adoptChildren(desc.children, regionStart.parentNode as Element, regionStart.nextSibling, regionEnd);
   }
 }
 
@@ -989,6 +1038,10 @@ function adoptBranchContent(
  * - Island markers (<!--f:iN-->): creates real DOM from descriptor
  * - Show markers (<!--f:sN-->): binds show effects or reactive text
  * - Text markers (<!--f:tN-->): binds reactive text effects
+ * - Fragments: their children are walked in place, as a range of this
+ *   element's nodes
+ * - `textarea` and `title`: reactive text is bound by the element, not by
+ *   markers (see bindElementText)
  * - Tag mismatches: falls back to descriptorToElement()
  */
 export function adoptNode(
@@ -1003,35 +1056,101 @@ export function adoptNode(
     return;
   }
 
-  // Walk children via DOM cursor (instead of children[index])
-  let cursor: ChildNode | null = ssrEl.firstChild;
+  if ((ssrEl.localName === 'textarea' || ssrEl.localName === 'title') && isReactiveTextOnly(desc.children)) {
+    bindElementText(ssrEl, desc.children);
+  } else {
+    adoptChildren(desc.children, ssrEl, ssrEl.firstChild, null);
+  }
 
-  for (const child of desc.children) {
+  // Options/children must be adopted before binding a select's live value.
+  // Refs also observe the fully bound child tree, just as they do in h().
+  applyDynamicProps(ssrEl, desc.props);
+}
+
+/**
+ * Bind the reactive text of a `textarea` or `title` by the element itself.
+ *
+ * Both are RCDATA elements: the HTML parser reads their content as text, so a
+ * hydration marker the server writes inside one is not a comment but part of
+ * the text, and reaches a textarea's value and `FormData` before JavaScript
+ * runs. A server on forma-ir 0.2.1 or later (FORMA-002) writes no markers
+ * there; older ones do. Both are accepted, for one release:
+ *
+ * - textarea: the first run is an adoption ({@link adoptTextareaText}): marker
+ *   text is removed from the default value, what the user typed before
+ *   activation is kept, and nothing is written when the server agrees. Later
+ *   runs write the live value ({@link writeTextareaText}).
+ * - title: its text is written only when it differs, which also removes
+ *   marker text.
+ *
+ * Verified by: src/dom/__tests__/form-control-adoption.test.ts > "binds a marker-free textarea by the element and writes nothing when it agrees"
+ * Verified by: src/dom/__tests__/form-control-adoption.test.ts > "binds a textarea with static and reactive text, from either server output"
+ * Verified by: src/dom/__tests__/form-control-adoption.test.ts > "binds a title's reactive text by the element, with or without marker text"
+ */
+function bindElementText(el: Element, children: unknown[]): void {
+  let adopted = false;
+  internalEffect(() => {
+    const text = childText(children);
+    if (el instanceof HTMLTextAreaElement) {
+      if (adopted) writeTextareaText(el, text);
+      else adoptTextareaText(el, text);
+    } else if (el.textContent !== text) {
+      el.textContent = text;
+    }
+    adopted = true;
+  });
+}
+
+/**
+ * Adopt `children` against the server's nodes in `parent`, starting at `first`
+ * and stopping before `rangeEnd` (null: the end of `parent`). Content the
+ * server did not render is inserted before `rangeEnd`. Returns the first node
+ * the walk did not consume, or null when it reached the end of the range.
+ *
+ * A Fragment child is walked in place with the same parent and bound: the
+ * server renders a Fragment's children as siblings of the nodes around it.
+ *
+ * Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a nested Fragment is adopted in place and the siblings after it stay aligned"
+ */
+function adoptChildren(
+  children: unknown[],
+  parent: Element,
+  first: ChildNode | null,
+  rangeEnd: ChildNode | null,
+): ChildNode | null {
+  // Reaching rangeEnd means leaving the range: the walk treats it as no node.
+  const within = (node: ChildNode | null): ChildNode | null => (node === rangeEnd ? null : node);
+  const insert = (node: Node): void => {
+    parent.insertBefore(node, rangeEnd);
+  };
+  let cursor = within(first);
+
+  for (const child of children) {
     // Skip falsy children
     if (child === false || child == null) continue;
 
     if (isDescriptor(child)) {
       // Skip whitespace-only text nodes
       while (cursor && cursor.nodeType === 3 && !(cursor as Text).data.trim()) {
-        cursor = cursor.nextSibling;
+        cursor = within(cursor.nextSibling);
       }
 
       // Skip child island elements — they are handled by their own activation
       while (cursor && cursor.nodeType === 1 &&
              (cursor as Element).hasAttribute('data-forma-island')) {
-        cursor = cursor.nextSibling;
+        cursor = within(cursor.nextSibling);
       }
 
       if (!cursor) {
         // No more DOM nodes — append fresh
-        ssrEl.appendChild(descriptorToElement(child));
+        insert(descriptorToElement(child));
         continue;
       }
 
       if (cursor.nodeType === 1) {
         // Element node — adopt recursively
         const el = cursor as Element;
-        cursor = cursor.nextSibling;
+        cursor = within(cursor.nextSibling);
         adoptNode(child, el);
       } else if (cursor.nodeType === 8 && isIslandStart((cursor as Comment).data)) {
         // Island region. The compiler always emits a shell element between
@@ -1048,26 +1167,30 @@ export function adoptNode(
         const end = findClosingMarker(islandStart);
         const shell = end ? nextElementBetweenMarkers(islandStart, end) : undefined;
         if (shell && end) {
-          cursor = end.nextSibling;
+          cursor = within(end.nextSibling);
         } else {
           const fresh = descriptorToElement(child);
           if (end) {
             end.parentNode!.insertBefore(fresh, end);
-            cursor = end.nextSibling;
+            cursor = within(end.nextSibling);
           } else {
-            ssrEl.appendChild(fresh);
+            insert(fresh);
             cursor = null;
           }
         }
       } else {
         // Unexpected node — create fresh and append
-        ssrEl.appendChild(descriptorToElement(child));
+        insert(descriptorToElement(child));
       }
+
+    } else if (isFragmentDescriptor(child)) {
+      // The Fragment's children are this parent's nodes, rendered in place.
+      cursor = adoptChildren(child.children, parent, cursor, rangeEnd);
 
     } else if (isShowDescriptor(child)) {
       // Advance cursor to next show marker
       while (cursor && !(cursor.nodeType === 8 && isShowStart((cursor as Comment).data))) {
-        cursor = cursor.nextSibling;
+        cursor = within(cursor.nextSibling);
       }
 
       if (cursor) {
@@ -1078,14 +1201,14 @@ export function adoptNode(
           // between the markers (element, nested show, or bare list) and then
           // installs the toggle effect.
           adoptShowRegion(child, start, end);
-          cursor = end.nextSibling;
+          cursor = within(end.nextSibling);
         }
       }
 
     } else if (isListDescriptor(child)) {
       // Advance cursor to next list marker
       while (cursor && !(cursor.nodeType === 8 && isListStart((cursor as Comment).data))) {
-        cursor = cursor.nextSibling;
+        cursor = within(cursor.nextSibling);
       }
 
       if (cursor) {
@@ -1093,7 +1216,7 @@ export function adoptNode(
         const end = findClosingMarker(start);
         if (end) {
           adoptListRegion(child, start, end);
-          cursor = end.nextSibling;
+          cursor = within(end.nextSibling);
         }
       }
 
@@ -1101,7 +1224,7 @@ export function adoptNode(
       // Reactive binding — could be text (signal getter) or element (returns descriptor).
       // Peek at the return value to determine type before choosing the adoption path.
       while (cursor && cursor.nodeType === 3 && !(cursor as Text).data.trim()) {
-        cursor = cursor.nextSibling;
+        cursor = within(cursor.nextSibling);
       }
 
       // If cursor is at an element, check whether function returns a descriptor
@@ -1110,7 +1233,7 @@ export function adoptNode(
         if (isDescriptor(initial)) {
           // Function returned a descriptor — adopt the element at cursor
           const el = cursor as Element;
-          cursor = cursor.nextSibling;
+          cursor = within(cursor.nextSibling);
           adoptNode(initial, el);
           continue;
         }
@@ -1135,7 +1258,7 @@ export function adoptNode(
           internalEffect(() => {
             (textNode as Text).data = String((child as () => unknown)());
           });
-          cursor = endMarker ? endMarker.nextSibling : textNode.nextSibling;
+          cursor = within(endMarker ? endMarker.nextSibling : textNode.nextSibling);
         } else if (isShowStart(data)) {
           // Show marker used for reactive text (IR compiled inline ternary as ShowIf)
           const start = cursor as Comment;
@@ -1152,17 +1275,17 @@ export function adoptNode(
             internalEffect(() => {
               (textNode as Text).data = String((child as () => unknown)());
             });
-            cursor = end.nextSibling;
+            cursor = within(end.nextSibling);
           } else {
-            cursor = cursor.nextSibling;
+            cursor = within(cursor.nextSibling);
           }
         } else {
-          cursor = cursor.nextSibling;
+          cursor = within(cursor.nextSibling);
         }
       } else if (cursor && cursor.nodeType === 3) {
         // Existing text node without markers — bind reactive effect directly
         const textNode = cursor as Text;
-        cursor = cursor.nextSibling;
+        cursor = within(cursor.nextSibling);
         internalEffect(() => {
           textNode.data = String((child as () => unknown)());
         });
@@ -1170,9 +1293,9 @@ export function adoptNode(
         // No cursor (empty parent) or unexpected node — SSR element has no
         // children where a reactive text binding is expected. This means the
         // IR didn't cover this part of the component tree. Warn and create.
-        if (__DEV__) console.warn(`[FormaJS] Hydration: created text node in empty <${ssrEl.tagName.toLowerCase()}> — IR may not cover this component`);
+        if (__DEV__) console.warn(`[FormaJS] Hydration: created text node in empty <${parent.nodeName.toLowerCase()}> — IR may not cover this component`);
         const textNode = document.createTextNode('');
-        ssrEl.appendChild(textNode);
+        insert(textNode);
         internalEffect(() => {
           textNode.data = String((child as () => unknown)());
         });
@@ -1180,14 +1303,12 @@ export function adoptNode(
     } else if (typeof child === 'string' || typeof child === 'number') {
       // Static text — advance cursor past corresponding text node
       if (cursor && cursor.nodeType === 3) {
-        cursor = cursor.nextSibling;
+        cursor = within(cursor.nextSibling);
       }
     }
   }
 
-  // Options/children must be adopted before binding a select's live value.
-  // Refs also observe the fully bound child tree, just as they do in h().
-  applyDynamicProps(ssrEl, desc.props);
+  return cursor;
 }
 
 // ---------------------------------------------------------------------------
@@ -1258,22 +1379,36 @@ export function hydrateIsland(component: () => unknown, target: Element): Elemen
     setHydrating(false);
   }
 
-  // Guard: if component returned nothing (e.g. mock fn in tests, or simple
-  // islands that only set up effects), skip adoption entirely.
-  if (!descriptor || !isDescriptor(descriptor)) {
-    target.removeAttribute('data-forma-ssr');
-    return target;
-  }
-
   // 4. Walk descriptor tree top-down against SSR DOM.
-  // For island activation: the target IS the island root element (has
-  // data-forma-island). Adopt directly on target.
-  // For mount() container pattern: target is a wrapper, adopt on target.children[0].
-  if (target.hasAttribute('data-forma-island')) {
-    adoptNode(descriptor, target);
-  } else {
-    adoptNode(descriptor, target.children[0] as Element);
+  if (isDescriptor(descriptor)) {
+    // For island activation: the target IS the island root element (has
+    // data-forma-island). Adopt directly on target.
+    // For mount() container pattern: target is a wrapper, adopt on target.children[0].
+    if (target.hasAttribute('data-forma-island')) {
+      adoptNode(descriptor, target);
+    } else {
+      adoptNode(descriptor, target.children[0] as Element);
+    }
+  } else if (isFragmentDescriptor(descriptor) || isShowDescriptor(descriptor) || isListDescriptor(descriptor)) {
+    // A root that is a range of nodes rather than one element (a Fragment, or
+    // a show or list region with no wrapping element) is adopted against the
+    // container's children, where the server rendered it.
+    // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a root Fragment binds its click handler and reactive text after mount() adoption"
+    // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a Fragment at an island root is adopted, each island on its own"
+    adoptChildren([descriptor], target, target.firstChild, null);
+  } else if (descriptor instanceof Node) {
+    // A DOM node built while hydrating cannot be matched to the server's
+    // nodes. Reporting success here would leave the server's DOM inert behind
+    // a removed data-forma-ssr, so fail instead: activateIslands marks the
+    // island `error`, and mount() throws to its caller.
+    // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a component that returns a DOM node while hydrating fails instead of reporting success"
+    throw new Error(
+      '[forma] Hydration: the component returned a DOM node, which cannot be adopted. ' +
+      'Build the tree with h() (Fragments included) so it can be matched to the server-rendered HTML.',
+    );
   }
+  // Anything else (nothing at all, from an island that sets up its own
+  // effects) has nothing to adopt.
 
   // 5. Remove SSR marker
   target.removeAttribute('data-forma-ssr');

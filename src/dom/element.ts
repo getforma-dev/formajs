@@ -10,7 +10,13 @@
 
 import { internalEffect, __DEV__ } from 'forma/reactive';
 import { hydrating } from './hydrate.js';
-import { isFormControlProperty, writeFormControlProperty } from './form-control.js';
+import {
+  childText,
+  isFormControlProperty,
+  isReactiveTextOnly,
+  writeFormControlProperty,
+  writeTextareaText,
+} from './form-control.js';
 import {
   isDangerousUrl,
   isEventHandlerAttr,
@@ -894,8 +900,13 @@ export function h(
     return tag(mergedProps) as unknown as HTMLElement;
   }
 
-  // Fragment: return DocumentFragment with children
+  // Fragment: return DocumentFragment with children. While hydrating it is a
+  // descriptor like any element, so adoption can walk its children as a range
+  // of the server's nodes instead of receiving a detached fragment it cannot
+  // match to anything.
+  // Verified by: src/dom/__tests__/hydrate-fragment.test.ts > "a root Fragment binds its click handler and reactive text after mount() adoption"
   if (tag === Fragment) {
+    if (hydrating) return { type: 'fragment', children } as unknown as DocumentFragment;
     const frag = document.createDocumentFragment();
     for (const child of children) {
       appendChild(frag, child);
@@ -981,7 +992,15 @@ export function h(
   // Text node allocation + separate appendChild. el.textContent is a single
   // native C++ call that combines both operations.
   const childLen = children.length;
-  if (childLen === 1) {
+  if (tagName === 'textarea' && isReactiveTextOnly(children)) {
+    // A textarea's text is its value. Bound as a text node it would stop
+    // reaching the control once the user types (the browser then detaches the
+    // value from the default), so it is written as the live value, the same
+    // way adoption binds a server-rendered textarea.
+    // Verified by: src/dom/__tests__/form-control-adoption.test.ts > "a textarea's reactive text is its live value after the user typed, client-rendered too"
+    const textarea = el as HTMLTextAreaElement;
+    internalEffect(() => writeTextareaText(textarea, childText(children)));
+  } else if (childLen === 1) {
     const only = children[0];
     if (typeof only === 'string') {
       el.textContent = only;
@@ -1019,6 +1038,7 @@ export function h(
  * ```
  */
 export function fragment(...children: unknown[]): DocumentFragment {
+  if (hydrating) return { type: 'fragment', children } as unknown as DocumentFragment;
   const frag = document.createDocumentFragment();
   for (const child of children) {
     appendChild(frag, child);

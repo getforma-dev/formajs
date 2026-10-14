@@ -4,6 +4,34 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+
+- **A Fragment is adopted.** `h(Fragment, …)` and `fragment(…)` return a
+  descriptor while hydrating, and adoption walks a Fragment's children in place,
+  at a `mount()` or island root, inside an element and as a `createShow` branch.
+  A root JSX Fragment was inert after server-rendered activation: `h(Fragment)`
+  built a detached DocumentFragment, and activation treated it as success,
+  removing `data-forma-ssr` with nothing bound. A component that returns a DOM
+  node while hydrating now fails activation (the island is marked `error`;
+  `mount()` throws) instead of reporting success.
+- **Form controls are live properties.** `value`, `checked` and `selected` are
+  written to the live control, by `h()` and by adoption, and a `select` is bound
+  after its options exist. Before, a bound `value` on a `select` or `textarea`
+  never reached the control. (Local checkpoint `042e353`.)
+- **Adoption keeps what the user entered before activation.** A control whose
+  live state differs from its markup's default (`value` from `defaultValue`,
+  `checked` from the `checked` attribute, a select from its `selected` options)
+  is not written at adoption; a control that already holds the client's value is
+  not written at all. Updates after activation are still written. With
+  `042e353` alone, adoption overwrote text typed before activation.
+- **`textarea` and `title` text is bound by the element, not by markers,** to
+  match forma-ir 0.2.1, which writes no markers inside RCDATA elements. A
+  textarea's reactive text is its live value after the user types, client-rendered
+  or adopted. For one release the marker text older servers write inside these
+  elements is also accepted, and removed on adoption.
+- `createList` with `updateOnItemChange: 'rerender'` disposes a row's previous
+  effects when it re-renders it. (Local checkpoint `042e353`.)
+
 ## [2.0.1] - 2026-08-08
 
 ### Fixed
