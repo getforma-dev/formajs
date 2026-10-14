@@ -101,6 +101,14 @@ export function sh(tag: string, props?: Record<string, unknown> | null, ...child
  * Uses an array buffer internally to avoid O(n^2) string concatenation
  * for large trees, then joins once at the end.
  *
+ * A `textarea`'s or `select`'s `value` prop is written as a `value` attribute,
+ * which the HTML parser ignores: write a textarea's text as its child and mark
+ * the option `selected` for the served page to show them. forma-ir 0.2.1 does
+ * that itself; this renderer keeps the attribute until `./ssr` is removed in
+ * 3.0.0 (docs/STABILITY.md, "SSR form controls").
+ *
+ * Verified by: src/ssr/__tests__/render-form-controls.test.ts > "writes a textarea's and a select's value prop as a value attribute, static or reactive"
+ *
  * Usage:
  * ```ts
  * import { renderToString, sh } from '@getforma/core/ssr';

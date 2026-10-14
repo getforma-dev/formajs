@@ -4,6 +4,46 @@ All notable changes to this project will be documented in this file.
 
 ## [Unreleased]
 
+### Added
+
+- **`browserOnly(component)`, the browser-only marker** (DR-1, L-1, FORMA-119).
+  Wraps a component that renders in the browser alone; one name, so a search
+  finds every use. `@getforma/compiler` 0.3.7 and later emit
+  `const X = browserOnly(Impl)` as a registered island whose server output is
+  its empty host element with its declared props (`data-forma-props`).
+  Registered as it is (`activateIslands({ X })`), activation calls it with the
+  island's element and props, and it renders `Impl(props)` in the host's place;
+  called as a component in a client-rendered tree it renders `Impl(props)`;
+  with no document it renders nothing. Additive: no existing export changes.
+  The core entry grows 103 B gzipped (27,703 to 27,806 B of its 30,000 B gate)
+  and the browser ESM bundle 99 B; the CDN runtimes do not change.
+
+### Changed
+
+- **`createWebSocket` reconnects with full jitter** (FORMA-132, L-46). The n-th
+  reconnect used to wait exactly `reconnectInterval * 2^(n-1)`, so after a
+  deploy every client of a server reconnected in the same instant. The delay is
+  now drawn uniformly between 0 and that cap, still for at most
+  `maxReconnects` (5) attempts, and a successful open still restarts the count.
+  A new option, `random`, replaces `Math.random` as the source of the draw (a
+  test passes a seeded one); a value that is not a function, or a draw outside
+  [0, 1), falls back to `Math.random`.
+- **`data-fetch` aborts a request after 30 seconds** (FORMA-132, L-46),
+  `createFetch`'s default timeout. Before, a request the server never answered
+  held its `loading:` target true forever. Now the abort lands in the `error:`
+  target as `data-fetch timed out after 30000 ms` in every engine (WebKit
+  rejects an aborted fetch with its own message, so the runtime writes this
+  one; `createFetch` reports no error on its timeout), and `loading:` turns
+  false. Each request of a `poll:` fetch has its own 30 seconds. Tearing a
+  scope down (`unmount()`, or removing its element) clears each in-flight
+  request's timer and aborts it. A shorter timeout
+  granted per mount comes with the tiered mount (FORMA-128).
+  **Size (L-51):** the CDN runtime grows by 200 B gzipped (33,861 to 34,061 B)
+  and the hardened runtime by 199 B (32,873 to 33,072 B). Both passed their
+  gates, which rise to the measured size rounded up to the next 500 B: 34,000
+  to 34,500 B and 33,000 to 33,500 B (`scripts/check-size.mjs`, the README's
+  size table).
+
 ### Deprecated
 
 - **`@getforma/core/server`, `@getforma/core/ssr` and `@getforma/core/wasm`
@@ -11,23 +51,26 @@ All notable changes to this project will be documented in this file.
   keep working through 2.x. Server functions give way to routes in the
   application's Rust server, `./ssr` to the Rust walker, and `./wasm` to
   core's `h()`, which islands already re-render with. `docs/STABILITY.md` marks
-  each row **Deprecated** and lists the codes under *Deprecated entry points*.
-  - The first time one of them is loaded in a development build, it logs one
-    line with a stable code: `FORMA_W_DEPRECATED_SERVER`,
+  each row **Deprecated** and lists the codes under *Deprecated entry points*;
+  `SECURITY.md` and `docs/CDN-AND-EXPORTS.md` mark the entries too.
+  - The first time one of them is loaded where core runs from source, it logs
+    one line with a stable code: `FORMA_W_DEPRECATED_SERVER`,
     `FORMA_W_DEPRECATED_SSR` or `FORMA_W_DEPRECATED_WASM`, as
     `[forma] FORMA_W_DEPRECATED_SSR: …`, naming 3.0.0 and the replacement. Once
     per process: a second copy of the module stays quiet.
-  - A development build is what it is for every `__DEV__` diagnostic: core
-    compiled from its source with `NODE_ENV` other than `production`. The
-    published files are production builds and log nothing. Every `.js` and
-    `.cjs` file under `dist/` is byte-identical to the build before this change
-    (all 33), so no size gate moved. The files that differ are the three
-    entries' type declarations, where every exported function now carries
-    `@deprecated`, and their source maps.
-  - `./ssr`'s note names how it differs from the walker: `renderToString`
-    writes a `textarea`'s and a `select`'s `value` as a `value` attribute,
-    which the HTML parser ignores, where the walker writes the textarea's text
-    and `selected` on the matching option.
+  - The line logs only when core runs from source, as every `__DEV__`
+    diagnostic does: in Node with `NODE_ENV` other than `production`, in a
+    browser with the global `__FORMA_DEV__` set. The published files are
+    production builds and log nothing, so an application's own development
+    build of the npm package does not either (FORMA-169 tracks that gap for
+    every `__DEV__` diagnostic). An installed package shows the deprecation in
+    its types: every function the three entries export carries `@deprecated`.
+    Every `.js` and `.cjs` file under `dist/` is byte-identical to the build
+    before this change (all 33), so no size gate moved; the files that differ
+    are the three entries' type declarations and their source maps.
+  - The deprecated SSR row links to *SSR form controls* (FORMA-017) for how
+    `./ssr` differs from the walker, which that section states; it is no
+    longer a row of its own.
   - `scripts/verify-dist.mjs` fails a build in which a deprecation code reaches
     any published artifact.
   - Tests: `src/__tests__/deprecated-entries.test.ts` > "$subpath logs its
@@ -40,6 +83,22 @@ All notable changes to this project will be documented in this file.
 
 ### Documentation
 
+- **`docs/ISLANDS.md` states what adoption skips today** (FORMA-016): a plain
+  array child (`.map()` without `createList`), `createErrorBoundary`,
+  `createSwitch`, `createPortal` and `createSuspense`, and a reactive child
+  that returns an element; what a server-rendered page gets with each,
+  measured in Chromium (on a `mount()` root, `createErrorBoundary`,
+  `createSwitch` and `createSuspense` make activation throw and nothing after
+  them activates; `createPortal`'s content never appears; a reactive `.map()`
+  shows its elements as `[object HTMLLIElement]` text), the build code
+  compiler 0.3.7 reports for it, and what to write instead. It also documents
+  `browserOnly()`.
+- **`./ssr`'s form controls are documented as a known gap** (FORMA-017, DR-24).
+  `renderToString` writes a `textarea`'s and a `select`'s `value` as a `value`
+  attribute, which the HTML parser ignores, where forma-ir 0.2.1 writes the
+  textarea's text and `selected` on the option. The renderer is unchanged
+  until `./ssr` is removed in 3.0.0; `docs/STABILITY.md` says what the served
+  page shows and how to write these controls instead, and two tests pin it.
 - `docs/STABILITY.md`'s footnote on `./wasm` said the subpath first resolves
   "in the next release". It first resolved in 2.0.0 (npm's 1.5.0 has no
   `./wasm` key; 2.0.0 has it), and the footnote now says so.

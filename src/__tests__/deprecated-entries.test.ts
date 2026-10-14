@@ -131,19 +131,23 @@ describe('the deprecated entries in a development build (source)', () => {
 const configs = rawConfig as Options[];
 
 /**
- * Run the real tsup config that emits `entryName`, narrowed to that entry,
- * into a private temp dir, and return its ESM output. The same narrowing as
- * build-artifacts.test.ts's `buildEntry`, and for the same reasons.
+ * Run the real tsup config that emits the deprecated entries, narrowed to
+ * them, into a private temp dir, and return each entry's ESM output. The same
+ * narrowing as build-artifacts.test.ts's `buildEntry`; one build for all
+ * three keeps the suite's CPU down, and keeps the config's code splitting, so
+ * a module two entries kept would show up as an import of a shared chunk.
  */
-async function buildEntry(entryName: string, overrides: Options = {}): Promise<string> {
-  const base = configs.find((c) => Object.keys(c.entry as Record<string, string>).includes(entryName));
-  if (!base) throw new Error(`no tsup config emits "${entryName}"`);
+async function buildEntries(overrides: Options = {}): Promise<Record<string, string>> {
+  const names = ENTRIES.map((e) => e.tsupEntry);
+  const base = configs.find((c) => names.every((n) => Object.keys(c.entry as Record<string, string>).includes(n)));
+  if (!base) throw new Error(`no tsup config emits ${names.join(', ')}`);
+  const entry = Object.fromEntries(names.map((n) => [n, (base.entry as Record<string, string>)[n]]));
   const outDir = mkdtempSync(join(tmpdir(), 'forma-deprecated-'));
   try {
     await build({
       ...base,
       config: false,
-      entry: { [entryName]: (base.entry as Record<string, string>)[entryName] },
+      entry,
       format: ['esm'],
       dts: false,
       sourcemap: false,
@@ -151,7 +155,7 @@ async function buildEntry(entryName: string, overrides: Options = {}): Promise<s
       outDir,
       ...overrides,
     });
-    return readFileSync(join(outDir, `${entryName}.js`), 'utf8');
+    return Object.fromEntries(names.map((n) => [n, readFileSync(join(outDir, `${n}.js`), 'utf8')]));
   } finally {
     rmSync(outDir, { recursive: true, force: true });
   }
@@ -159,8 +163,9 @@ async function buildEntry(entryName: string, overrides: Options = {}): Promise<s
 
 describe('the deprecated entries in a production build (the real tsup config)', () => {
   it('a production build of each deprecated entry carries no warning', { timeout: 120_000 }, async () => {
+    const built = await buildEntries();
     for (const entry of ENTRIES) {
-      const code = await buildEntry(entry.tsupEntry);
+      const code = built[entry.tsupEntry]!;
       expect(code, entry.subpath).not.toContain('FORMA_W_DEPRECATED');
       expect(code, entry.subpath).not.toContain('warnDeprecated');
       expect(code, entry.subpath).not.toContain('sourceIsDev');
@@ -170,18 +175,18 @@ describe('the deprecated entries in a production build (the real tsup config)', 
       expect(code, entry.subpath).toMatch(/\bexport\s*\{/);
     }
     // The wasm entry loads nothing of core's. Importing dev.ts for `__DEV__`
-    // would bring its duplicate-instance registration into this artifact
-    // (inlined here; an import of core's reactive chunk in dist/wasm.js).
-    const wasm = await buildEntry('wasm');
-    expect(parseImportSpecifiers(wasm)).toEqual([]);
-    expect(wasm).not.toContain('Duplicate @getforma/core instance');
+    // would bring its duplicate-instance registration with it: an import of
+    // core's reactive chunk in dist/wasm.js.
+    expect(parseImportSpecifiers(built.wasm!)).toEqual([]);
+    expect(built.wasm).not.toContain('Duplicate @getforma/core instance');
   });
 
   it('a build without the production flag keeps the warning', { timeout: 120_000 }, async () => {
     // The control for the test above: the same config with nothing replacing
     // `__FORMA_DEV_BUILD__` is a build of the source's own behaviour.
+    const built = await buildEntries({ define: {} });
     for (const entry of ENTRIES) {
-      const code = await buildEntry(entry.tsupEntry, { define: {} });
+      const code = built[entry.tsupEntry]!;
       expect(code, entry.subpath).toContain(entry.code);
       expect(code, entry.subpath).toContain('sourceIsDev');
     }
