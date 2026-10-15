@@ -1,5 +1,12 @@
 # FormaJS
 
+> **Development has moved to [getforma-dev/forma](https://github.com/getforma-dev/forma).**
+> This repository's `main` branch is retired. New work and issues belong in the
+> [merged repository](https://github.com/getforma-dev/forma/tree/main/packages/core).
+> Maintenance for @getforma/core remains on
+> [`maint/2.x`](https://github.com/getforma-dev/formajs/tree/maint/2.x), with its existing release workflow.
+> Historical source, commits and tags remain available here.
+
 [![CI](https://github.com/getforma-dev/formajs/actions/workflows/ci.yml/badge.svg)](https://github.com/getforma-dev/formajs/actions/workflows/ci.yml)
 [![npm](https://img.shields.io/npm/v/@getforma/core)](https://www.npmjs.com/package/@getforma/core)
 [![Socket Badge](https://socket.dev/api/badge/npm/package/@getforma/core)](https://socket.dev/npm/package/@getforma/core)
