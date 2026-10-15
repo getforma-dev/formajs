@@ -7,16 +7,13 @@ name: Nightly probes
 # every probe's anchor still applies.
 #
 # Its own workflow since FORMA-179: as a job in ci.yml it showed as "skipped" on
-# every PR and push, the one permanently skipped check. A schedule or a
-# dispatch are its only triggers, so no PR or push lists it:
+# every PR and push, the one permanently skipped check. The merged repository
+# now owns the nightly schedule. Manual legacy runs remain available:
 #   gh workflow run nightly-probes.yml --ref <branch>
 on:
-  schedule:
-    - cron: '17 3 * * *'
   workflow_dispatch:
 
-# A dispatch on the same ref supersedes a run still going; a scheduled run is on
-# main and a dispatch is usually on a branch, so the two rarely share a group.
+# A manual dispatch on the same ref supersedes its previous manual run.
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
